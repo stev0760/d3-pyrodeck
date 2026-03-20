@@ -11,8 +11,15 @@ import { SessionManager } from "../session/SessionManager.js";
 export const sessionManager = new SessionManager();
 export const responseParser = new ResponseParser();
 
+import { parseScores } from "../parser/parsers/scores.js";
+import { parseBotlist } from "../parser/parsers/botlist.js";
+import { parseBotstat } from "../parser/parsers/botstat.js";
+
 // Register parsers
 responseParser.register("$servercaps", parseServercaps);
+responseParser.register("$scores", parseScores);
+responseParser.register("$botlist", parseBotlist);
+responseParser.register("$botstat", parseBotstat);
 
 /** Serialize capabilities for JSON (Set -> array). */
 export function serializeCaps(caps: ServerCapabilities) {

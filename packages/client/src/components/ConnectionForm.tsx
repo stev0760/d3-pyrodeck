@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import type { ConnectionState, ServerCapabilities } from "../hooks/useServerConnection.ts";
 
 interface ConnectionFormProps {
@@ -7,6 +7,8 @@ interface ConnectionFormProps {
   error: string | null;
   onConnect: (host: string, port: number, password: string) => Promise<boolean>;
   onDisconnect: () => Promise<void>;
+  initialHost?: string;
+  initialPort?: number;
 }
 
 const STATE_COLORS: Record<ConnectionState, string> = {
@@ -29,11 +31,19 @@ export function ConnectionForm({
   error,
   onConnect,
   onDisconnect,
+  initialHost,
+  initialPort,
 }: ConnectionFormProps) {
-  const [host, setHost] = useState("localhost");
-  const [port, setPort] = useState("2092");
+  const [host, setHost] = useState(initialHost ?? "localhost");
+  const [port, setPort] = useState(String(initialPort ?? 2092));
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Update fields when saved server is selected
+  useEffect(() => {
+    if (initialHost) setHost(initialHost);
+    if (initialPort) setPort(String(initialPort));
+  }, [initialHost, initialPort]);
 
   const isConnected = connectionState === "ready";
 
