@@ -1,0 +1,137 @@
+import { useEffect, useRef, useCallback } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+
+interface ConsoleProps {
+  onCommand: (command: string) => void;
+  onOutput: (callback: (data: string) => void) => () => void;
+  disabled?: boolean;
+}
+
+export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const inputBufferRef = useRef("");
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+
+  const writePrompt = useCallback(() => {
+    terminalRef.current?.write("\r\n\x1b[33m>\x1b[0m ");
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const terminal = new Terminal({
+      theme: {
+        background: "#09090b",
+        foreground: "#d4d4d8",
+        cursor: "#f59e0b",
+        selectionBackground: "#f59e0b33",
+      },
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+      fontSize: 13,
+      cursorBlink: true,
+      scrollback: 5000,
+    });
+
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(containerRef.current);
+    fitAddon.fit();
+
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+
+    terminal.writeln("\x1b[1;33mD3 Pyrodeck Console\x1b[0m");
+    terminal.writeln("\x1b[90mType commands to send to the D3 server\x1b[0m");
+    writePrompt();
+
+    // Handle keyboard input
+    terminal.onKey(({ key, domEvent }) => {
+      if (disabled) return;
+
+      const code = domEvent.keyCode;
+
+      if (code === 13) {
+        // Enter
+        const command = inputBufferRef.current.trim();
+        if (command) {
+          historyRef.current.push(command);
+          historyIndexRef.current = historyRef.current.length;
+          terminal.write("\r\n");
+          onCommand(command);
+        }
+        inputBufferRef.current = "";
+        writePrompt();
+      } else if (code === 8) {
+        // Backspace
+        if (inputBufferRef.current.length > 0) {
+          inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+          terminal.write("\b \b");
+        }
+      } else if (code === 38) {
+        // Arrow up — history
+        if (historyIndexRef.current > 0) {
+          historyIndexRef.current--;
+          const cmd = historyRef.current[historyIndexRef.current];
+          // Clear current input
+          const clearLen = inputBufferRef.current.length;
+          terminal.write("\b \b".repeat(clearLen));
+          inputBufferRef.current = cmd;
+          terminal.write(cmd);
+        }
+      } else if (code === 40) {
+        // Arrow down — history
+        const clearLen = inputBufferRef.current.length;
+        terminal.write("\b \b".repeat(clearLen));
+
+        if (historyIndexRef.current < historyRef.current.length - 1) {
+          historyIndexRef.current++;
+          const cmd = historyRef.current[historyIndexRef.current];
+          inputBufferRef.current = cmd;
+          terminal.write(cmd);
+        } else {
+          historyIndexRef.current = historyRef.current.length;
+          inputBufferRef.current = "";
+        }
+      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
+        // Regular character
+        inputBufferRef.current += key;
+        terminal.write(key);
+      }
+    });
+
+    // Handle window resize
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+    });
+    resizeObserver.observe(containerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+      terminal.dispose();
+    };
+  }, [disabled, onCommand, writePrompt]);
+
+  // Subscribe to output from the server
+  useEffect(() => {
+    const unsubscribe = onOutput((data: string) => {
+      if (terminalRef.current) {
+        // Write output, replacing \n with \r\n for terminal
+        const formatted = data.replace(/\r?\n/g, "\r\n");
+        terminalRef.current.write(formatted);
+      }
+    });
+    return unsubscribe;
+  }, [onOutput]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-full w-full min-h-[300px] bg-[#09090b] rounded-lg overflow-hidden"
+    />
+  );
+}
