@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 
 interface PlayerScore {
   name: string;
+  pnum: number; // D3 player slot number (1-based, 0 is server)
   points: number;
   kills: number;
   deaths: number;
@@ -81,8 +82,13 @@ export function PlayerList({ sendCommand, onOutput }: PlayerListProps) {
             const pingStr = parts[parts.length - 1];
             const ping = pingStr === "---" ? null : parseInt(pingStr, 10);
 
+            // D3 lists players in slot order. Slot 0 is the dedicated server
+            // (never listed). So first entry = pnum 1, second = pnum 2, etc.
+            const pnum = parsed.length + 1;
+
             parsed.push({
               name,
+              pnum,
               points: parseInt(parts[0], 10) || 0,
               kills: parseInt(parts[1], 10) || 0,
               deaths: parseInt(parts[2], 10) || 0,
@@ -179,20 +185,31 @@ export function PlayerList({ sendCommand, onOutput }: PlayerListProps) {
                     {p.ping === null ? "---" : p.ping}
                   </td>
                   <td className="py-1.5 text-right">
-                    {!p.isBot && !p.isObserver && (
+                    {!p.isObserver && (
                       <div className="flex gap-1 justify-end">
-                        <button
-                          onClick={() => sendCommand(`$kick ${i}`)}
-                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
-                        >
-                          Kick
-                        </button>
-                        <button
-                          onClick={() => sendCommand(`$ban ${i}`)}
-                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
-                        >
-                          Ban
-                        </button>
+                        {p.isBot ? (
+                          <button
+                            onClick={() => sendCommand(`$removebot ${p.pnum}`)}
+                            className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => sendCommand(`$kick ${p.pnum}`)}
+                              className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
+                            >
+                              Kick
+                            </button>
+                            <button
+                              onClick={() => sendCommand(`$ban ${p.pnum}`)}
+                              className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
+                            >
+                              Ban
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </td>

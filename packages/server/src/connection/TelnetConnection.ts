@@ -3,7 +3,7 @@ import type { ServerConnection } from "./ServerConnection.js";
 
 const RESPONSE_TIMEOUT_MS = 200;
 const CONNECT_TIMEOUT_MS = 5000;
-const AUTH_TIMEOUT_MS = 3000;
+const AUTH_TIMEOUT_MS = 5000;
 
 interface QueuedCommand {
   command: string;
@@ -51,11 +51,13 @@ export class TelnetConnection implements ServerConnection {
         clearTimeout(timeout);
         this.socket = socket;
         this.connected = true;
-        this.setupListeners();
+        // Authenticate BEFORE setting up general listeners so auth handler
+        // has exclusive access to incoming data.
         this.authenticate(password).then(
           () => {
             if (!settled) {
               settled = true;
+              this.setupListeners();
               resolve();
             }
           },
@@ -83,10 +85,14 @@ export class TelnetConnection implements ServerConnection {
     if (!this.socket) return;
 
     this.socket.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf-8");
+      // Strip D3's inline color codes from raw bytes before UTF-8 conversion.
+      // D3 uses \x01 + 3 RGB bytes as color markers. These bytes can be any
+      // value and produce garbled text if converted to UTF-8 as-is.
+      const cleaned = this.stripD3ColorCodes(chunk);
+      const text = cleaned.toString("utf-8");
       this.inputBuffer += text;
 
-      // Emit raw data to all listeners (for console passthrough)
+      // Emit cleaned data to all listeners (for console passthrough)
       for (const cb of this.dataCallbacks) {
         cb(text);
       }
@@ -119,36 +125,31 @@ export class TelnetConnection implements ServerConnection {
       }
 
       let authBuffer = "";
+      let passwordSent = false;
       const timeout = setTimeout(() => {
         cleanup();
         reject(new Error("Authentication timed out"));
       }, AUTH_TIMEOUT_MS);
 
       const onData = (chunk: Buffer) => {
-        authBuffer += chunk.toString("utf-8");
+        // Strip D3 color codes before converting to text
+        const cleaned = this.stripD3ColorCodes(chunk);
+        const text = cleaned.toString("utf-8");
+        authBuffer += text;
 
-        // D3 sends "Enter server password:" or similar prompt
-        if (
-          authBuffer.toLowerCase().includes("password") ||
-          authBuffer.includes(":")
-        ) {
+        // D3 sends "Enter server password:" prompt. Send password exactly once.
+        if (!passwordSent && authBuffer.toLowerCase().includes("password")) {
+          passwordSent = true;
           this.socket!.write(password + "\r\n");
-        }
 
-        // Successful auth: server sends a welcome/ready message
-        // or simply doesn't close the connection and sends more output
-        if (
-          authBuffer.includes("Logged in") ||
-          authBuffer.includes("Server is") ||
-          authBuffer.includes("\n")
-        ) {
-          // Give a moment for any auth failure (connection close) to arrive
+          // D3 closes the connection on bad password, stays open on good.
+          // After sending password, wait briefly then resolve if still connected.
           setTimeout(() => {
             if (this.connected) {
               cleanup();
               resolve();
             }
-          }, 300);
+          }, 1000);
         }
       };
 
@@ -221,7 +222,8 @@ export class TelnetConnection implements ServerConnection {
       this.inputBuffer = "";
 
       const onData = (chunk: Buffer) => {
-        responseBuffer += chunk.toString("utf-8");
+        const cleaned = this.stripD3ColorCodes(chunk);
+        responseBuffer += cleaned.toString("utf-8");
 
         // Reset the silence timer on each chunk
         if (silenceTimer) clearTimeout(silenceTimer);
@@ -258,6 +260,26 @@ export class TelnetConnection implements ServerConnection {
         resolve(this.stripEcho(command, responseBuffer));
       }, RESPONSE_TIMEOUT_MS);
     });
+  }
+
+  /**
+   * Strip D3's inline color codes from raw byte data.
+   * D3 uses \x01 followed by 3 RGB bytes as color markers.
+   * These must be removed before UTF-8 conversion to avoid garbled output.
+   */
+  private stripD3ColorCodes(data: Buffer): Buffer {
+    const result: number[] = [];
+    let i = 0;
+    while (i < data.length) {
+      if (data[i] === 0x01 && i + 3 < data.length) {
+        // Skip the \x01 marker and 3 RGB bytes
+        i += 4;
+      } else {
+        result.push(data[i]);
+        i++;
+      }
+    }
+    return Buffer.from(result);
   }
 
   /**

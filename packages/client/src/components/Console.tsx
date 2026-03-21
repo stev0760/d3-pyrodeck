@@ -120,7 +120,8 @@ export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
   useEffect(() => {
     const unsubscribe = onOutput((data: string) => {
       if (terminalRef.current) {
-        // Write output, replacing \n with \r\n for terminal
+        // D3 color codes are stripped server-side on raw bytes.
+        // Just handle line endings for the terminal.
         const formatted = data.replace(/\r?\n/g, "\r\n");
         terminalRef.current.write(formatted);
       }

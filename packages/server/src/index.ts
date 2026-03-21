@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
 import fastifyWebSocket from "@fastify/websocket";
-import { authRoutes, getSessionPassword } from "./routes/auth.js";
+import { authRoutes } from "./routes/auth.js";
 import { serverRoutes } from "./routes/server.js";
 import { commandRoutes } from "./routes/command.js";
 import { savedServerRoutes } from "./routes/saved-servers.js";
@@ -10,23 +10,12 @@ import { configRoutes } from "./routes/config.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
 
-// Validate required config before starting
-try {
-  getSessionPassword();
-} catch (err) {
-  console.error(
-    "PYRODECK_PASSWORD environment variable must be set.\n" +
-      "Example: PYRODECK_PASSWORD=mysecret pnpm dev",
-  );
-  process.exit(1);
-}
-
 const app = Fastify({ logger: true });
 
 // Plugins
 await app.register(fastifyCookie);
 await app.register(fastifyCors, {
-  origin: true, // Allow same-origin (Vite proxy in dev)
+  origin: true,
   credentials: true,
 });
 await app.register(fastifyWebSocket);
@@ -38,7 +27,6 @@ await app.register(commandRoutes);
 await app.register(savedServerRoutes);
 await app.register(configRoutes);
 
-// Health check (unauthenticated)
 app.get("/api/health", async () => {
   return { status: "ok" };
 });

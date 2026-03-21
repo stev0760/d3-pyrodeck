@@ -17,6 +17,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     connectionState,
     capabilities,
     error,
+    wsConnected,
     connect,
     disconnect,
     sendCommand,
@@ -55,12 +56,19 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             </span>
           )}
         </div>
-        <button
-          onClick={onLogout}
-          className="text-xs text-zinc-500 hover:text-zinc-400"
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-3">
+          {isConnected && (
+            <span className={`text-xs ${wsConnected ? "text-emerald-500" : "text-red-400"}`}>
+              WS: {wsConnected ? "live" : "disconnected"}
+            </span>
+          )}
+          <button
+            onClick={onLogout}
+            className="text-xs text-zinc-500 hover:text-zinc-400"
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-1 min-h-0">

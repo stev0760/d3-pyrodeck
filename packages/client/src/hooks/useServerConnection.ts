@@ -25,6 +25,7 @@ export function useServerConnection() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
@@ -37,11 +38,20 @@ export function useServerConnection() {
   }, []);
 
   const connectWs = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Close existing connection if any
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log("[Pyrodeck] WebSocket connected");
+      setWsConnected(true);
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -70,8 +80,14 @@ export function useServerConnection() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onerror = (event) => {
+      console.error("[Pyrodeck] WebSocket error:", event);
+    };
+
+    ws.onclose = (event) => {
+      console.log("[Pyrodeck] WebSocket closed:", event.code, event.reason);
       wsRef.current = null;
+      setWsConnected(false);
     };
   }, []);
 
@@ -114,6 +130,7 @@ export function useServerConnection() {
   const disconnect = useCallback(async () => {
     wsRef.current?.close();
     wsRef.current = null;
+    setWsConnected(false);
 
     await fetch("/api/server/disconnect", {
       method: "POST",
@@ -125,11 +142,15 @@ export function useServerConnection() {
   }, []);
 
   const sendCommand = useCallback((command: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({ type: "command", payload: { command } }),
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn(
+        "[Pyrodeck] Cannot send command — WebSocket not open. State:",
+        ws?.readyState,
       );
+      return;
     }
+    ws.send(JSON.stringify({ type: "command", payload: { command } }));
   }, []);
 
   const onOutput = useCallback((callback: (data: string) => void) => {
@@ -152,6 +173,7 @@ export function useServerConnection() {
     connectionState,
     capabilities,
     error,
+    wsConnected,
     connect,
     disconnect,
     sendCommand,

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import { isAuthenticated } from "./auth.js";
+// TODO: Re-enable auth import when web admin auth is added back
 import { sessionManager, responseParser, serializeCaps } from "./server.js";
 
 interface WsCommand {
@@ -10,14 +10,10 @@ interface WsCommand {
 
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
-    // Authenticate WebSocket via cookie
-    const token = request.cookies?.[
-      "pyrodeck_session"
-    ] as string | undefined;
-    if (!isAuthenticated(token)) {
-      socket.close(4001, "Not authenticated");
-      return;
-    }
+    // TODO: Re-enable web admin auth in a later phase.
+    // For now, the D3 server's console password is the only auth gate.
+
+    app.log.info("WebSocket client connected");
 
     const session = sessionManager.getActive();
 
@@ -56,6 +52,11 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
           payload: serializeCaps(session.capabilities),
         }),
       );
+      app.log.info(
+        "WebSocket client linked to session %s (state: %s)",
+        session.id,
+        session.state,
+      );
     } else {
       socket.send(
         JSON.stringify({
@@ -63,6 +64,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
           payload: { state: "disconnected" },
         }),
       );
+      app.log.info("WebSocket client connected but no active session");
     }
 
     socket.on("message", async (msg: Buffer | string) => {
@@ -82,29 +84,45 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
           }
 
           const command = data.payload.command;
-          const rawResponse = await activeSession.connection.send(command);
+          app.log.info("Sending command to D3 server: %s", command);
 
-          // Parse if we have a parser for this command
-          const commandName = command.split(" ")[0];
-          if (responseParser.has(commandName)) {
-            const parsed = responseParser.parse(commandName, rawResponse);
-            if (parsed.parsed) {
-              // Send structured data based on command type
-              const typeMap: Record<string, string> = {
-                "$scores": "players",
-                "$botlist": "bots",
-              };
-              const msgType = typeMap[commandName];
-              if (msgType) {
-                socket.send(
-                  JSON.stringify({ type: msgType, payload: parsed.parsed }),
-                );
+          try {
+            const rawResponse = await activeSession.connection.send(command);
+            app.log.info(
+              "Command response (%d bytes): %s",
+              rawResponse.length,
+              rawResponse.slice(0, 200),
+            );
+
+            // Parse if we have a parser for this command
+            const commandName = command.split(" ")[0];
+            if (responseParser.has(commandName)) {
+              const parsed = responseParser.parse(commandName, rawResponse);
+              if (parsed.parsed) {
+                const typeMap: Record<string, string> = {
+                  "$scores": "players",
+                  "$botlist": "bots",
+                };
+                const msgType = typeMap[commandName];
+                if (msgType) {
+                  socket.send(
+                    JSON.stringify({ type: msgType, payload: parsed.parsed }),
+                  );
+                }
               }
             }
+          } catch (cmdErr) {
+            const msg =
+              cmdErr instanceof Error ? cmdErr.message : String(cmdErr);
+            app.log.error("Command failed: %s", msg);
+            socket.send(
+              JSON.stringify({ type: "error", payload: { message: msg } }),
+            );
           }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        app.log.error("WebSocket message handler error: %s", message);
         socket.send(
           JSON.stringify({ type: "error", payload: { message } }),
         );
@@ -112,8 +130,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
     });
 
     socket.on("close", () => {
-      // Cleanup: nothing to do since dataHandler is garbage-collected
-      // when the session is removed
+      app.log.info("WebSocket client disconnected");
     });
   });
 }

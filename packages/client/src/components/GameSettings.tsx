@@ -86,7 +86,7 @@ export function GameSettings({ sendCommand }: GameSettingsProps) {
           <input
             type="range"
             min={5}
-            max={20}
+            max={40}
             value={pps}
             onChange={(e) => setPps(parseInt(e.target.value))}
             className="w-24"

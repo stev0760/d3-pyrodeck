@@ -33,3 +33,6 @@ packages/client/.vite/
 
 # Config (runtime, not source)
 config/servers.json
+
+# Dev log (local working notes)
+DEVLOG.md
