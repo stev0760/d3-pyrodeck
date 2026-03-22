@@ -9,6 +9,7 @@ import { PlayerList } from "./components/PlayerList.tsx";
 import { BotPanel } from "./components/BotPanel.tsx";
 import { ConfigEditor } from "./components/ConfigEditor.tsx";
 import { GameSettings } from "./components/GameSettings.tsx";
+import { CommandReference } from "./components/CommandReference.tsx";
 
 type Tab = "console" | "players" | "bots" | "config" | "settings";
 
@@ -110,9 +111,17 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           {/* Tab content */}
           <div className="flex-1 min-h-0 p-3">
             {activeTab === "console" && (
-              <div className="h-full">
+              <div className="h-full flex flex-col">
                 {isConnected ? (
-                  <Console onCommand={sendCommand} onOutput={onOutput} />
+                  <>
+                    <div className="flex-1 min-h-0">
+                      <Console onCommand={sendCommand} onOutput={onOutput} />
+                    </div>
+                    <CommandReference
+                      sendCommand={sendCommand}
+                      hasFeature={hasFeature}
+                    />
+                  </>
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <p className="text-zinc-600 text-lg">

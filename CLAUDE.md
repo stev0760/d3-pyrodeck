@@ -38,3 +38,4 @@ The D3 engine fork source is at `/home/steve/Projects/Descent3-mulitplayer-bots-
 - Output D3 server logs to project root for easy analysis (gitignored via `*.log`)
 - Test with empty server + add bots from web panel, not chaotic preset rosters
 - The spec (`D3_PYRODECK_SPEC.md`) defines what to build; `PLAN.md` tracks progress; `DEVLOG.md` (gitignored) is the working journal
+- **Keep `README.md` up to date** — update the current status, working features, and known limitations whenever significant changes land

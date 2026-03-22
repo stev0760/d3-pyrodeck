@@ -271,6 +271,11 @@ export class TelnetConnection implements ServerConnection {
     const result: number[] = [];
     let i = 0;
     while (i < data.length) {
+      // Strip null bytes — D3 sends \x00 as line prefixes in some responses
+      if (data[i] === 0x00) {
+        i++;
+        continue;
+      }
       if (data[i] === 0x01 && i + 3 < data.length) {
         // Skip the \x01 marker and 3 RGB bytes
         i += 4;
@@ -291,9 +296,11 @@ export class TelnetConnection implements ServerConnection {
     const lines = response.split("\n");
     const filtered = lines.filter((line) => {
       const trimmed = line.trim();
-      // Match echo pattern: [IP] command
-      if (trimmed.match(/^\[[\d.]+\]\s/) && trimmed.includes(command)) {
-        return false;
+      // Match echo pattern: optional [IP] prefix followed by the command
+      if (trimmed.match(/^(\[[\d.]+\]\s*)?/) && trimmed.includes(command)) {
+        // Only strip if the line is just the echo (with optional IP prefix), not a data line
+        const withoutIp = trimmed.replace(/^\[[\d.]+\]\s*/, "");
+        if (withoutIp === command) return false;
       }
       return true;
     });

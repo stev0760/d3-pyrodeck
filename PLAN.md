@@ -69,11 +69,42 @@ This is a living document tracking the implementation roadmap. The spec (`D3_PYR
 - [x] Fix auth — password sent once, wait-and-verify strategy (D3 closes on bad password)
 - [x] Fix kick/ban to use actual player numbers (pnum from `$scores` slot order)
 - [x] Verify `$servercaps` probe populates UI correctly (confirmed: Matcen 0.8.3)
-- [ ] `$kick`/`$ban` failing for bots — `CheckPlayerNum()` likely rejects bot pnums (no `NPF_CONNECTED`). Test with human player. May need Matcen fork patch.
-- [ ] Test with vanilla D3 server (graceful degradation)
+- [x] `$kick`/`$ban` confirmed working for human players
+- [x] Tested with vanilla D3 server — works correctly
 - [ ] Reconnection UX (banner, auto-retry with backoff)
 - [ ] Error toasts for transient failures
 - [ ] Web admin auth (re-add properly when core is stable)
+
+### Step 13: Console Command Reference Drawer (next)
+
+**Goal:** Add a collapsible command reference panel below the terminal so users can discover and execute commands without memorizing them or using `$help`.
+
+**UX research summary:**
+- **Bottom placement** chosen over sidebar — terminal needs full width for reading output, and the app already has a left sidebar. Vertical space is less critical than horizontal for terminal readability.
+- **Collapsible drawer** pattern (PatternFly/Welie.com) — space-efficient, shows only a toggle bar by default, expands on demand. Avoids the modal overlay of a command palette.
+- **IDE precedent** — VS Code, JetBrains, and Pterodactyl (game server admin panel, also React + xterm.js) all use terminal-first layout with controls around the terminal, not competing for horizontal space.
+- **Click-to-execute** — simple commands run immediately, commands with arguments show inline input. Follows game server admin conventions (Pterodactyl, FiveM, Roblox admin panels) where quick-action buttons are standard.
+- **Categorized grid** — commands grouped by function (Player, Team, Game, Server, Bots), not an alphabetical dump. Fuzzy search is overkill for ~30 commands; visual scanning of categories is faster.
+
+**Implementation plan:**
+- [ ] `CommandReference.tsx` — collapsible drawer component below the terminal
+  - Collapsed: thin bar with "Commands" label + chevron toggle
+  - Expanded: categorized command grid in chip/button style
+  - Bots category only shown when `hasFeature("bots")` is true
+- [ ] Click behavior:
+  - No-arg commands (`$players`, `$scores`, `$endlevel`): execute immediately via `sendCommand`
+  - Arg commands (`$kick <pnum>`, `$warp <level>`, `$addbot <name> [ship] [diff]`): show inline input with placeholder hints, execute on Enter/click
+- [ ] Console tab layout change: split into terminal (flex-1) + command drawer (auto height)
+- [ ] Persist collapsed/expanded state in localStorage
+- [ ] Style: consistent with existing amber/zinc theme
+
+**Command categories:**
+- **Players:** `$players`, `$scores`, `$playerinfo`, `$kick`, `$ban`, `$banlist`, `$removeban`
+- **Teams:** `$changeteam`, `$balance`, `$allowteamchange`, `$autobalance`, `$setteamname`
+- **Game:** `$settimelimit`, `$setgoallimit`, `$setmaxplayers`, `$setpps`, `$setrespawntime`
+- **Server:** `$endlevel`, `$warp`, `$wait`, `$netgameinfo`, `$serverhudnames`, `say`, `quit`
+- **Stats:** `$savestats`, `$autosavelevel`, `$autosavedisconnect`, `$statmsgs`, `$killmsgfilter`
+- **Bots (Matcen only):** `$addbot`, `$removebot`, `$removebots`, `$botlist`, `$botstat`, `$botdifficulty`, `$servercaps`
 
 ---
 
