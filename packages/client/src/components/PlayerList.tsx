@@ -14,15 +14,13 @@ interface PlayerScore {
 
 interface PlayerListProps {
   sendCommand: (command: string) => void;
-  onOutput: (callback: (data: string) => void) => () => void;
+  onPlayers: (callback: (data: unknown) => void) => () => void;
 }
 
-export function PlayerList({ sendCommand, onOutput }: PlayerListProps) {
+export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
   const [players, setPlayers] = useState<PlayerScore[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // Listen for parsed player data from WebSocket
-  // For now, we'll trigger $scores and parse client-side as a fallback
   const refresh = useCallback(() => {
     sendCommand("$scores");
   }, [sendCommand]);
@@ -35,79 +33,21 @@ export function PlayerList({ sendCommand, onOutput }: PlayerListProps) {
     return () => clearInterval(interval);
   }, [autoRefresh, refresh]);
 
-  // Parse $scores output from raw console data
+  // Receive structured player data from server-side parser
   useEffect(() => {
-    let buffer = "";
-    let collecting = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-
-    const unsubscribe = onOutput((data: string) => {
-      // Detect $scores output by looking for the header
-      if (data.includes("Pilot") && data.includes("Points")) {
-        collecting = true;
-        buffer = data;
-      } else if (collecting) {
-        buffer += data;
-      }
-
-      if (collecting) {
-        if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => {
-          // Parse the collected buffer
-          const lines = buffer.split("\n").map((l) => l.trimEnd());
-          const headerIdx = lines.findIndex(
-            (l) => l.includes("Pilot") && l.includes("Points"),
-          );
-          if (headerIdx === -1) {
-            collecting = false;
-            buffer = "";
-            return;
-          }
-
-          const parsed: PlayerScore[] = [];
-          for (let i = headerIdx + 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-
-            const isObserver = line.startsWith("*");
-            const cleaned = isObserver ? line.slice(1).trim() : line;
-            const colonIdx = cleaned.indexOf(":");
-            if (colonIdx === -1) continue;
-
-            const name = cleaned.slice(0, colonIdx).trim();
-            const rest = cleaned.slice(colonIdx + 1).trim();
-            const parts = rest.split(/\s+/);
-            if (parts.length < 5) continue;
-
-            const pingStr = parts[parts.length - 1];
-            const ping = pingStr === "---" ? null : parseInt(pingStr, 10);
-
-            // D3 lists players in slot order. Slot 0 is the dedicated server
-            // (never listed). So first entry = pnum 1, second = pnum 2, etc.
-            const pnum = parsed.length + 1;
-
-            parsed.push({
-              name,
-              pnum,
-              points: parseInt(parts[0], 10) || 0,
-              kills: parseInt(parts[1], 10) || 0,
-              deaths: parseInt(parts[2], 10) || 0,
-              suicides: parseInt(parts[3], 10) || 0,
-              ping: isNaN(ping as number) ? null : ping,
-              isBot: name.startsWith("[BOT]"),
-              isObserver,
-            });
-          }
-
-          if (parsed.length > 0) setPlayers(parsed);
-          collecting = false;
-          buffer = "";
-        }, 300);
+    const unsubscribe = onPlayers((data: unknown) => {
+      const payload = data as { players: PlayerScore[] };
+      if (payload.players) {
+        // Add pnum (1-based slot order) since server parser doesn't include it
+        const withPnum = payload.players.map((p, i) => ({
+          ...p,
+          pnum: i + 1,
+        }));
+        setPlayers(withPnum);
       }
     });
-
     return unsubscribe;
-  }, [onOutput]);
+  }, [onPlayers]);
 
   return (
     <div className="h-full flex flex-col">
@@ -187,29 +127,18 @@ export function PlayerList({ sendCommand, onOutput }: PlayerListProps) {
                   <td className="py-1.5 text-right">
                     {!p.isObserver && (
                       <div className="flex gap-1 justify-end">
-                        {p.isBot ? (
-                          <button
-                            onClick={() => sendCommand(`$removebot ${p.pnum}`)}
-                            className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
-                          >
-                            Remove
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => sendCommand(`$kick ${p.pnum}`)}
-                              className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
-                            >
-                              Kick
-                            </button>
-                            <button
-                              onClick={() => sendCommand(`$ban ${p.pnum}`)}
-                              className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
-                            >
-                              Ban
-                            </button>
-                          </>
-                        )}
+                        <button
+                          onClick={() => sendCommand(`$kick ${p.pnum}`)}
+                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
+                        >
+                          Kick
+                        </button>
+                        <button
+                          onClick={() => sendCommand(`$ban ${p.pnum}`)}
+                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
+                        >
+                          Ban
+                        </button>
                       </div>
                     )}
                   </td>

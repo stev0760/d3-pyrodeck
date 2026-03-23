@@ -23,6 +23,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     disconnect,
     sendCommand,
     onOutput,
+    onPlayers,
+    onBots,
     hasFeature,
   } = useServerConnection();
 
@@ -133,13 +135,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             )}
 
             {activeTab === "players" && isConnected && (
-              <PlayerList sendCommand={sendCommand} onOutput={onOutput} />
+              <PlayerList sendCommand={sendCommand} onPlayers={onPlayers} />
             )}
 
             {activeTab === "bots" && isConnected && (
               <BotPanel
                 sendCommand={sendCommand}
-                onOutput={onOutput}
+                onBots={onBots}
                 hasShips={hasFeature("ships")}
                 hasDifficulty={hasFeature("difficulty")}
               />

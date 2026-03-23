@@ -11,7 +11,7 @@ interface BotEntry {
 
 interface BotPanelProps {
   sendCommand: (command: string) => void;
-  onOutput: (callback: (data: string) => void) => () => void;
+  onBots: (callback: (data: unknown) => void) => () => void;
   hasShips: boolean;
   hasDifficulty: boolean;
 }
@@ -21,7 +21,7 @@ const DIFFICULTIES = ["trainee", "rookie", "hotshot", "ace", "insane"];
 
 export function BotPanel({
   sendCommand,
-  onOutput,
+  onBots,
   hasShips,
   hasDifficulty,
 }: BotPanelProps) {
@@ -41,55 +41,16 @@ export function BotPanel({
     return () => clearInterval(interval);
   }, [refresh]);
 
-  // Parse $botlist output
+  // Receive structured bot data from server-side parser
   useEffect(() => {
-    let buffer = "";
-    let collecting = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-
-    const unsubscribe = onOutput((data: string) => {
-      if (data.includes("No bots active")) {
-        setBots([]);
-        return;
-      }
-
-      if (data.includes("Bot ") && data.includes("slot=")) {
-        collecting = true;
-        buffer = data;
-      } else if (collecting) {
-        buffer += data;
-      }
-
-      if (collecting) {
-        if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => {
-          const parsed: BotEntry[] = [];
-          for (const line of buffer.split("\n")) {
-            const match = line
-              .trim()
-              .match(
-                /Bot (\d+): '(.+?)' slot=(\d+) ship=(\S+) diff=(\S+) \((alive|dead)\)/,
-              );
-            if (match) {
-              parsed.push({
-                index: parseInt(match[1], 10),
-                callsign: match[2],
-                slot: parseInt(match[3], 10),
-                ship: match[4],
-                difficulty: match[5],
-                alive: match[6] === "alive",
-              });
-            }
-          }
-          if (parsed.length > 0) setBots(parsed);
-          collecting = false;
-          buffer = "";
-        }, 300);
+    const unsubscribe = onBots((data: unknown) => {
+      const payload = data as { bots: BotEntry[] };
+      if (payload.bots) {
+        setBots(payload.bots);
       }
     });
-
     return unsubscribe;
-  }, [onOutput]);
+  }, [onBots]);
 
   const addBot = () => {
     if (!newName.trim()) return;

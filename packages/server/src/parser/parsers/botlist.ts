@@ -31,7 +31,7 @@ export function parseBotlist(raw: string): ParsedBotList | null {
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     const match = trimmed.match(
-      /Bot (\d+): '(.+?)' slot=(\d+) ship=(\S+) diff=(\S+) \((alive|dead)\)/,
+      /Bot (\d+): '(.+?)' slot=(\d+) ship=(.+?) diff=(\S+) \((alive|dead)\)/,
     );
     if (match) {
       bots.push({

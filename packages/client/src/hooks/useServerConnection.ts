@@ -29,6 +29,8 @@ export function useServerConnection() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
+  const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
 
   // Cleanup WebSocket on unmount
   useEffect(() => {
@@ -61,6 +63,16 @@ export function useServerConnection() {
           case "output":
             for (const cb of outputCallbacksRef.current) {
               cb((msg.payload as { raw: string }).raw);
+            }
+            break;
+          case "players":
+            for (const cb of playersCallbacksRef.current) {
+              cb(msg.payload);
+            }
+            break;
+          case "bots":
+            for (const cb of botsCallbacksRef.current) {
+              cb(msg.payload);
             }
             break;
           case "connection_state":
@@ -162,6 +174,24 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onPlayers = useCallback((callback: (data: unknown) => void) => {
+    playersCallbacksRef.current.push(callback);
+    return () => {
+      playersCallbacksRef.current = playersCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
+  const onBots = useCallback((callback: (data: unknown) => void) => {
+    botsCallbacksRef.current.push(callback);
+    return () => {
+      botsCallbacksRef.current = botsCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const hasFeature = useCallback(
     (feature: string): boolean => {
       return capabilities?.features.includes(feature) ?? false;
@@ -178,6 +208,8 @@ export function useServerConnection() {
     disconnect,
     sendCommand,
     onOutput,
+    onPlayers,
+    onBots,
     hasFeature,
   };
 }
