@@ -19,6 +19,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     capabilities,
     error,
     wsConnected,
+    wsReconnecting,
     connect,
     disconnect,
     sendCommand,
@@ -73,6 +74,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </button>
         </div>
       </header>
+
+      {/* Reconnection banner */}
+      {wsReconnecting && (
+        <div className="px-4 py-2 bg-amber-900/50 border-b border-amber-700/50 text-amber-300 text-sm text-center shrink-0">
+          Connection lost — Reconnecting...
+        </div>
+      )}
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}

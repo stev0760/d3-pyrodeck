@@ -26,15 +26,23 @@ export function useServerConnection() {
   );
   const [error, setError] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsReconnecting, setWsReconnecting] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectDelayRef = useRef(1000);
+  const shouldReconnectRef = useRef(false);
 
-  // Cleanup WebSocket on unmount
+  // Cleanup WebSocket and reconnect timer on unmount
   useEffect(() => {
     return () => {
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
       wsRef.current?.close();
     };
   }, []);
@@ -53,6 +61,8 @@ export function useServerConnection() {
     ws.onopen = () => {
       console.log("[Pyrodeck] WebSocket connected");
       setWsConnected(true);
+      setWsReconnecting(false);
+      reconnectDelayRef.current = 1000; // Reset backoff on successful connect
     };
 
     ws.onmessage = (event) => {
@@ -75,11 +85,16 @@ export function useServerConnection() {
               cb(msg.payload);
             }
             break;
-          case "connection_state":
-            setConnectionState(
-              (msg.payload as { state: ConnectionState }).state,
-            );
+          case "connection_state": {
+            const newState = (msg.payload as { state: ConnectionState }).state;
+            setConnectionState(newState);
+            // If server reports disconnected, stop reconnecting
+            if (newState === "disconnected") {
+              shouldReconnectRef.current = false;
+              setWsReconnecting(false);
+            }
             break;
+          }
           case "capabilities":
             setCapabilities(msg.payload as unknown as ServerCapabilities);
             break;
@@ -100,6 +115,21 @@ export function useServerConnection() {
       console.log("[Pyrodeck] WebSocket closed:", event.code, event.reason);
       wsRef.current = null;
       setWsConnected(false);
+
+      // Auto-reconnect with exponential backoff
+      if (shouldReconnectRef.current) {
+        const delay = reconnectDelayRef.current;
+        console.log(`[Pyrodeck] Reconnecting in ${delay}ms...`);
+        setWsReconnecting(true);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (shouldReconnectRef.current) {
+            connectWs();
+          }
+        }, delay);
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+        reconnectDelayRef.current = Math.min(delay * 2, 30000);
+      }
     };
   }, []);
 
@@ -127,7 +157,8 @@ export function useServerConnection() {
         setConnectionState(data.state);
         setCapabilities(data.capabilities);
 
-        // Open WebSocket for live streaming
+        // Open WebSocket for live streaming with auto-reconnect
+        shouldReconnectRef.current = true;
         connectWs();
         return true;
       } catch (err) {
@@ -140,6 +171,12 @@ export function useServerConnection() {
   );
 
   const disconnect = useCallback(async () => {
+    shouldReconnectRef.current = false;
+    setWsReconnecting(false);
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     wsRef.current?.close();
     wsRef.current = null;
     setWsConnected(false);
@@ -204,6 +241,7 @@ export function useServerConnection() {
     capabilities,
     error,
     wsConnected,
+    wsReconnecting,
     connect,
     disconnect,
     sendCommand,

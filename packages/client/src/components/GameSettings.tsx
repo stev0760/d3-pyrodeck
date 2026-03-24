@@ -60,7 +60,7 @@ function NumberSetting({
 }
 
 export function GameSettings({ sendCommand }: GameSettingsProps) {
-  const [pps, setPps] = useState(12);
+  const [pps, setPps] = useState(30);
   const [hudNames, setHudNames] = useState("full");
   const [warpLevel, setWarpLevel] = useState("1");
   const [confirmQuit, setConfirmQuit] = useState(false);
