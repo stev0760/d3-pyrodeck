@@ -64,61 +64,57 @@ This is a living document tracking the implementation roadmap. The spec (`D3_PYR
 - Save/load connection profiles (name, host, port — no password stored)
 - Stored in `config/servers.json`
 
-### Step 12: Bug Fixes & Polish (in progress)
+### Step 12: Bug Fixes & Polish ✅
 - [x] Fix D3 color code stripping (strip `\x01` + 3 RGB bytes from raw Buffer before UTF-8)
+- [x] Fix null byte stripping (`\x00` in `$servercaps` response)
 - [x] Fix auth — password sent once, wait-and-verify strategy (D3 closes on bad password)
 - [x] Fix kick/ban to use actual player numbers (pnum from `$scores` slot order)
-- [x] Verify `$servercaps` probe populates UI correctly (confirmed: Matcen 0.8.3)
+- [x] Fix echo stripping for commands without `[IP]` prefix
+- [x] Fix multi-word ship name parsing in `$botlist` ("Black Pyro")
+- [x] Fix player panel: uniform Kick/Ban for all players (bots are players)
+- [x] Verify `$servercaps` probe populates UI correctly (confirmed: Matcen 0.8.4)
 - [x] `$kick`/`$ban` confirmed working for human players
-- [x] Tested with vanilla D3 server — works correctly
-- [ ] Reconnection UX (banner, auto-retry with backoff)
-- [ ] Error toasts for transient failures
-- [ ] Web admin auth (re-add properly when core is stable)
+- [x] Tested with vanilla D3 1.4, open-source D3, and Matcen fork — all work
+- [x] Switch PlayerList/BotPanel from raw output parsing to structured WebSocket messages
+- [x] WebSocket auto-reconnect with exponential backoff (1s to 30s max) + connection-lost banner
+- [x] Error toast notifications (bottom-right, auto-dismiss after 5s)
+- [x] PPS default fixed from 12 to 30
+- [ ] Web admin auth (deferred per CLAUDE.md — re-add when core is stable)
 
-### Step 13: Console Command Reference Drawer (next)
-
-**Goal:** Add a collapsible command reference panel below the terminal so users can discover and execute commands without memorizing them or using `$help`.
-
-**UX research summary:**
-- **Bottom placement** chosen over sidebar — terminal needs full width for reading output, and the app already has a left sidebar. Vertical space is less critical than horizontal for terminal readability.
-- **Collapsible drawer** pattern (PatternFly/Welie.com) — space-efficient, shows only a toggle bar by default, expands on demand. Avoids the modal overlay of a command palette.
-- **IDE precedent** — VS Code, JetBrains, and Pterodactyl (game server admin panel, also React + xterm.js) all use terminal-first layout with controls around the terminal, not competing for horizontal space.
-- **Click-to-execute** — simple commands run immediately, commands with arguments show inline input. Follows game server admin conventions (Pterodactyl, FiveM, Roblox admin panels) where quick-action buttons are standard.
-- **Categorized grid** — commands grouped by function (Player, Team, Game, Server, Bots), not an alphabetical dump. Fuzzy search is overkill for ~30 commands; visual scanning of categories is faster.
-
-**Implementation plan:**
-- [ ] `CommandReference.tsx` — collapsible drawer component below the terminal
-  - Collapsed: thin bar with "Commands" label + chevron toggle
-  - Expanded: categorized command grid in chip/button style
-  - Bots category only shown when `hasFeature("bots")` is true
-- [ ] Click behavior:
-  - No-arg commands (`$players`, `$scores`, `$endlevel`): execute immediately via `sendCommand`
-  - Arg commands (`$kick <pnum>`, `$warp <level>`, `$addbot <name> [ship] [diff]`): show inline input with placeholder hints, execute on Enter/click
-- [ ] Console tab layout change: split into terminal (flex-1) + command drawer (auto height)
-- [ ] Persist collapsed/expanded state in localStorage
-- [ ] Style: consistent with existing amber/zinc theme
-
-**Command categories:**
-- **Players:** `$players`, `$scores`, `$playerinfo`, `$kick`, `$ban`, `$banlist`, `$removeban`
-- **Teams:** `$changeteam`, `$balance`, `$allowteamchange`, `$autobalance`, `$setteamname`
-- **Game:** `$settimelimit`, `$setgoallimit`, `$setmaxplayers`, `$setpps`, `$setrespawntime`
-- **Server:** `$endlevel`, `$warp`, `$wait`, `$netgameinfo`, `$serverhudnames`, `say`, `quit`
-- **Stats:** `$savestats`, `$autosavelevel`, `$autosavedisconnect`, `$statmsgs`, `$killmsgfilter`
-- **Bots (Matcen only):** `$addbot`, `$removebot`, `$removebots`, `$botlist`, `$botstat`, `$botdifficulty`, `$servercaps`
+### Step 13: Console Command Reference Drawer ✅
+- Collapsible drawer below the terminal with 6 command categories
+- Click-to-execute for no-arg commands, inline inputs for commands with arguments
+- Bots category gated on `$servercaps` feature detection
+- State persisted in localStorage
 
 ---
 
-## Phase 2 — Windows Launch Mode & Packaging
+## Phase 2 — Launch Mode & Packaging
 
-**Goal:** Spawn and manage a local D3 server process. Single-exe distribution.
+**Goal:** Add local server management alongside existing remote admin. Same dashboard, different connection entry point.
 
-- [ ] Spawn D3 dedicated server via child_process / Bun subprocess
-- [ ] Auto-generate `dedicated.cfg` if missing
-- [ ] First-run setup wizard (locate D3 install, set config dir)
-- [ ] Stop Server button (graceful: `Quit` command → wait → SIGTERM)
-- [ ] Process state display (running/stopped/crashed)
-- [ ] Auto-restart on crash/hang (configurable, with hang detection via telnet keepalive)
-- [ ] Multiple server instances on different ports
+- **Connect Mode** (existing): User enters host/port/password → telnet to remote server
+- **Launch Mode** (new): User configures + launches a local D3 process → Pyrodeck auto-connects via telnet to localhost
+
+Once connected, Console/Players/Bots/Settings all work identically.
+
+### UI Reorganization
+- [ ] Sidebar mode toggle (Connect / Launch)
+- [ ] Config tab visibility: hidden in Connect mode, shown in Launch mode
+- [ ] LaunchForm component (D3 path, config file, port, password, Launch/Stop, status)
+
+### Launch Mode Backend
+- [ ] Pyrodeck config (`config/pyrodeck.json` — D3 install path, defaults)
+- [ ] ProcessManager (spawn D3 via child_process, state tracking, graceful shutdown)
+- [ ] Launch routes (`/api/server/launch`, `/api/server/stop`, `/api/server/process-status`)
+- [ ] Default `dedicated.cfg` generation
+- [ ] First-run setup (validate D3 path)
+
+### Launch Mode Frontend
+- [ ] LaunchForm with process status indicator
+- [ ] Stream D3 stdout/stderr to console during startup
+
+### Packaging (after Launch Mode works)
 - [ ] Package as single Windows `.exe` (evaluate Bun `--compile` vs Node SEA)
 
 ---

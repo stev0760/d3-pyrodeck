@@ -6,22 +6,39 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**Phase 1 (Connect Mode MVP)** — mostly complete, in bug-fix/polish stage.
+**Phase 1 (Connect Mode) — complete.**
 
-Working:
-- Connect to a running D3 dedicated server via telnet from your browser
-- Live console with command input, history, and scrollback (xterm.js)
-- Auto-detect Matcen fork via `$servercaps` probe (shows version, enables bot features)
-- Player scoreboard with auto-refresh
-- Add/remove bots with ship and difficulty selection (Matcen fork only)
-- Game settings: max players, PPS, time limit, kill goal, respawn time
-- Server controls: end level, warp, quit
-- Config file editor
-- Saved server profiles
+Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4. Connects to any D3 dedicated server via its remote console (plain TCP on port 2092).
 
-Known limitations:
-- Web admin auth is disabled for now (D3 console password is the only auth layer)
-- Single server connection only (multi-server is planned)
+## Features
+
+### Console
+- Live terminal (xterm.js) with command input, history (up/down), and 5000-line scrollback
+- Collapsible command reference drawer below the terminal — 6 categories (Players, Teams, Game, Server, Stats, Bots), click-to-execute for simple commands, inline argument inputs for commands with parameters
+- D3 color codes and null bytes stripped from output
+
+### Players
+- Auto-refreshing scoreboard from `$scores` (name, points, kills, deaths, suicides, ping)
+- Kick and ban controls per player
+
+### Bots (Matcen fork only)
+- Auto-detected via `$servercaps` probe — bot controls only appear when connected to a Matcen fork server
+- Add bots with name, ship, and difficulty selection
+- Active bot list with remove controls
+
+### Game Settings
+- Live controls: max players, PPS (default 30), time limit, kill goal, respawn time, HUD names
+- Server actions: end level, warp to mission, balance teams, quit (with confirmation)
+
+### Config
+- File list with editor for `dedicated.cfg` and other server config files
+- Warning banner for changes that require server restart
+
+### Connection Management
+- Saved server profiles (name, host, port) with quick-select
+- WebSocket auto-reconnect with exponential backoff (1s to 30s)
+- "Connection lost" banner during reconnection attempts
+- Error toast notifications for transient failures (auto-dismiss after 5s)
 
 ## Requirements
 
@@ -56,20 +73,40 @@ Then open http://localhost:5173 and enter your D3 server's host, port, and conso
 Your `dedicated.cfg` needs these settings to allow remote console access:
 
 ```
-AllowRemoteConsole 1
-RemoteConsolePort 2092
-ConsolePassword yourpassword
+AllowRemoteConsole=1
+RemoteConsolePort=2092
+ConsolePassword=yourpassword
 ```
+
+## Tech Stack
+
+| Layer | Choice |
+|-------|--------|
+| Backend | Fastify + TypeScript |
+| Frontend | React 19 + Vite 8 + TailwindCSS v4 |
+| Terminal | xterm.js |
+| Transport | Plain TCP (D3's "telnet" is not actual telnet IAC) |
+| Package manager | pnpm (monorepo workspaces) |
 
 ## Project Structure
 
 ```
 packages/
-  server/     Fastify + TypeScript backend, telnet transport, parser framework
-  client/     React 19 + Vite 8 + TailwindCSS v4 frontend
+  server/     Fastify backend, telnet transport, parser framework
+  client/     React frontend with xterm.js console
+docs/
+  d3-dedicated-server-reference.md   Complete D3 server command & config reference
 ```
 
 ## Documentation
 
 - `D3_PYRODECK_SPEC.md` — full project specification
 - `PLAN.md` — development roadmap and progress
+- `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
+- `CLAUDE.md` — project conventions and architecture notes
+
+## Known Limitations
+
+- Web admin auth is disabled (D3 console password is the only auth layer)
+- Single server connection only (multi-server is planned)
+- Config editor is a plain textarea (CodeMirror planned for later)
