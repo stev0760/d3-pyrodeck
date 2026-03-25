@@ -7,6 +7,7 @@ import { serverRoutes } from "./routes/server.js";
 import { commandRoutes } from "./routes/command.js";
 import { savedServerRoutes } from "./routes/saved-servers.js";
 import { configRoutes } from "./routes/config.js";
+import { pyrodeckConfigRoutes } from "./routes/pyrodeck-config.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
 
@@ -26,6 +27,7 @@ await app.register(serverRoutes);
 await app.register(commandRoutes);
 await app.register(savedServerRoutes);
 await app.register(configRoutes);
+await app.register(pyrodeckConfigRoutes);
 
 app.get("/api/health", async () => {
   return { status: "ok" };
