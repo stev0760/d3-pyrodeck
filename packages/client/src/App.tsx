@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "./hooks/useAuth.ts";
 import { useServerConnection } from "./hooks/useServerConnection.ts";
+import { useToast } from "./hooks/useToast.ts";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
 import { SavedServers } from "./components/SavedServers.tsx";
@@ -10,6 +11,7 @@ import { BotPanel } from "./components/BotPanel.tsx";
 import { ConfigEditor } from "./components/ConfigEditor.tsx";
 import { GameSettings } from "./components/GameSettings.tsx";
 import { CommandReference } from "./components/CommandReference.tsx";
+import { ToastContainer } from "./components/ToastContainer.tsx";
 
 type Tab = "console" | "players" | "bots" | "config" | "settings";
 
@@ -28,6 +30,17 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     onBots,
     hasFeature,
   } = useServerConnection();
+
+  const { toasts, addToast, dismissToast } = useToast();
+  const prevErrorRef = useRef<string | null>(null);
+
+  // Surface server errors as toasts
+  useEffect(() => {
+    if (error && error !== prevErrorRef.current) {
+      addToast(error);
+    }
+    prevErrorRef.current = error;
+  }, [error, addToast]);
 
   const [activeTab, setActiveTab] = useState<Tab>("console");
   const [connectHost, setConnectHost] = useState("localhost");
@@ -163,6 +176,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </div>
         </main>
       </div>
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
