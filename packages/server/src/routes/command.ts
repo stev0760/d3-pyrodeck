@@ -8,8 +8,22 @@ interface WsCommand {
   payload: { command: string };
 }
 
+/** Connected WebSocket clients for broadcasting. */
+const wsClients = new Set<WebSocket>();
+
+/** Broadcast a message to all connected WebSocket clients. */
+export function wsBroadcast(type: string, payload: Record<string, unknown>): void {
+  const msg = JSON.stringify({ type, payload });
+  for (const ws of wsClients) {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(msg);
+    }
+  }
+}
+
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
+    wsClients.add(socket);
     // TODO: Re-enable web admin auth in a later phase.
     // For now, the D3 server's console password is the only auth gate.
 
@@ -130,6 +144,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
     });
 
     socket.on("close", () => {
+      wsClients.delete(socket);
       app.log.info("WebSocket client disconnected");
     });
   });
