@@ -21,6 +21,28 @@ export function wsBroadcast(type: string, payload: Record<string, unknown>): voi
   }
 }
 
+/**
+ * Wire up telnet data streaming from the active session to all connected WS clients.
+ * Called when a new session is created (by Connect Mode or Launch Mode).
+ */
+export function wireSessionToClients(): void {
+  const session = sessionManager.getActive();
+  if (!session) return;
+
+  session.connection.onData((data: string) => {
+    const msg = JSON.stringify({ type: "output", payload: { raw: data } });
+    for (const ws of wsClients) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(msg);
+      }
+    }
+  });
+
+  session.connection.onDisconnect((reason: string) => {
+    wsBroadcast("connection_state", { state: "disconnected", reason });
+  });
+}
+
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
     wsClients.add(socket);
@@ -31,28 +53,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
 
     const session = sessionManager.getActive();
 
-    // Stream raw telnet output to the WebSocket client
-    const dataHandler = (data: string) => {
-      if (socket.readyState === socket.OPEN) {
-        socket.send(JSON.stringify({ type: "output", payload: { raw: data } }));
-      }
-    };
-
-    const disconnectHandler = (reason: string) => {
-      if (socket.readyState === socket.OPEN) {
-        socket.send(
-          JSON.stringify({
-            type: "connection_state",
-            payload: { state: "disconnected", reason },
-          }),
-        );
-      }
-    };
-
     if (session) {
-      session.connection.onData(dataHandler);
-      session.connection.onDisconnect(disconnectHandler);
-
       // Send current state and capabilities on connect
       socket.send(
         JSON.stringify({

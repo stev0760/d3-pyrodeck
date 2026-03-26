@@ -49,9 +49,15 @@ export function useServerConnection() {
 
 
   const connectWs = useCallback(() => {
-    // Close existing connection if any
+    // Close existing connection if any — clear handlers to prevent
+    // stale onclose from clobbering the new WS reference
     if (wsRef.current) {
-      wsRef.current.close();
+      const old = wsRef.current;
+      old.onopen = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.onclose = null;
+      old.close();
       wsRef.current = null;
     }
 
@@ -89,11 +95,6 @@ export function useServerConnection() {
           case "connection_state": {
             const newState = (msg.payload as { state: ConnectionState }).state;
             setConnectionState(newState);
-            // If server reports disconnected, stop reconnecting
-            if (newState === "disconnected") {
-              shouldReconnectRef.current = false;
-              setWsReconnecting(false);
-            }
             break;
           }
           case "capabilities":
@@ -113,6 +114,9 @@ export function useServerConnection() {
     };
 
     ws.onclose = (event) => {
+      // Only handle close if this is still the current WS
+      if (wsRef.current !== ws) return;
+
       console.log("[Pyrodeck] WebSocket closed:", event.code, event.reason);
       wsRef.current = null;
       setWsConnected(false);
@@ -134,21 +138,11 @@ export function useServerConnection() {
     };
   }, []);
 
-  // Check for existing session on mount (e.g. Launch Mode started via API)
+  // Always open WebSocket on mount so we can receive broadcasts
+  // (e.g. Launch Mode auto-connect, process state changes)
   useEffect(() => {
-    fetch("/api/server/status", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.state === "ready" && data.capabilities) {
-          setConnectionState("ready");
-          setCapabilities(data.capabilities);
-          shouldReconnectRef.current = true;
-          connectWs();
-        }
-      })
-      .catch(() => {
-        // Ignore — no session
-      });
+    shouldReconnectRef.current = true;
+    connectWs();
   }, [connectWs]);
 
   const connect = useCallback(
@@ -174,10 +168,6 @@ export function useServerConnection() {
 
         setConnectionState(data.state);
         setCapabilities(data.capabilities);
-
-        // Open WebSocket for live streaming with auto-reconnect
-        shouldReconnectRef.current = true;
-        connectWs();
         return true;
       } catch (err) {
         setConnectionState("disconnected");
@@ -185,25 +175,21 @@ export function useServerConnection() {
         return false;
       }
     },
-    [connectWs],
+    [],
   );
 
   const disconnect = useCallback(async () => {
-    shouldReconnectRef.current = false;
-    setWsReconnecting(false);
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
+    try {
+      await fetch("/api/server/disconnect", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // Server may be unreachable
     }
-    wsRef.current?.close();
-    wsRef.current = null;
-    setWsConnected(false);
 
-    await fetch("/api/server/disconnect", {
-      method: "POST",
-      credentials: "include",
-    });
-
+    // Server will broadcast connection_state: disconnected via WS,
+    // but set it locally too for immediate UI feedback
     setConnectionState("disconnected");
     setCapabilities(null);
   }, []);

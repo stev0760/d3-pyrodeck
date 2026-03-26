@@ -13,7 +13,7 @@ import {
   type ServerCapabilities,
 } from "../parser/parsers/servercaps.js";
 import { sessionManager, serializeCaps } from "./server.js";
-import { wsBroadcast } from "./command.js";
+import { wsBroadcast, wireSessionToClients } from "./command.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 
 export const processManager = new ProcessManager();
@@ -136,6 +136,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
         sessionManager.updateCapabilities(session.id, capabilities);
         sessionManager.updateState(session.id, "ready");
+        wireSessionToClients();
 
         // Wire up graceful quit
         processManager.sendQuitFn = async () => {

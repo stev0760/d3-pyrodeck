@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth } from "./hooks/useAuth.ts";
 import { useServerConnection } from "./hooks/useServerConnection.ts";
 import { useToast } from "./hooks/useToast.ts";
+import { useLauncher } from "./hooks/useLauncher.ts";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
 import { SavedServers } from "./components/SavedServers.tsx";
@@ -12,6 +13,8 @@ import { ConfigEditor } from "./components/ConfigEditor.tsx";
 import { GameSettings } from "./components/GameSettings.tsx";
 import { CommandReference } from "./components/CommandReference.tsx";
 import { ToastContainer } from "./components/ToastContainer.tsx";
+import { ModeToggle, type AppMode } from "./components/ModeToggle.tsx";
+import { LaunchPanel } from "./components/LaunchPanel.tsx";
 
 type Tab = "console" | "players" | "bots" | "config" | "settings";
 
@@ -31,6 +34,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     hasFeature,
   } = useServerConnection();
 
+  const launcher = useLauncher();
   const { toasts, addToast, dismissToast } = useToast();
   const prevErrorRef = useRef<string | null>(null);
 
@@ -42,9 +46,26 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     prevErrorRef.current = error;
   }, [error, addToast]);
 
+  // Surface launcher errors as toasts
+  const prevLauncherErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (launcher.error && launcher.error !== prevLauncherErrorRef.current) {
+      addToast(launcher.error);
+    }
+    prevLauncherErrorRef.current = launcher.error;
+  }, [launcher.error, addToast]);
+
+  const [mode, setMode] = useState<AppMode>(() => {
+    return (localStorage.getItem("pyrodeck-mode") as AppMode) ?? "connect";
+  });
   const [activeTab, setActiveTab] = useState<Tab>("console");
   const [connectHost, setConnectHost] = useState("localhost");
   const [connectPort, setConnectPort] = useState(2092);
+
+  const handleModeChange = (newMode: AppMode) => {
+    setMode(newMode);
+    localStorage.setItem("pyrodeck-mode", newMode);
+  };
 
   const isConnected = connectionState === "ready";
 
@@ -52,7 +73,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     { id: "console", label: "Console", show: true },
     { id: "players", label: "Players", show: isConnected },
     { id: "bots", label: "Bots", show: isConnected && hasFeature("bots") },
-    { id: "config", label: "Config", show: true },
+    { id: "config", label: "Config", show: mode === "launch" },
     { id: "settings", label: "Settings", show: isConnected },
   ];
 
@@ -98,16 +119,24 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside className="w-72 shrink-0 border-r border-zinc-800 p-3 overflow-y-auto flex flex-col">
-          <SavedServers onSelect={handleServerSelect} />
-          <ConnectionForm
-            connectionState={connectionState}
-            capabilities={capabilities}
-            error={error}
-            onConnect={connect}
-            onDisconnect={disconnect}
-            initialHost={connectHost}
-            initialPort={connectPort}
-          />
+          <ModeToggle mode={mode} onChange={handleModeChange} />
+
+          {mode === "connect" ? (
+            <>
+              <SavedServers onSelect={handleServerSelect} />
+              <ConnectionForm
+                connectionState={connectionState}
+                capabilities={capabilities}
+                error={error}
+                onConnect={connect}
+                onDisconnect={disconnect}
+                initialHost={connectHost}
+                initialPort={connectPort}
+              />
+            </>
+          ) : (
+            <LaunchPanel launcher={launcher} />
+          )}
         </aside>
 
         {/* Main content */}
@@ -148,7 +177,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <p className="text-zinc-600 text-lg">
-                      Connect to a D3 server to get started
+                      {mode === "connect"
+                        ? "Connect to a D3 server to get started"
+                        : "Launch a D3 server to get started"}
                     </p>
                   </div>
                 )}

@@ -7,6 +7,7 @@ import {
   type ServerCapabilities,
 } from "../parser/parsers/servercaps.js";
 import { SessionManager } from "../session/SessionManager.js";
+import { wireSessionToClients } from "./command.js";
 
 export const sessionManager = new SessionManager();
 export const responseParser = new ResponseParser();
@@ -77,6 +78,7 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
 
       sessionManager.updateCapabilities(session.id, capabilities);
       sessionManager.updateState(session.id, "ready");
+      wireSessionToClients();
 
       return {
         sessionId: session.id,

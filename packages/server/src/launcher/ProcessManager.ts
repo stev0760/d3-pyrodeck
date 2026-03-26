@@ -80,7 +80,7 @@ export class ProcessManager extends EventEmitter {
 
     this.child = spawn(exePath, ["-dedicated", `./${config.configFile}`], {
       cwd: config.d3Path,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         // D3 dedicated doesn't need a real display but SDL may require this
@@ -94,16 +94,29 @@ export class ProcessManager extends EventEmitter {
     this.status.exitSignal = null;
     this.status.stoppedAt = null;
 
+    // Drain stdout/stderr to prevent SIGPIPE if D3 writes faster than we read
     this.child.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf-8");
-      this.emit("stdout", text);
-      this.checkStdoutForReadiness(text);
+      try {
+        const text = chunk.toString("utf-8");
+        this.emit("stdout", text);
+        this.checkStdoutForReadiness(text);
+      } catch {
+        // Never let handler errors break the pipe
+      }
     });
 
     this.child.stderr?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf-8");
-      this.emit("stderr", text);
+      try {
+        const text = chunk.toString("utf-8");
+        this.emit("stderr", text);
+      } catch {
+        // Never let handler errors break the pipe
+      }
     });
+
+    // Prevent unhandled errors on streams from killing the process
+    this.child.stdout?.on("error", () => {});
+    this.child.stderr?.on("error", () => {});
 
     this.child.on("error", (err) => {
       this.cleanup();
