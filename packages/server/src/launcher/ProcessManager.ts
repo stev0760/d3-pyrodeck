@@ -78,9 +78,14 @@ export class ProcessManager extends EventEmitter {
 
     const exePath = path.join(config.d3Path, config.executable);
 
-    this.child = spawn(exePath, ["-d", config.configFile], {
+    this.child = spawn(exePath, ["-dedicated", `./${config.configFile}`], {
       cwd: config.d3Path,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // D3 dedicated doesn't need a real display but SDL may require this
+        SDL_VIDEODRIVER: process.env.SDL_VIDEODRIVER ?? "dummy",
+      },
     });
 
     this.status.pid = this.child.pid ?? null;

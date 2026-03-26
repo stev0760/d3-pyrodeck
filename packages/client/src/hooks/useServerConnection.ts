@@ -47,6 +47,7 @@ export function useServerConnection() {
     };
   }, []);
 
+
   const connectWs = useCallback(() => {
     // Close existing connection if any
     if (wsRef.current) {
@@ -132,6 +133,23 @@ export function useServerConnection() {
       }
     };
   }, []);
+
+  // Check for existing session on mount (e.g. Launch Mode started via API)
+  useEffect(() => {
+    fetch("/api/server/status", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.state === "ready" && data.capabilities) {
+          setConnectionState("ready");
+          setCapabilities(data.capabilities);
+          shouldReconnectRef.current = true;
+          connectWs();
+        }
+      })
+      .catch(() => {
+        // Ignore — no session
+      });
+  }, [connectWs]);
 
   const connect = useCallback(
     async (host: string, port: number, password: string) => {
