@@ -53,24 +53,28 @@ Comprehensive reference for running and managing Descent 3 dedicated servers. Co
 
 The config file uses `Key=Value` syntax, one option per line. Loaded at server startup via `-dedicated myconfig.cfg`.
 
+All CVars are registered in `dedicated_server.cpp:165-210`. Most are **GAMEINIT** (startup-only). A few are **GAMEPLAY** (runtime-changeable).
+
 ### Core Settings
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `GameName=[string]` | Server name shown in server browser | |
-| `MissionName=[string]` | Mission file to load (.mn3) | |
-| `ScriptName=[string]` | Game type DLL name | Anarchy |
-| `MaxPlayers=[num]` | Player limit (includes server slot 0) | |
-| `NumTeams=[num]` | Number of teams for team game types | 2 |
-| `Timelimit=[num]` | Level duration in minutes (0 = no limit) | |
-| `Killgoal=[num]` | Kills/points to end level (0 = no limit) | |
-| `RespawnTime=[num]` | Powerup respawn time in seconds | |
-| `PPS=[num]` | Packets per second sent to each client (30 recommended) | |
-| `SetDifficulty=[0-4]` | Difficulty: 0=Trainee, 1=Rookie, 2=Hotshot, 3=Ace, 4=Insane | |
-| `SetLevel=[num]` | Starting level number in the mission | |
-| `MOTD=[string]` | Message of the day shown to joining players | |
+| Parameter | Type | Range | Default | Permission | Description |
+|-----------|------|-------|---------|-----------|-------------|
+| `GameName=[string]` | STRING | max 32 | "Generic D3 Game" | GAMEINIT | Server name shown in browser |
+| `MissionName=[string]` | STRING | max 32 | "fury.mn3" | GAMEINIT | Mission file to load (.mn3) |
+| `Scriptname=[string]` | STRING | max 32 | "Anarchy.d3m" | GAMEINIT | Game type DLL name |
+| `MaxPlayers=[num]` | INT | 2-32 | 8 | GAMEINIT | Player limit (includes server slot 0) |
+| `NumTeams=[num]` | INT | 2-4 | 2 | GAMEINIT | Teams for team game types |
+| `Timelimit=[num]` | INT | 0-10000 | 0 | GAMEINIT | Level duration in minutes (0 = no limit) |
+| `Killgoal=[num]` | INT | 0-10000 | 0 | GAMEINIT | Points/kills to end level (0 = no limit) |
+| `RespawnTime=[num]` | INT | 0-10000 | 60 | GAMEINIT | Powerup respawn time in seconds |
+| `PPS=[num]` | INT | 2-40 | 10 | GAMEINIT | Packets per second (30 recommended) |
+| `SetDifficulty=[0-4]` | INT | 0-4 | 2 | GAMEINIT | 0=Trainee, 1=Rookie, 2=Hotshot, 3=Ace, 4=Insane |
+| `SetLevel=[num]` | INT | - | 1 | GAMEINIT+GAMEPLAY | Starting level (runtime: warps to level) |
+| `MOTD=[string]` | STRING | max 400 | "" | GAMEINIT | Message of the day |
 
-### Game Types (ScriptName values)
+### Game Types (Scriptname values)
+
+These are `.d3m` files in the `netgames/` directory:
 
 - `Anarchy` — Free-for-all deathmatch
 - `Team Anarchy` — Team-based deathmatch
@@ -79,22 +83,32 @@ The config file uses `Key=Value` syntax, one option per line. Loaded at server s
 - `Entropy` — Capture and hold rooms
 - `Hoard` — Collect orbs and score at goal
 - `Hyper-Anarchy` — Anarchy with bonus modifiers
-- `Robo-Anarchy` — Anarchy with AI-controlled robot ships
+- `Robo-Anarchy` — Anarchy with single-player AI enemies active
+- `Co-op` — Cooperative (sets NF_COOP flag)
 
 ### Network Settings
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `ConnectionName=[string]` | Connection type: `Direct TCP~IP`, `Parallax Online`, etc. | |
-| `UsePort=[num]` | Network port | 2092 |
-| `UseIP=[address]` | Bind to specific IP | |
-| `Peer2Peer=[0/1]` | Use peer-to-peer networking | 0 |
-| `Permissable=[0/1]` | Use permissible client-server architecture | 0 |
-| `SendRotVel=[0/1]` | Send rotation velocity for smooth interpolation | |
-| `UseSmoothing=[0/1]` | Enable position smoothing | |
-| `Gamespyport=[port]` | GameSpy query port (for multiple servers on one machine) | 20142 |
-| `NoMultiBmp=[0/1]` | Disable custom ship bitmaps | 0 |
-| `PlayerMessages=[0/1]` | Enable weapon HUD messages | |
+| Parameter | Type | Default | Permission | Description |
+|-----------|------|---------|-----------|-------------|
+| `ConnectionName=[string]` | STRING max 35 | "Direct TCP~IP" | GAMEINIT | Connection type |
+| `Peer2Peer=[0/1]` | INT | 0 | GAMEINIT | Peer-to-peer networking (sets NF_PEER_PEER, clears NF_PERMISSABLE) |
+| `Permissable=[0/1]` | INT | 0 | GAMEINIT | Permissible client-server (sets NF_PERMISSABLE, clears NF_PEER_PEER) |
+| `SendRotVel=[0/1]` | INT | 0 | GAMEINIT | Send rotation velocity for smooth interpolation (NF_SENDROTVEL) |
+| `UseSmoothing=[0/1]` | INT | 0 | GAMEINIT | Enable position smoothing (NF_USE_SMOOTHING) |
+| `Gamespyport=[port]` | INT | 20142 | GAMEINIT | GameSpy query port (for multiple servers on one machine) |
+
+Note: `Peer2Peer` and `Permissable` are **mutually exclusive** — setting one clears the other. Neither set = standard client-server model.
+
+**Connection models:**
+- **Client/Server (default)**: Server authoritative. Clients send inputs, server sends positions.
+- **Peer2Peer=1**: Pseudo peer-to-peer. Position packets sent to all clients.
+- **Permissable=1**: Clients need server permission to fire weapons. More anti-cheat.
+
+**Command-line only network settings** (not in dedicated.cfg, use `-flag` switches):
+- `-useport [port]` — Network port (default 2092)
+- `-useip [address]` — Bind to specific IP
+- `-nomultibmp` — Disable custom ship bitmaps (prevents crashes from corrupted logos)
+- `-gamespyport [port]` — Alternative to cfg Gamespyport
 
 ### Remote Console (Telnet)
 
@@ -114,39 +128,118 @@ The config file uses `Key=Value` syntax, one option per line. Loaded at server s
 
 ### Gameplay Modifiers
 
-| Parameter | Description |
-|-----------|-------------|
-| `AccurateCollisions=[0/1]` | Enable polygon-accurate collision detection |
-| `BrightPlayers=[0/1]` | Brighten all player ships for visibility |
-| `RandomizeRespawn=[0/1]` | Randomize powerup respawn locations |
-| `AllowMouselook=[0/1]` | Allow mouselook in multiplayer |
-| `AudioTauntDelay=[seconds]` | Minimum seconds between audio taunts |
-| `MultiSettingsFile=[string]` | Load additional multiplayer settings (.mps file) |
+| Parameter | Type | Permission | Description |
+|-----------|------|-----------|-------------|
+| `AccurateCollisions=[0/1]` | INT | GAMEINIT | Polygon-accurate collision detection (NF_USE_ACC_WEAP) |
+| `BrightPlayers=[0/1]` | INT | GAMEINIT | Brighten all player ships for visibility (NF_BRIGHT_PLAYERS) |
+| `RandomizeRespawn=[0/1]` | INT | GAMEINIT | Randomize powerup respawn locations (NF_RANDOMIZE_RESPAWN). **On by default** |
+| `AllowMouselook=[0/1]` | INT | GAMEINIT | Allow mouselook in multiplayer (NF_ALLOW_MLOOK) |
+| `AudioTauntDelay=[seconds]` | FLOAT | GAMEINIT | Minimum seconds between audio taunts |
+| `MultiSettingsFile=[string]` | STRING max 40 | GAMEINIT | Load additional .mps settings file (see MPS Format below) |
 
 ### Powerup Control
 
-Use `AllowPowerup` and `DisallowPowerup` to control which items spawn:
+Use `AllowPowerup` and `DisallowPowerup` to control which items spawn. Multiple entries allowed. Names are **case-insensitive** (uses `stricmp` via `FindObjectIDName()`).
 
 ```
 AllowPowerup=SuperLaser
-DisallowPowerup=Proxminepowerup
+DisallowPowerup=ProxMinePowerup
 DisallowPowerup=Betty4Pack
 ```
 
-Multiple entries can be used. Bandwidth-intensive powerups to consider disabling for low-bandwidth servers:
-- `Proxminepowerup` — Proximity Mines
-- `Betty4Pack` — Bouncing Betties
-- Black Sharks
-- Seeker Mines
+For the complete list of all valid powerup names, see [d3-powerups-and-ships.md](d3-powerups-and-ships.md).
 
-### Runtime Logging
+### Ship Control
 
-| Parameter | Description |
-|-----------|-------------|
-| `StartRtLog` | Start real-time logging at server startup |
-| `StopRtLog` | Stop real-time logging |
+There is **no direct cfg key** for ship banning. Ship permissions must be set via a `.mps` file loaded with `MultiSettingsFile`:
 
-These are fire-once CVars (no value) — presence in the config triggers the action.
+```
+MultiSettingsFile=myserver.mps
+```
+
+See the MPS Format section below for `SHIPBAN` syntax.
+
+### Bot Configuration (Matcen Fork)
+
+| Parameter | Type | Permission | Description |
+|-----------|------|-----------|-------------|
+| `BotConfig=[string]` | STRING max 259 | GAMEINIT | Path to bot roster file |
+
+### Runtime Logging and Actions
+
+| Parameter | Permission | Description |
+|-----------|-----------|-------------|
+| `StartRtLog` | GAMEPLAY | Start real-time logging (fire-once, no value) |
+| `StopRtLog` | GAMEPLAY | Stop real-time logging (fire-once, no value) |
+| `Quit` | GAMEPLAY | Shut down server (fire-once) |
+| `EndLevel` | GAMEPLAY | End current level (fire-once) |
+| `Say=[message]` | GAMEPLAY | Broadcast chat message (max 200 chars). Supports team prefixes |
+
+### Settings Not Available in dedicated.cfg
+
+These DMFC commands have **no cfg CVar** — set them via `autoexec.dmfc` or send after server start:
+
+| Command | Description |
+|---------|-------------|
+| `$serverhudnames [full/team/none]` | Max allowed HUD name display level |
+| `$killmsgfilter [full/simple/none]` | Death message verbosity |
+| `$autosavelevel [on/off]` | Auto-save stats on level end |
+| `$autosavedisconnect [on/off]` | Auto-save stats on disconnect |
+| `$hudnames [full/team/none]` | Client HUD name display |
+| `$statmsgs [on/off]` | Statistical HUD messages |
+
+---
+
+## MultiSettingsFile (.mps) Format
+
+Loaded via `MultiSettingsFile=filename.mps` in dedicated.cfg. Tab-separated `LABEL\tVALUE` format. Parsed by `MultiLoadSettings()` in `multi_save_setting.cpp`.
+
+| Key | Type | Effect |
+|-----|------|--------|
+| `NAME` | string | Server name (supports spaces) |
+| `MISSION` | string | Mission file |
+| `SCRIPT` | string | Game type script |
+| `PPS` | int | Packets per second |
+| `MAXPLAYERS` | int | Max players |
+| `TIMELIMIT` | int | Time limit |
+| `KILLGOAL` | int | Kill/score goal |
+| `RESPAWNTIME` | int | Powerup respawn time |
+| `DIFFICULTY` | int 0-4 | Difficulty level |
+| `PEERPEER` | TRUE/FALSE | Peer-to-peer flag |
+| `PERMISSABLE` | TRUE/FALSE | Permissable flag |
+| `RANDOMIZERESPAWN` | TRUE/FALSE | Randomize respawn |
+| `ROTVEL` | TRUE/FALSE | Send rotation velocity |
+| `USESMOOTHING` | TRUE/FALSE | Position smoothing |
+| `BRIGHTPLAYERS` | TRUE/FALSE | Bright player ships |
+| `ACCWEAP` | TRUE/FALSE | Accurate collisions |
+| `MLOOK` | TRUE/FALSE | Allow mouselook |
+| `OBJBAN` | string | Ban a powerup by name (same names as AllowPowerup/DisallowPowerup) |
+| `SHIPBAN` | string | Ban a ship by full name (e.g. `Black Pyro`, `Phoenix`) |
+
+**Ship banning example** (`myserver.mps`):
+```
+SHIPBAN	Black Pyro
+SHIPBAN	Magnum-AHT
+```
+
+This is the **only way** to restrict ships in a dedicated server config. The available ships are: `Pyro-GL`, `Phoenix`, `Magnum-AHT`, `Black Pyro`.
+
+---
+
+## autoexec.dmfc
+
+Located at `<D3_dir>/netgames/autoexec.dmfc` (override with `-autoexec <path>`).
+
+Contains `$command` lines — same syntax as runtime DMFC commands. Executed at DMFC initialization after the game DLL loads. Use this to set options that have no dedicated.cfg CVar:
+
+```
+$serverhudnames full
+$killmsgfilter simple
+$autosavelevel on
+$autosavedisconnect on
+```
+
+Max line length: 254 characters. Lines can optionally omit the `$` prefix.
 
 ---
 
@@ -448,8 +541,42 @@ The `$remote` admin system is entirely separate — it allows in-game clients to
 ### CVar Permission Levels
 
 Config file parameters are CVars with permission levels:
-- **GAMEINIT** — Can only be set at server startup (e.g., `NumTeams`, `RandomizeRespawn`, `AllowMouselook`, `BotConfig`)
-- **GAMEPLAY** — Can be changed at runtime via `$set` commands (e.g., `PPS`, `SetLevel`, `PXOHostingLobby`)
+- **GAMEINIT** — Can only be set at server startup. Most dedicated.cfg settings are GAMEINIT.
+- **GAMEPLAY** — Can be changed at runtime. AllowPowerup, DisallowPowerup, SetLevel, Quit, EndLevel, Say, ConsolePassword, StartRtLog, StopRtLog.
+- Some CVars have **both**: e.g. `SetLevel` sets the start level at init, but warps to a level at runtime.
+
+### Netgame Flags (multi_external.h)
+
+The `Netgame.flags` bitmask controls network behavior. Set by CVars or internally:
+
+| Flag | Hex | Set By |
+|------|-----|--------|
+| NF_TIMER | 0x01 | Timelimit > 0 |
+| NF_KILLGOAL | 0x02 | Killgoal > 0 |
+| NF_PEER_PEER | 0x10 | Peer2Peer=1 |
+| NF_SENDROTVEL | 0x20 | SendRotVel=1 |
+| NF_USE_ACC_WEAP | 0x400 | AccurateCollisions=1 |
+| NF_USE_SMOOTHING | 0x800 | UseSmoothing=1 |
+| NF_BRIGHT_PLAYERS | 0x1000 | BrightPlayers=1 |
+| NF_PERMISSABLE | 0x2000 | Permissable=1 |
+| NF_RANDOMIZE_RESPAWN | 0x8000 | RandomizeRespawn=1 |
+| NF_ALLOW_MLOOK | 0x10000 | AllowMouselook=1 |
+| NF_COOP | 0x40000 | Co-op script |
+
+### Server Defaults (before config parsing)
+
+| Parameter | Default Value |
+|-----------|--------------|
+| Scriptname | "Anarchy.d3m" |
+| ConnectionName | "Direct TCP~IP" |
+| MissionName | "fury.mn3" |
+| GameName | "Generic D3 Game" |
+| PPS | 10 |
+| RespawnTime | 60 |
+| Flags | NF_RANDOMIZE_RESPAWN (0x8000) |
+| MaxPlayers | 8 |
+| Difficulty | 2 (Hotshot) |
+| MOTD | "" (empty) |
 
 ---
 
@@ -473,7 +600,11 @@ To run multiple D3 servers on one machine:
 
 ### Access Control
 
-D3 supports `hosts.allow` and `hosts.deny` files for IP-based access control. Use `$rehash` to reload these files without restarting the server.
+D3 supports `hosts.allow` and `hosts.deny` files (located in `<D3_dir>/netgames/`) for IP-based access control. Use `$rehash` to reload these files without restarting the server.
+
+### Server Timeout
+
+Command-line flag `-timeout <minutes>` sets `ServerTimeout` — auto-quit after N minutes with no network packets received. Checked in `DoDedicatedServerFrame()`.
 
 ---
 

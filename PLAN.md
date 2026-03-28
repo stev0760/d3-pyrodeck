@@ -144,34 +144,109 @@ Once connected, Console/Players/Bots all work identically.
 
 ---
 
-## Phase 3 — Docker & Provisioning
+## Phase 3 — Structured Config & D3Server3 Parity
+
+**Goal:** Full config creation/editing UI matching D3Server3's capabilities. A user should be able to create, configure, and launch a server entirely through Pyrodeck's web UI without ever touching a .cfg file.
+
+**Reference:** D3Server3 v3.2 screenshots analyzed in `.claude/skills/d3-server-admin/d3server3-feature-map.md`. All dedicated.cfg CVars documented in `d3-dedicated-server-reference.md` with source-verified types, ranges, and defaults.
+
+### Step 1: Config Backend — Parse & Generate
+
+Extend `ConfigGenerator` to handle the full dedicated.cfg schema and companion files:
+
+**dedicated.cfg** — primary config, `Key=Value` syntax, one per line. Holds all main settings.
+**companion .mps** — `MultiSettingsFile` loaded via cfg. Tab-separated `LABEL<tab>VALUE` format. Loaded *after* cfg so values override. **Only way to ban ships** (`SHIPBAN` entries). Can also do `OBJBAN` for powerups but we use cfg `DisallowPowerup` instead since it works natively.
+**bots.cfg** — bot roster file referenced via `BotConfig=` in cfg. Same `Key=Value` format.
+**autoexec.dmfc** — DMFC commands run at game DLL init. For settings with no CVar.
+
+Strategy: put everything in dedicated.cfg, only generate companion .mps when ship bans are needed, generate bots.cfg when bot roster is configured, generate autoexec.dmfc for settings without CVars.
+
+- [ ] Bidirectional cfg parsing: parse existing cfg into structured object, generate cfg from structured object
+- [ ] Type-aware parsing with validation (int ranges, string max lengths, enum values)
+- [ ] Handle multi-value keys: multiple `AllowPowerup`/`DisallowPowerup` lines
+- [ ] .mps file read/write: parse existing .mps (tab-separated `LABEL<tab>VALUE`, `TRUE`/`FALSE` bools), generate .mps with `SHIPBAN` entries when ships are restricted
+- [ ] Companion file linking: cfg `MultiSettingsFile=` points to .mps, cfg `BotConfig=` points to bots.cfg
+- [ ] Bot roster file (bots.cfg) read/write from structured data
+- [ ] autoexec.dmfc generation for settings without CVars ($serverhudnames, $killmsgfilter, $autosavelevel, $autosavedisconnect)
+- [ ] Config file CRUD API: list, create, read (structured), update (structured), delete, duplicate — handles cfg + companion .mps + bots.cfg as a unit
+- [ ] Mission file scanner: list available .mn3 files from D3 install
+
+### Step 2: Config Form UI — Core Settings
+
+Main config editor as a structured form (replaces/supplements raw textarea):
+- [ ] Identity section: server name (max 32), game type dropdown (Anarchy, Team Anarchy, CTF, Monsterball, Entropy, Hoard, Hyper-Anarchy, Robo-Anarchy, Co-op), mission dropdown (scanned .mn3 files), starting level, MOTD
+- [ ] Network section: PPS (2-40, default 30), max players (2-32), connection model radio (Client/Server, Peer2Peer, Permissable), send rotation velocity, use smoothing
+- [ ] Rules section: time limit (0=disabled), kill goal (0=disabled), respawn time, randomize respawn toggle, difficulty dropdown (Trainee→Insane), audio taunt delay, num teams (2-4, visible for team modes)
+- [ ] Gameplay toggles: accurate collisions, bright players, allow mouselook
+- [ ] Remote console section: allow remote console (default on), port, password (auto-generate option)
+- [ ] Form validation matching engine constraints (e.g. PPS 2-40, MaxPlayers 2-32, NumTeams 2-4)
+- [ ] Defaults button to populate recommended values (PPS=30, AccurateCollisions=1, etc.)
+
+### Step 3: Config Form UI — Ships & Powerups
+
+The distinctive D3Server3 feature — toggle lists for allowed items:
+- [ ] Ship toggles: Pyro-GL, Phoenix, Magnum-AHT, Black Pyro — with "at least one required" validation and Pyro-GL warning
+- [ ] Powerup toggles organized in 4 categories matching D3Server3:
+  - Primary weapons: SuperLaser, Fusioncannon, MassDriver, Microwave, Plasmacannon, EMDlauncher, Omegacannon, Vauss, Napalm
+  - Secondary weapons: Concussion, Homing, Smart, Mega, Frag, Guided, ImpactMortar, NapalmRocket, Cyclone, BlackShark
+  - Utility: Energy, Shield, QuadLaser, Cloak, Invulnerability, Afterburner, Converter
+  - Counter-measures: Chaff, Betty4Pack, Seeker3Pack, GunboyPowerup, ProxMinePowerup
+- [ ] "Allow All" / "Disallow All" per category
+- [ ] Visual indicator for bandwidth-heavy powerups (ProxMinePowerup, Betty4Pack, BlackShark, Seeker3Pack)
+
+### Step 4: Config Form UI — Bots (Matcen Fork)
+
+Bot roster editor (gated on Matcen fork detection via $servercaps):
+- [ ] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown)
+- [ ] Default difficulty selector (applies to bots without per-bot override)
+- [ ] Bot count display with max players warning
+- [ ] Save/load named bot presets (roster files)
+- [ ] Generates `bots.cfg` roster file + `BotConfig=bots.cfg` in dedicated.cfg
+
+### Step 5: Config Management
+
+- [ ] Config file list with create new / duplicate / delete
+- [ ] "New Server Config" wizard: pick game type → form pre-fills sensible defaults for that mode
+- [ ] Switch between structured form view and raw editor view for same file
+- [ ] Config tab improvements: show structured form by default, raw editor as advanced toggle
+- [ ] autoexec.dmfc editor: simple list of DMFC commands to run at server start
+
+### Step 6: Post-Start Settings
+
+Settings that can't be set in cfg but Pyrodeck can apply after server launch:
+- [ ] Server HUD names (full/team/none) — send `$serverhudnames` after start
+- [ ] Kill message filter (full/simple/none) — send `$killmsgfilter` after start
+- [ ] Auto-save stats toggles — send `$autosavelevel`/`$autosavedisconnect` after start
+- [ ] Store these in Pyrodeck's own config per server profile, apply automatically on launch
+
+---
+
+## Phase 4 — Docker & Deployment
 
 **Goal:** One-command VPS deployment with game file management.
 
 - [ ] Docker image (Alpine) with `docker-compose.yml`
-- [ ] Structured volumes: gamedata, servers, import, config
-- [ ] Web file manager (upload, download, rename, delete, extract zip)
-- [ ] SFTP server option for large file uploads
+- [ ] Structured volumes: gamedata, config
+- [ ] Static file serving in production (Fastify serves client build)
+- [ ] Web file manager (upload .mn3 missions, manage game files)
 - [ ] Provisioning wizard (scan for required .hog files, validate, guide upload)
-- [ ] Mission pack management (.mn3 upload + listing)
+- [ ] Web admin auth (password gate from env var, off by default for localhost)
+- [ ] Packaging as single executable (evaluate Bun `--compile` vs Node SEA)
 
 ---
 
-## Phase 4 — Polish & Advanced Features
+## Phase 5 — Polish & Advanced Features
 
 **Goal:** Refined UX and power-user features.
 
-- [ ] Structured config forms (server name, game mode, ships/weapons/powerups)
-- [ ] Bot preset management (save/load named rosters)
+- [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [ ] IP access control UI (hosts.allow/deny editor + `$rehash`)
-- [ ] Server profiles (save/load full server configurations)
-- [ ] Game tracker registration (PXO, community trackers)
+- [ ] Scheduled auto-commands (D3Server3-style: run command every N minutes)
 - [ ] Dark/light theme toggle
 - [ ] Responsive layout for mobile
-- [ ] Multi-server UI (tabs or sidebar)
+- [ ] Multi-server UI (tabs or sidebar, multiple D3 instances)
 - [ ] Player list sorting/filtering
-- [ ] Web admin auth (re-add when core is stable)
-- [ ] CodeMirror for config editor
+- [ ] CodeMirror for raw config editor
 
 ---
 
