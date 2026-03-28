@@ -3,6 +3,7 @@ import { useAuth } from "./hooks/useAuth.ts";
 import { useServerConnection } from "./hooks/useServerConnection.ts";
 import { useToast } from "./hooks/useToast.ts";
 import { useLauncher } from "./hooks/useLauncher.ts";
+import { useServerInfo } from "./hooks/useServerInfo.ts";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
 import { SavedServers } from "./components/SavedServers.tsx";
@@ -10,13 +11,13 @@ import { Console } from "./components/Console.tsx";
 import { PlayerList } from "./components/PlayerList.tsx";
 import { BotPanel } from "./components/BotPanel.tsx";
 import { ConfigEditor } from "./components/ConfigEditor.tsx";
-import { GameSettings } from "./components/GameSettings.tsx";
 import { CommandReference } from "./components/CommandReference.tsx";
 import { ToastContainer } from "./components/ToastContainer.tsx";
 import { ModeToggle, type AppMode } from "./components/ModeToggle.tsx";
 import { LaunchPanel } from "./components/LaunchPanel.tsx";
+import { ServerSidebar } from "./components/ServerSidebar.tsx";
 
-type Tab = "console" | "players" | "bots" | "config" | "settings";
+type Tab = "console" | "players" | "bots" | "config";
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const {
@@ -31,10 +32,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     onOutput,
     onPlayers,
     onBots,
+    onServerInfo,
     hasFeature,
   } = useServerConnection();
 
   const launcher = useLauncher();
+  const serverInfoHook = useServerInfo({
+    sendCommand,
+    onServerInfo,
+    connected: connectionState === "ready",
+  });
   const { toasts, addToast, dismissToast } = useToast();
   const prevErrorRef = useRef<string | null>(null);
 
@@ -74,7 +81,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     { id: "players", label: "Players", show: isConnected },
     { id: "bots", label: "Bots", show: isConnected && hasFeature("bots") },
     { id: "config", label: "Config", show: mode === "launch" },
-    { id: "settings", label: "Settings", show: isConnected },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -139,7 +145,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           )}
         </aside>
 
-        {/* Main content */}
+        {/* Center content */}
         <main className="flex-1 flex flex-col min-w-0">
           {/* Tabs */}
           <div className="flex border-b border-zinc-800 px-2 shrink-0">
@@ -200,12 +206,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             )}
 
             {activeTab === "config" && <ConfigEditor />}
-
-            {activeTab === "settings" && isConnected && (
-              <GameSettings sendCommand={sendCommand} />
-            )}
           </div>
         </main>
+
+        {/* Right sidebar — server dashboard */}
+        {isConnected && (
+          <ServerSidebar
+            serverInfo={serverInfoHook.serverInfo}
+            actions={serverInfoHook}
+          />
+        )}
       </div>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

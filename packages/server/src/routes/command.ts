@@ -21,13 +21,20 @@ export function wsBroadcast(type: string, payload: Record<string, unknown>): voi
   }
 }
 
+/** Track which session is currently wired to prevent duplicate callbacks. */
+let wiredSessionId: string | null = null;
+
 /**
  * Wire up telnet data streaming from the active session to all connected WS clients.
  * Called when a new session is created (by Connect Mode or Launch Mode).
+ * Idempotent — skips if the same session is already wired.
  */
 export function wireSessionToClients(): void {
   const session = sessionManager.getActive();
   if (!session) return;
+
+  if (wiredSessionId === session.id) return;
+  wiredSessionId = session.id;
 
   session.connection.onData((data: string) => {
     const msg = JSON.stringify({ type: "output", payload: { raw: data } });
@@ -39,6 +46,7 @@ export function wireSessionToClients(): void {
   });
 
   session.connection.onDisconnect((reason: string) => {
+    wiredSessionId = null;
     wsBroadcast("connection_state", { state: "disconnected", reason });
   });
 }
@@ -117,6 +125,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
                 const typeMap: Record<string, string> = {
                   "$scores": "players",
                   "$botlist": "bots",
+                  "$netgameinfo": "serverinfo",
                 };
                 const msgType = typeMap[commandName];
                 if (msgType) {

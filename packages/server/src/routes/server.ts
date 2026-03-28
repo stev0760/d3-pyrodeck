@@ -15,12 +15,14 @@ export const responseParser = new ResponseParser();
 import { parseScores } from "../parser/parsers/scores.js";
 import { parseBotlist } from "../parser/parsers/botlist.js";
 import { parseBotstat } from "../parser/parsers/botstat.js";
+import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 
 // Register parsers
 responseParser.register("$servercaps", parseServercaps);
 responseParser.register("$scores", parseScores);
 responseParser.register("$botlist", parseBotlist);
 responseParser.register("$botstat", parseBotstat);
+responseParser.register("$netgameinfo", parseNetgameinfo);
 
 /** Serialize capabilities for JSON (Set -> array). */
 export function serializeCaps(caps: ServerCapabilities) {

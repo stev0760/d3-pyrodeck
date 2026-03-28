@@ -32,6 +32,7 @@ export function useServerConnection() {
   const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
   const shouldReconnectRef = useRef(false);
@@ -89,6 +90,11 @@ export function useServerConnection() {
             break;
           case "bots":
             for (const cb of botsCallbacksRef.current) {
+              cb(msg.payload);
+            }
+            break;
+          case "serverinfo":
+            for (const cb of serverInfoCallbacksRef.current) {
               cb(msg.payload);
             }
             break;
@@ -233,6 +239,15 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onServerInfo = useCallback((callback: (data: unknown) => void) => {
+    serverInfoCallbacksRef.current.push(callback);
+    return () => {
+      serverInfoCallbacksRef.current = serverInfoCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const hasFeature = useCallback(
     (feature: string): boolean => {
       return capabilities?.features.includes(feature) ?? false;
@@ -252,6 +267,7 @@ export function useServerConnection() {
     onOutput,
     onPlayers,
     onBots,
+    onServerInfo,
     hasFeature,
   };
 }

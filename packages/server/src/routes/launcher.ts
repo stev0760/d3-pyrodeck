@@ -107,6 +107,10 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(500).send({ error: message });
     }
 
+    // Remove any stale handlers from previous launches that crashed
+    // before telnetReady fired (once handlers stay registered if never consumed)
+    processManager.removeAllListeners("telnetReady");
+
     // Auto-connect telnet when ready
     processManager.once("telnetReady", async (port: number) => {
       app.log.info("D3 server telnet ready on port %d, auto-connecting...", port);

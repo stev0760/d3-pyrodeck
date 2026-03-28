@@ -96,46 +96,9 @@ const CATEGORIES: CommandCategory[] = [
     ],
   },
   {
-    id: "game",
-    label: "Game",
-    commands: [
-      {
-        cmd: "$settimelimit",
-        label: "Time Limit",
-        args: [{ name: "minutes", placeholder: "min", type: "number" }],
-      },
-      {
-        cmd: "$setgoallimit",
-        label: "Goal Limit",
-        args: [{ name: "points", placeholder: "pts", type: "number" }],
-      },
-      {
-        cmd: "$setmaxplayers",
-        label: "Max Players",
-        args: [{ name: "max", placeholder: "max", type: "number" }],
-      },
-      {
-        cmd: "$setpps",
-        label: "PPS",
-        args: [{ name: "pps", placeholder: "pps", type: "number" }],
-      },
-      {
-        cmd: "$setrespawntime",
-        label: "Respawn Time",
-        args: [{ name: "seconds", placeholder: "sec", type: "number" }],
-      },
-    ],
-  },
-  {
     id: "server",
     label: "Server",
     commands: [
-      { cmd: "$endlevel", label: "End Level" },
-      {
-        cmd: "$warp",
-        label: "Warp",
-        args: [{ name: "level", placeholder: "level #", type: "number" }],
-      },
       {
         cmd: "$wait",
         label: "Wait",
