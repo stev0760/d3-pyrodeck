@@ -12,6 +12,8 @@
  * - '[BOT]' prefix in name = bot player
  * - Ping '---' = no network connection (bots)
  * - Column layout varies by game type
+ * - D3 truncates name+colon at 19 chars — long names lose the colon
+ * - Team modes append ": TeamName" after callsign (30-char field)
  */
 
 export interface PlayerScore {
@@ -27,6 +29,44 @@ export interface PlayerScore {
 
 export interface ParsedScores {
   players: PlayerScore[];
+}
+
+/**
+ * Try to parse a player line from $scores output.
+ *
+ * D3 uses fixed-width columns. The name field is 20 chars (Anarchy) or 30 chars
+ * (team modes), followed by numeric stats. The name usually ends with ":" but
+ * D3 truncates at 19/29 chars, so long names lose the colon.
+ *
+ * Strategy:
+ *   1. Try splitting on the LAST colon that appears before numeric data
+ *   2. If no colon, split on the boundary between text and numbers
+ *      (find the first digit-or-minus sequence preceded by 2+ spaces)
+ */
+function parsePlayerLine(
+  line: string,
+): {
+  name: string;
+  stats: string;
+} | null {
+  // Strategy 1: find the last colon before a run of numbers
+  // This handles "Name:" and "Name: Team" and "Name:SubName:" formats
+  const colonMatch = line.match(/^(.+):\s{2,}(.+)$/);
+  if (colonMatch) {
+    return { name: colonMatch[1].trim(), stats: colonMatch[2].trim() };
+  }
+
+  // Strategy 2: no colon (truncated name) — find where the name ends and
+  // stats begin by looking for 2+ spaces followed by a number or minus sign
+  const noColonMatch = line.match(/^(.+?)\s{2,}(-?\d.*)$/);
+  if (noColonMatch) {
+    let name = noColonMatch[1].trim();
+    // Strip trailing colon if it ended up stuck to the name
+    if (name.endsWith(":")) name = name.slice(0, -1).trim();
+    return { name, stats: noColonMatch[2].trim() };
+  }
+
+  return null;
 }
 
 export function parseScores(raw: string): ParsedScores | null {
@@ -49,24 +89,24 @@ export function parseScores(raw: string): ParsedScores | null {
   const players: PlayerScore[] = [];
 
   for (let i = headerIndex + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+    const line = lines[i].trimEnd();
+    if (!line.trim()) continue;
 
-    const isObserver = line.startsWith("*");
-    const cleaned = isObserver ? line.slice(1).trim() : line;
+    // Detect and strip observer/disconnected prefix
+    const trimmed = line.trimStart();
+    const isObserver = trimmed.startsWith("*");
+    const cleaned = isObserver ? trimmed.slice(1) : trimmed;
 
-    // Split on the colon that follows the pilot name, then parse the numbers
-    const colonIndex = cleaned.indexOf(":");
-    if (colonIndex === -1) continue;
+    const parsed = parsePlayerLine(cleaned);
+    if (!parsed) continue;
 
-    const name = cleaned.slice(0, colonIndex).trim();
-    const rest = cleaned.slice(colonIndex + 1).trim();
-    const parts = rest.split(/\s+/);
+    const parts = parsed.stats.split(/\s+/);
 
     // At minimum we expect: points, kills, deaths, suicides, ping
     if (parts.length < 5) continue;
 
-    const isBot = name.startsWith("[BOT]");
+    const name = parsed.name;
+    const isBot = name.includes("[BOT]");
     const pingStr = parts[parts.length - 1];
     const ping = pingStr === "---" ? null : parseInt(pingStr, 10);
 
