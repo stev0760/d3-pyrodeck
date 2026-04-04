@@ -22,6 +22,80 @@ export interface ServerProfile {
 
 const PROFILES_FILE = "profiles.json";
 
+export type GameFileType =
+  | "server-config"
+  | "bot-roster"
+  | "ship-settings"
+  | "startup-commands"
+  | "unknown";
+
+export interface ClassifiedGameFile {
+  filename: string;
+  type: GameFileType;
+  /** Key metadata extracted from file content. */
+  meta: Record<string, string>;
+  /** Profile ID if this file is linked to a profile, null otherwise. */
+  linkedProfileId: string | null;
+}
+
+/**
+ * Classify a file by reading its content header and extracting metadata.
+ */
+function classifyFile(filename: string, content: string): ClassifiedGameFile {
+  const lower = filename.toLowerCase();
+  const lines = content.split("\n").map((l) => l.trim());
+  const meta: Record<string, string> = {};
+
+  // .mps files → ship settings
+  if (lower.endsWith(".mps")) {
+    return { filename, type: "ship-settings", meta, linkedProfileId: null };
+  }
+
+  // .dmfc files → startup commands
+  if (lower.endsWith(".dmfc")) {
+    const cmdCount = lines.filter((l) => l && !l.startsWith("#") && !l.startsWith(";")).length;
+    meta.commands = String(cmdCount);
+    return { filename, type: "startup-commands", meta, linkedProfileId: null };
+  }
+
+  // .cfg files — need to inspect content to distinguish server config from bot roster
+  if (lower.endsWith(".cfg")) {
+    // Server config: first non-empty line is "[server config file]"
+    const firstNonEmpty = lines.find((l) => l.length > 0);
+    if (firstNonEmpty === "[server config file]") {
+      // Extract key settings
+      for (const line of lines) {
+        const eq = line.indexOf("=");
+        if (eq === -1) continue;
+        const key = line.slice(0, eq);
+        const val = line.slice(eq + 1);
+        switch (key) {
+          case "GameName": meta.gameName = val; break;
+          case "Scriptname": meta.scriptName = val; break;
+          case "MissionName": meta.missionName = val; break;
+          case "MaxPlayers": meta.maxPlayers = val; break;
+          case "Timelimit": meta.timeLimit = val; break;
+          case "Killgoal": meta.killGoal = val; break;
+        }
+      }
+      return { filename, type: "server-config", meta, linkedProfileId: null };
+    }
+
+    // Bot roster: contains BotCount= or BotName[
+    const hasBotCount = lines.some((l) => l.startsWith("BotCount="));
+    const hasBotName = lines.some((l) => l.startsWith("BotName["));
+    if (hasBotCount || hasBotName) {
+      for (const line of lines) {
+        if (line.startsWith("BotCount=")) meta.botCount = line.slice(9);
+        if (line.startsWith("BotDifficulty=")) meta.difficulty = line.slice(14);
+      }
+      return { filename, type: "bot-roster", meta, linkedProfileId: null };
+    }
+  }
+
+  return { filename, type: "unknown", meta, linkedProfileId: null };
+}
+
 /**
  * Generate a unique config filename from a profile name.
  * Avoids collisions with existing files in gamePath.
@@ -211,6 +285,73 @@ export class ServerProfileManager {
     return profile;
   }
 
+  /**
+   * Ensure a CVar reference (e.g., BotConfig=bots.cfg) exists in a server config file.
+   * Adds the line if missing, updates the value if it already exists with a different value.
+   * Returns true if the config was modified.
+   */
+  async ensureConfigReference(
+    configFile: string,
+    cvarName: string,
+    cvarValue: string,
+  ): Promise<boolean> {
+    const cfgPath = path.join(this.gamePath, configFile);
+    let content: string;
+    try {
+      content = await fs.readFile(cfgPath, "utf-8");
+    } catch {
+      throw new Error(`Cannot read config file: ${configFile}`);
+    }
+
+    const lines = content.split("\n");
+    const lowerKey = cvarName.toLowerCase();
+    const existingIdx = lines.findIndex(
+      (l) => l.trim().toLowerCase().startsWith(lowerKey + "="),
+    );
+
+    if (existingIdx !== -1) {
+      const currentVal = lines[existingIdx].slice(lines[existingIdx].indexOf("=") + 1);
+      if (currentVal === cvarValue) return false; // Already correct
+      lines[existingIdx] = `${cvarName}=${cvarValue}`;
+    } else {
+      // Insert before the last line if it's empty, otherwise append
+      const insertIdx = lines.length > 0 && lines[lines.length - 1].trim() === ""
+        ? lines.length - 1
+        : lines.length;
+      lines.splice(insertIdx, 0, `${cvarName}=${cvarValue}`);
+    }
+
+    await fs.writeFile(cfgPath, lines.join("\n"));
+    return true;
+  }
+
+  /**
+   * Remove a CVar reference from a server config file.
+   * Returns true if the config was modified.
+   */
+  async removeConfigReference(
+    configFile: string,
+    cvarName: string,
+  ): Promise<boolean> {
+    const cfgPath = path.join(this.gamePath, configFile);
+    let content: string;
+    try {
+      content = await fs.readFile(cfgPath, "utf-8");
+    } catch {
+      return false;
+    }
+
+    const lines = content.split("\n");
+    const lowerKey = cvarName.toLowerCase();
+    const filtered = lines.filter(
+      (l) => !l.trim().toLowerCase().startsWith(lowerKey + "="),
+    );
+
+    if (filtered.length === lines.length) return false; // Nothing to remove
+    await fs.writeFile(cfgPath, filtered.join("\n"));
+    return true;
+  }
+
   /** Read a file from gamePath by filename. */
   async readFile(filename: string): Promise<string> {
     const safe = this.safeName(filename);
@@ -247,6 +388,36 @@ export class ServerProfileManager {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Classify all config-related files in gamePath by reading their headers.
+   * Returns files grouped by type with extracted metadata.
+   */
+  async classifyGameFiles(): Promise<ClassifiedGameFile[]> {
+    const filenames = await this.listGameFiles();
+    const profiles = await this.loadProfiles();
+    const profileByFile = new Map<string, string>();
+    for (const p of profiles) {
+      profileByFile.set(p.configFile, p.id);
+    }
+
+    const results: ClassifiedGameFile[] = [];
+
+    for (const filename of filenames) {
+      let content: string;
+      try {
+        content = await fs.readFile(path.join(this.gamePath, filename), "utf-8");
+      } catch {
+        continue;
+      }
+
+      const file = classifyFile(filename, content);
+      file.linkedProfileId = profileByFile.get(filename) ?? null;
+      results.push(file);
+    }
+
+    return results;
   }
 
   /** Reject path traversal in filenames. */

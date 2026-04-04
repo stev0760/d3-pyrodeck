@@ -6,68 +6,174 @@ interface ConfigEditorProps {
   onRefreshProfiles: () => void;
 }
 
-/** File type definition for the sectioned layout. */
-interface FileSection {
-  key: string;
-  label: string;
-  description: string;
-  /** Resolve the filename for this section given the profile. */
-  filename: (profile: ServerProfile) => string;
-  /** Can this file be created from scratch? */
-  canCreate: boolean;
+// --- Types matching backend ClassifiedGameFile ---
+
+type GameFileType =
+  | "server-config"
+  | "bot-roster"
+  | "ship-settings"
+  | "startup-commands"
+  | "unknown";
+
+interface ClassifiedGameFile {
+  filename: string;
+  type: GameFileType;
+  meta: Record<string, string>;
+  linkedProfileId: string | null;
 }
 
-const FILE_SECTIONS: FileSection[] = [
-  {
-    key: "cfg",
-    label: "Server Config",
-    description: "Main dedicated server settings — game type, network, rules, telnet.",
-    filename: (p) => p.configFile,
-    canCreate: false, // Always exists (created with profile)
-  },
-  {
-    key: "mps",
-    label: "Ship Settings",
-    description: "Controls which ships are allowed or banned. Referenced via MultiSettingsFile in server config.",
-    filename: () => "companion.mps",
-    canCreate: true,
-  },
-  {
-    key: "bots",
-    label: "Bot Roster",
-    description: "Bot names, ships, and difficulty levels. Matcen fork only — requires BotConfig in server config.",
-    filename: () => "bots.cfg",
-    canCreate: true,
-  },
-  {
-    key: "dmfc",
-    label: "Startup Commands",
-    description: "DMFC commands run automatically after server initializes (e.g., $serverhudnames, $killmsgfilter).",
-    filename: () => "autoexec.dmfc",
-    canCreate: true,
-  },
-];
+// --- File type display info ---
 
-/** Default content for newly created companion files. */
-const DEFAULT_CONTENT: Record<string, string> = {
-  "companion.mps": "[multi settings file]\n",
-  "bots.cfg":
-    "BotCount=0\nBotDifficulty=2\n",
-  "autoexec.dmfc": "",
+const FILE_TYPE_INFO: Record<
+  GameFileType,
+  { label: string; pluralLabel: string; color: string }
+> = {
+  "server-config": {
+    label: "Server Config",
+    pluralLabel: "Server Configs",
+    color: "text-amber-400",
+  },
+  "bot-roster": {
+    label: "Bot Roster",
+    pluralLabel: "Bot Rosters",
+    color: "text-sky-400",
+  },
+  "ship-settings": {
+    label: "Ship Settings",
+    pluralLabel: "Ship Settings",
+    color: "text-violet-400",
+  },
+  "startup-commands": {
+    label: "Startup Commands",
+    pluralLabel: "Startup Commands",
+    color: "text-emerald-400",
+  },
+  unknown: {
+    label: "Other",
+    pluralLabel: "Other Files",
+    color: "text-zinc-400",
+  },
 };
 
-export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps) {
+const DIFFICULTY_NAMES: Record<string, string> = {
+  "0": "Trainee",
+  "1": "Rookie",
+  "2": "Hotshot",
+  "3": "Ace",
+  "4": "Insane",
+};
+
+// --- Companion file info from backend ---
+
+interface CompanionRef {
+  filename: string;
+  exists: boolean;
+}
+
+interface CompanionInfo {
+  botConfig: CompanionRef | null;
+  multiSettingsFile: CompanionRef | null;
+  autoexec: CompanionRef;
+}
+
+// ============================================================
+// Main ConfigEditor
+// ============================================================
+
+type ConfigView = "profiles" | "game-files";
+
+export function ConfigEditor({
+  profiles,
+  onRefreshProfiles,
+}: ConfigEditorProps) {
+  const [view, setView] = useState<ConfigView>("profiles");
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header with view toggle */}
+      <div className="flex items-center justify-between mb-3 shrink-0">
+        <div className="flex items-center gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-300">
+              D3 Server Configuration
+            </h2>
+            <p className="text-xs text-zinc-600">
+              Manage server profiles and config files
+            </p>
+          </div>
+          {/* View toggle */}
+          <div className="flex bg-zinc-800 rounded p-0.5">
+            <button
+              onClick={() => setView("profiles")}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                view === "profiles"
+                  ? "bg-zinc-700 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Profiles
+            </button>
+            <button
+              onClick={() => setView("game-files")}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                view === "game-files"
+                  ? "bg-zinc-700 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Game Files
+            </button>
+          </div>
+        </div>
+        <div className="bg-amber-900/20 border border-amber-700/30 rounded-md px-2 py-1">
+          <p className="text-xs text-amber-400">
+            Changes take effect after server restart
+          </p>
+        </div>
+      </div>
+
+      {/* View content */}
+      <div className="flex-1 min-h-0">
+        {view === "profiles" ? (
+          <ProfileEditor
+            profiles={profiles}
+            onRefreshProfiles={onRefreshProfiles}
+          />
+        ) : (
+          <GameFileBrowser
+            profiles={profiles}
+            onRefreshProfiles={onRefreshProfiles}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Profile Editor (entity management)
+// ============================================================
+
+function ProfileEditor({
+  profiles,
+  onRefreshProfiles,
+}: {
+  profiles: ServerProfile[];
+  onRefreshProfiles: () => void;
+}) {
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
-  const [activeSection, setActiveSection] = useState<string>("cfg");
+  const [editingFile, setEditingFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [fileExists, setFileExists] = useState<Record<string, boolean>>({});
-  // Existing game config files for the import section
-  const [gameFiles, setGameFiles] = useState<string[]>([]);
-  const [showImport, setShowImport] = useState(false);
+  const [companions, setCompanions] = useState<CompanionInfo | null>(null);
+  // For creating new bot roster with custom name
+  const [showBotCreate, setShowBotCreate] = useState(false);
+  const [newBotFilename, setNewBotFilename] = useState("bots.cfg");
+  // For linking existing bot roster
+  const [showBotLink, setShowBotLink] = useState(false);
+  const [availableBotFiles, setAvailableBotFiles] = useState<ClassifiedGameFile[]>([]);
 
   // Auto-select first profile
   useEffect(() => {
@@ -78,39 +184,46 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
 
-  // Probe which companion files exist when profile changes
-  useEffect(() => {
-    if (!selectedProfile) {
-      setFileExists({});
-      return;
-    }
-
-    const checkFiles = async () => {
-      const results: Record<string, boolean> = {};
-      for (const section of FILE_SECTIONS) {
-        const filename = section.filename(selectedProfile);
-        try {
-          const res = await fetch(
-            `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(filename)}`,
-            { credentials: "include" },
-          );
-          results[section.key] = res.ok;
-        } catch {
-          results[section.key] = false;
-        }
-      }
-      setFileExists(results);
-    };
-
-    checkFiles();
-  }, [selectedProfile]);
-
-  // Load file content when section or profile changes
-  const loadFile = useCallback(async (profileId: string, filename: string) => {
-    setLoadError(null);
+  // Fetch companion references from the server config
+  const fetchCompanions = useCallback(async (profileId: string) => {
     try {
       const res = await fetch(
-        `/api/profiles/${encodeURIComponent(profileId)}/files/${encodeURIComponent(filename)}`,
+        `/api/profiles/${encodeURIComponent(profileId)}/companions`,
+        { credentials: "include" },
+      );
+      if (res.ok) {
+        setCompanions(await res.json());
+      }
+    } catch {
+      setCompanions(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedProfile) {
+      fetchCompanions(selectedProfile.id);
+    } else {
+      setCompanions(null);
+    }
+    setShowBotCreate(false);
+    setShowBotLink(false);
+  }, [selectedProfileId, selectedProfile, fetchCompanions]);
+
+  // Load the profile's main config on select
+  useEffect(() => {
+    if (selectedProfile) {
+      setEditingFile(selectedProfile.configFile);
+    } else {
+      setEditingFile(null);
+      setContent("");
+    }
+  }, [selectedProfileId, selectedProfile]);
+
+  // Load file content when editingFile changes
+  const loadFile = useCallback(async (filename: string) => {
+    try {
+      const res = await fetch(
+        `/api/game-files/${encodeURIComponent(filename)}`,
         { credentials: "include" },
       );
       if (res.ok) {
@@ -118,49 +231,26 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
         setContent(data.content);
         setDirty(false);
         setSaved(false);
-        return true;
+      } else {
+        setContent("");
+        setDirty(false);
       }
-      setContent("");
-      setDirty(false);
-      return false;
     } catch {
       setContent("");
       setDirty(false);
-      setLoadError("Failed to load file");
-      return false;
     }
   }, []);
 
   useEffect(() => {
-    if (!selectedProfile) return;
-    const section = FILE_SECTIONS.find((s) => s.key === activeSection);
-    if (!section) return;
-    const filename = section.filename(selectedProfile);
-
-    if (fileExists[activeSection]) {
-      loadFile(selectedProfile.id, filename);
-    } else {
-      setContent("");
-      setDirty(false);
-      setLoadError(null);
-    }
-  }, [selectedProfile, activeSection, fileExists, loadFile]);
-
-  // Reset to cfg section when profile changes
-  useEffect(() => {
-    setActiveSection("cfg");
-  }, [selectedProfileId]);
+    if (editingFile) loadFile(editingFile);
+  }, [editingFile, loadFile]);
 
   const saveFile = async () => {
-    if (!selectedProfile) return;
-    const section = FILE_SECTIONS.find((s) => s.key === activeSection);
-    if (!section) return;
-    const filename = section.filename(selectedProfile);
-
+    if (!selectedProfile || !editingFile) return;
     setSaving(true);
     try {
       const res = await fetch(
-        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(filename)}`,
+        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(editingFile)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -171,7 +261,8 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
       if (res.ok) {
         setSaved(true);
         setDirty(false);
-        setFileExists((prev) => ({ ...prev, [activeSection]: true }));
+        // Refresh companions in case server config references changed
+        fetchCompanions(selectedProfile.id);
         onRefreshProfiles();
         setTimeout(() => setSaved(false), 2000);
       }
@@ -181,13 +272,13 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
     setSaving(false);
   };
 
-  const createFile = async (sectionKey: string) => {
+  // Create a new companion file with CVar reference
+  const createCompanionFile = async (
+    filename: string,
+    defaultContent: string,
+    cvar: string,
+  ) => {
     if (!selectedProfile) return;
-    const section = FILE_SECTIONS.find((s) => s.key === sectionKey);
-    if (!section) return;
-    const filename = section.filename(selectedProfile);
-    const defaultContent = DEFAULT_CONTENT[filename] ?? "";
-
     try {
       await fetch(
         `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(filename)}`,
@@ -195,41 +286,498 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ content: defaultContent }),
+          body: JSON.stringify({ content: defaultContent, cvar }),
         },
       );
-      setFileExists((prev) => ({ ...prev, [sectionKey]: true }));
-      setActiveSection(sectionKey);
-      setContent(defaultContent);
-      setDirty(false);
+      await fetchCompanions(selectedProfile.id);
+      setEditingFile(filename);
     } catch {
       // ignore
     }
   };
 
-  const deleteFile = async (sectionKey: string) => {
+  // Link an existing file as a companion (just add the CVar reference, file already exists)
+  const linkCompanionFile = async (filename: string, cvar: string) => {
     if (!selectedProfile) return;
-    const section = FILE_SECTIONS.find((s) => s.key === sectionKey);
-    if (!section || !section.canCreate) return; // Don't delete the main cfg
-    const filename = section.filename(selectedProfile);
-
     try {
-      await fetch(
-        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(filename)}`,
-        { method: "DELETE", credentials: "include" },
+      const manager = `/api/profiles/${encodeURIComponent(selectedProfile.id)}`;
+      // Read existing content
+      const readRes = await fetch(
+        `/api/game-files/${encodeURIComponent(filename)}`,
+        { credentials: "include" },
       );
-      setFileExists((prev) => ({ ...prev, [sectionKey]: false }));
-      if (activeSection === sectionKey) {
-        setContent("");
-        setDirty(false);
+      if (!readRes.ok) return;
+      const { content: existingContent } = await readRes.json();
+
+      // Write it back with the cvar reference
+      await fetch(`${manager}/files/${encodeURIComponent(filename)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content: existingContent, cvar }),
+      });
+      await fetchCompanions(selectedProfile.id);
+      setEditingFile(filename);
+      setShowBotLink(false);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Unlink a companion (remove CVar reference, don't delete the file)
+  const unlinkCompanion = async (cvar: string) => {
+    if (!selectedProfile) return;
+    try {
+      // Read the server config, remove the CVar line, write it back
+      const res = await fetch(
+        `/api/game-files/${encodeURIComponent(selectedProfile.configFile)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) return;
+      const { content: cfgContent } = await res.json();
+      const lines = cfgContent.split("\n");
+      const filtered = lines.filter(
+        (l: string) => !l.trim().toLowerCase().startsWith(cvar.toLowerCase() + "="),
+      );
+      await fetch(
+        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(selectedProfile.configFile)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ content: filtered.join("\n") }),
+        },
+      );
+      await fetchCompanions(selectedProfile.id);
+      setEditingFile(selectedProfile.configFile);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Fetch available bot roster files for linking
+  const fetchBotFiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/game-files", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableBotFiles(
+          (data.files as ClassifiedGameFile[]).filter(
+            (f) => f.type === "bot-roster",
+          ),
+        );
       }
     } catch {
       // ignore
     }
-  };
+  }, []);
 
-  // Fetch game files for import
-  const fetchGameFiles = useCallback(async () => {
+  useEffect(() => {
+    if (showBotLink) fetchBotFiles();
+  }, [showBotLink, fetchBotFiles]);
+
+  if (profiles.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-sm text-zinc-600">
+          No server profiles. Create one in the Launch panel to get started.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex gap-3">
+      {/* Left nav: profile selector + file navigation */}
+      <div className="w-60 shrink-0 flex flex-col overflow-y-auto">
+        {/* Profile selector */}
+        <label className="text-xs text-zinc-500 mb-1">Profile</label>
+        <select
+          value={selectedProfileId}
+          onChange={(e) => setSelectedProfileId(e.target.value)}
+          className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 mb-3"
+        >
+          <option value="">Select profile...</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+
+        {selectedProfile && companions && (
+          <>
+            {/* Server config (primary) */}
+            <NavButton
+              label="Server Config"
+              filename={selectedProfile.configFile}
+              isActive={editingFile === selectedProfile.configFile}
+              onClick={() => setEditingFile(selectedProfile.configFile)}
+            />
+
+            {/* Companion files section */}
+            <div className="mt-3 mb-1">
+              <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
+                Companion Files
+              </span>
+            </div>
+
+            {/* Ship Settings (MultiSettingsFile) */}
+            {companions.multiSettingsFile ? (
+              <CompanionEntry
+                label="Ship Settings"
+                filename={companions.multiSettingsFile.filename}
+                exists={companions.multiSettingsFile.exists}
+                isActive={editingFile === companions.multiSettingsFile.filename}
+                onEdit={() =>
+                  setEditingFile(companions.multiSettingsFile!.filename)
+                }
+                onUnlink={() => unlinkCompanion("MultiSettingsFile")}
+              />
+            ) : (
+              <CompanionCreateButton
+                label="Ship Settings"
+                description="Ship allow/ban rules (MultiSettingsFile)"
+                onClick={() =>
+                  createCompanionFile(
+                    "companion.mps",
+                    "[multi settings file]\n",
+                    "MultiSettingsFile",
+                  )
+                }
+              />
+            )}
+
+            {/* Bot Roster (BotConfig) */}
+            {companions.botConfig ? (
+              <CompanionEntry
+                label="Bot Roster"
+                filename={companions.botConfig.filename}
+                exists={companions.botConfig.exists}
+                isActive={editingFile === companions.botConfig.filename}
+                onEdit={() => setEditingFile(companions.botConfig!.filename)}
+                onUnlink={() => unlinkCompanion("BotConfig")}
+              />
+            ) : (
+              <div className="mb-0.5">
+                {showBotCreate ? (
+                  <div className="px-2 py-1.5 bg-zinc-800/50 rounded text-xs space-y-1.5">
+                    <div className="font-medium text-zinc-400">
+                      New Bot Roster
+                    </div>
+                    <input
+                      type="text"
+                      value={newBotFilename}
+                      onChange={(e) => setNewBotFilename(e.target.value)}
+                      placeholder="bots.cfg"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-600"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newBotFilename.trim()) {
+                          createCompanionFile(
+                            newBotFilename.trim(),
+                            "BotCount=0\nBotDifficulty=2\n",
+                            "BotConfig",
+                          );
+                          setShowBotCreate(false);
+                          setNewBotFilename("bots.cfg");
+                        }
+                      }}
+                    />
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => {
+                          if (newBotFilename.trim()) {
+                            createCompanionFile(
+                              newBotFilename.trim(),
+                              "BotCount=0\nBotDifficulty=2\n",
+                              "BotConfig",
+                            );
+                            setShowBotCreate(false);
+                            setNewBotFilename("bots.cfg");
+                          }
+                        }}
+                        disabled={!newBotFilename.trim()}
+                        className="text-[10px] text-amber-500 hover:text-amber-400 disabled:text-zinc-600"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => setShowBotCreate(false)}
+                        className="text-[10px] text-zinc-600 hover:text-zinc-400"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : showBotLink ? (
+                  <div className="px-2 py-1.5 bg-zinc-800/50 rounded text-xs space-y-1">
+                    <div className="font-medium text-zinc-400">
+                      Link Existing Bot Roster
+                    </div>
+                    {availableBotFiles.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {availableBotFiles.map((f) => (
+                          <button
+                            key={f.filename}
+                            onClick={() =>
+                              linkCompanionFile(f.filename, "BotConfig")
+                            }
+                            className="w-full text-left px-1.5 py-1 rounded text-[11px] font-mono text-zinc-300 hover:bg-zinc-700 transition-colors"
+                          >
+                            {f.filename}
+                            {f.meta.botCount && (
+                              <span className="text-zinc-600 ml-1">
+                                ({f.meta.botCount} bots)
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-zinc-600 italic">
+                        No bot roster files found
+                      </p>
+                    )}
+                    <button
+                      onClick={() => setShowBotLink(false)}
+                      className="text-[10px] text-zinc-600 hover:text-zinc-400"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      onClick={() => setShowBotCreate(true)}
+                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
+                    >
+                      <span className="font-medium">Bot Roster</span>
+                      <span className="text-zinc-700 ml-1">(create new)</span>
+                    </button>
+                    <button
+                      onClick={() => setShowBotLink(true)}
+                      className="w-full text-left px-2 py-0.5 rounded text-[11px] text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
+                    >
+                      Link existing roster...
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Startup Commands (autoexec.dmfc) */}
+            {companions.autoexec.exists ? (
+              <CompanionEntry
+                label="Startup Commands"
+                filename="autoexec.dmfc"
+                exists={true}
+                isActive={editingFile === "autoexec.dmfc"}
+                onEdit={() => setEditingFile("autoexec.dmfc")}
+                onUnlink={async () => {
+                  if (!selectedProfile) return;
+                  try {
+                    await fetch(
+                      `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/autoexec.dmfc`,
+                      { method: "DELETE", credentials: "include" },
+                    );
+                    await fetchCompanions(selectedProfile.id);
+                    setEditingFile(selectedProfile.configFile);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                unlinkLabel="Delete"
+              />
+            ) : (
+              <CompanionCreateButton
+                label="Startup Commands"
+                description="Post-init DMFC commands"
+                onClick={() =>
+                  createCompanionFile("autoexec.dmfc", "", "")
+                }
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Right: editor area */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {editingFile ? (
+          <>
+            {/* Editor header */}
+            <div className="flex items-center justify-between mb-2 shrink-0">
+              <span className="text-xs text-zinc-500 font-mono">
+                {editingFile}
+              </span>
+              <button
+                onClick={saveFile}
+                disabled={!dirty || saving}
+                className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded transition-colors"
+              >
+                {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+              </button>
+            </div>
+            <textarea
+              value={content}
+              onChange={(e) => {
+                setContent(e.target.value);
+                setDirty(true);
+                setSaved(false);
+              }}
+              className="flex-1 w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg font-mono text-sm text-zinc-200 resize-none focus:outline-none focus:ring-1 focus:ring-amber-500"
+              spellCheck={false}
+            />
+          </>
+        ) : (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-sm text-zinc-600">
+              Select a profile to edit its configuration
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Profile Editor sub-components
+// ============================================================
+
+function NavButton({
+  label,
+  filename,
+  isActive,
+  onClick,
+}: {
+  label: string;
+  filename: string;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-left px-2 py-1.5 rounded text-xs transition-colors ${
+        isActive
+          ? "bg-amber-900/30 text-amber-400 border border-amber-700/40"
+          : "text-zinc-300 hover:bg-zinc-800"
+      }`}
+    >
+      <div className="font-medium">{label}</div>
+      <div className="text-zinc-500 font-mono text-[11px] mt-0.5">
+        {filename}
+      </div>
+    </button>
+  );
+}
+
+function CompanionEntry({
+  label,
+  filename,
+  exists,
+  isActive,
+  onEdit,
+  onUnlink,
+  unlinkLabel = "Unlink",
+}: {
+  label: string;
+  filename: string;
+  exists: boolean;
+  isActive: boolean;
+  onEdit: () => void;
+  onUnlink: () => void;
+  unlinkLabel?: string;
+}) {
+  return (
+    <div className="mb-0.5 flex items-center gap-1">
+      <button
+        onClick={onEdit}
+        disabled={!exists}
+        className={`flex-1 text-left px-2 py-1.5 rounded text-xs transition-colors ${
+          isActive
+            ? "bg-amber-900/30 text-amber-400 border border-amber-700/40"
+            : exists
+              ? "text-zinc-300 hover:bg-zinc-800"
+              : "text-zinc-600"
+        }`}
+      >
+        <div className="font-medium">
+          {label}
+          {!exists && (
+            <span className="text-red-400/60 ml-1 font-normal">(missing)</span>
+          )}
+        </div>
+        <div className="text-zinc-500 font-mono text-[11px] mt-0.5">
+          {filename}
+        </div>
+      </button>
+      <button
+        onClick={onUnlink}
+        className="text-zinc-600 hover:text-red-400 p-1 transition-colors"
+        title={`${unlinkLabel} ${filename}`}
+      >
+        <svg
+          className="w-3 h-3"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function CompanionCreateButton({
+  label,
+  description,
+  onClick,
+}: {
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors mb-0.5"
+    >
+      <span className="font-medium">{label}</span>
+      <span className="text-zinc-700 ml-1">(create)</span>
+      <div className="text-[11px] text-zinc-700 mt-0.5">{description}</div>
+    </button>
+  );
+}
+
+// ============================================================
+// Game File Browser (file-oriented discovery)
+// ============================================================
+
+function GameFileBrowser({
+  profiles,
+  onRefreshProfiles,
+}: {
+  profiles: ServerProfile[];
+  onRefreshProfiles: () => void;
+}) {
+  const [gameFiles, setGameFiles] = useState<ClassifiedGameFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  // Fetch classified files
+  const fetchFiles = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/game-files", { credentials: "include" });
       if (res.ok) {
@@ -239,17 +787,57 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
     } catch {
       // ignore
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    if (showImport) fetchGameFiles();
-  }, [showImport, fetchGameFiles]);
+    fetchFiles();
+  }, [fetchFiles]);
 
-  // Config files in gamePath that aren't already tied to a profile
-  const profileConfigFiles = new Set(profiles.map((p) => p.configFile));
-  const unlinkedCfgFiles = gameFiles.filter(
-    (f) => f.toLowerCase().endsWith(".cfg") && !profileConfigFiles.has(f),
-  );
+  // Load preview when file selected
+  useEffect(() => {
+    if (!selectedFile) {
+      setPreviewContent(null);
+      return;
+    }
+    const loadPreview = async () => {
+      setPreviewLoading(true);
+      try {
+        const res = await fetch(
+          `/api/game-files/${encodeURIComponent(selectedFile)}`,
+          { credentials: "include" },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setPreviewContent(data.content);
+        } else {
+          setPreviewContent(null);
+        }
+      } catch {
+        setPreviewContent(null);
+      }
+      setPreviewLoading(false);
+    };
+    loadPreview();
+  }, [selectedFile]);
+
+  // Group files by type
+  const grouped = new Map<GameFileType, ClassifiedGameFile[]>();
+  const typeOrder: GameFileType[] = [
+    "server-config",
+    "bot-roster",
+    "ship-settings",
+    "startup-commands",
+    "unknown",
+  ];
+  for (const type of typeOrder) {
+    grouped.set(type, []);
+  }
+  for (const file of gameFiles) {
+    const list = grouped.get(file.type);
+    if (list) list.push(file);
+    else grouped.get("unknown")!.push(file);
+  }
 
   const importAsProfile = async (filename: string) => {
     try {
@@ -263,209 +851,290 @@ export function ConfigEditor({ profiles, onRefreshProfiles }: ConfigEditorProps)
         }),
       });
       if (res.ok) {
-        const profile = await res.json();
         await onRefreshProfiles();
-        setSelectedProfileId(profile.id);
-        setShowImport(false);
+        await fetchFiles();
       }
     } catch {
       // ignore
     }
   };
 
-  const currentSection = FILE_SECTIONS.find((s) => s.key === activeSection);
-  const currentFilename = selectedProfile && currentSection
-    ? currentSection.filename(selectedProfile)
-    : null;
-  const currentFileExists = fileExists[activeSection] ?? false;
+  const selectedFileInfo = gameFiles.find((f) => f.filename === selectedFile);
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-sm text-zinc-600">Scanning game directory...</p>
+      </div>
+    );
+  }
+
+  if (gameFiles.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-sm text-zinc-600">
+          No config files found in game directory
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3 shrink-0">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-300">
-            D3 Server Configuration
-          </h2>
-          <p className="text-xs text-zinc-600">
-            Edit Descent 3 dedicated server config files
-          </p>
+    <div className="h-full flex gap-3">
+      {/* Left: categorized file list */}
+      <div className="w-72 shrink-0 overflow-y-auto space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-zinc-500">Files in game directory</p>
+          <button
+            onClick={fetchFiles}
+            className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+          >
+            Refresh
+          </button>
         </div>
-        <div className="bg-amber-900/20 border border-amber-700/30 rounded-md px-2 py-1">
-          <p className="text-xs text-amber-400">
-            Changes take effect after server restart
-          </p>
-        </div>
-      </div>
 
-      {/* Profile selector + import */}
-      <div className="flex items-center gap-2 mb-3 shrink-0">
-        <label className="text-xs text-zinc-500 shrink-0">Profile:</label>
-        <select
-          value={selectedProfileId}
-          onChange={(e) => setSelectedProfileId(e.target.value)}
-          className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 min-w-0"
-        >
-          <option value="">Select profile...</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.configFile})
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => setShowImport(!showImport)}
-          className="text-xs text-amber-500 hover:text-amber-400 shrink-0 transition-colors"
-          title="Import existing config file as a profile"
-        >
-          {showImport ? "Cancel" : "Import Existing"}
-        </button>
-      </div>
+        {typeOrder.map((type) => {
+          const files = grouped.get(type) ?? [];
+          if (files.length === 0) return null;
+          const info = FILE_TYPE_INFO[type];
 
-      {/* Import existing configs panel */}
-      {showImport && (
-        <div className="mb-3 p-2 bg-zinc-800/50 border border-zinc-700 rounded shrink-0">
-          <p className="text-xs text-zinc-400 mb-2">
-            Config files in game directory not linked to a profile:
-          </p>
-          {unlinkedCfgFiles.length > 0 ? (
-            <div className="space-y-1">
-              {unlinkedCfgFiles.map((f) => (
-                <div key={f} className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-300 font-mono">{f}</span>
-                  <button
-                    onClick={() => importAsProfile(f)}
-                    className="text-xs text-amber-500 hover:text-amber-400"
-                  >
-                    Create Profile
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-zinc-600 italic">
-              {gameFiles.length === 0
-                ? "No config files found in game directory"
-                : "All config files are already linked to profiles"}
-            </p>
-          )}
-        </div>
-      )}
-
-      {selectedProfile ? (
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* File type tabs */}
-          <div className="flex border-b border-zinc-800 mb-3 shrink-0">
-            {FILE_SECTIONS.map((section) => {
-              const exists = fileExists[section.key] ?? false;
-              const isActive = activeSection === section.key;
-
-              return (
-                <button
-                  key={section.key}
-                  onClick={() => setActiveSection(section.key)}
-                  className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-                    isActive
-                      ? "border-amber-500 text-amber-400"
-                      : "border-transparent text-zinc-500 hover:text-zinc-300"
-                  }`}
+          return (
+            <div key={type}>
+              {/* Section header */}
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className={`text-[10px] font-semibold uppercase tracking-wider ${info.color}`}
                 >
-                  {section.label}
-                  {!exists && section.canCreate && (
-                    <span className="text-[10px] text-zinc-600">(none)</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+                  {info.pluralLabel}
+                </span>
+                <span className="text-[10px] text-zinc-700">
+                  ({files.length})
+                </span>
+              </div>
 
-          {/* Section header + actions */}
-          <div className="flex items-start justify-between mb-2 shrink-0">
-            <div>
+              {/* File list */}
+              <div className="space-y-0.5">
+                {files.map((file) => (
+                  <GameFileRow
+                    key={file.filename}
+                    file={file}
+                    isSelected={selectedFile === file.filename}
+                    profiles={profiles}
+                    onSelect={() => setSelectedFile(file.filename)}
+                    onImport={() => importAsProfile(file.filename)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Right: preview pane */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+        {selectedFile && selectedFileInfo ? (
+          <>
+            {/* Preview header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 shrink-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-zinc-300">
-                  {currentSection?.label}
-                </h3>
-                {currentFilename && (
-                  <span className="text-xs text-zinc-600 font-mono">
-                    {currentFilename}
+                <span className="text-xs font-mono text-zinc-300">
+                  {selectedFile}
+                </span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${FILE_TYPE_INFO[selectedFileInfo.type].color} bg-zinc-800`}
+                >
+                  {FILE_TYPE_INFO[selectedFileInfo.type].label}
+                </span>
+                {selectedFileInfo.linkedProfileId && (
+                  <span className="text-[10px] text-amber-500/70 bg-amber-900/20 px-1.5 py-0.5 rounded">
+                    Linked to profile
                   </span>
                 )}
               </div>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                {currentSection?.description}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {currentFileExists && currentSection?.canCreate && (
-                <button
-                  onClick={() => deleteFile(activeSection)}
-                  className="text-xs text-red-400/70 hover:text-red-400 transition-colors"
-                >
-                  Delete
-                </button>
-              )}
-              {currentFileExists && (
-                <button
-                  onClick={saveFile}
-                  disabled={!dirty || saving}
-                  className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded transition-colors"
-                >
-                  {saving ? "Saving..." : saved ? "Saved!" : "Save"}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Editor area */}
-          <div className="flex-1 min-h-0">
-            {currentFileExists ? (
-              <>
-                {loadError ? (
-                  <div className="h-full flex items-center justify-center">
-                    <p className="text-sm text-red-400">{loadError}</p>
-                  </div>
-                ) : (
-                  <textarea
-                    value={content}
-                    onChange={(e) => {
-                      setContent(e.target.value);
-                      setDirty(true);
-                      setSaved(false);
-                    }}
-                    className="h-full w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg font-mono text-sm text-zinc-200 resize-none focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    spellCheck={false}
-                  />
-                )}
-              </>
-            ) : currentSection?.canCreate ? (
-              <div className="h-full flex flex-col items-center justify-center gap-2">
-                <p className="text-sm text-zinc-600">
-                  No {currentSection.label.toLowerCase()} file exists for this profile.
-                </p>
-                <button
-                  onClick={() => createFile(activeSection)}
-                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded transition-colors"
-                >
-                  Create {currentFilename}
-                </button>
+              {/* Context-sensitive actions */}
+              <div className="flex items-center gap-2">
+                {selectedFileInfo.type === "server-config" &&
+                  !selectedFileInfo.linkedProfileId && (
+                    <button
+                      onClick={() => importAsProfile(selectedFile)}
+                      className="text-xs text-amber-500 hover:text-amber-400 transition-colors"
+                    >
+                      Import as Profile
+                    </button>
+                  )}
               </div>
-            ) : (
-              <div className="h-full flex items-center justify-center">
-                <p className="text-sm text-zinc-600">File not found</p>
+            </div>
+
+            {/* Metadata bar */}
+            {Object.keys(selectedFileInfo.meta).length > 0 && (
+              <div className="px-3 py-1.5 border-b border-zinc-800/50 flex flex-wrap gap-3 shrink-0">
+                {selectedFileInfo.type === "server-config" && (
+                  <>
+                    {selectedFileInfo.meta.gameName && (
+                      <MetaChip
+                        label="Name"
+                        value={selectedFileInfo.meta.gameName}
+                      />
+                    )}
+                    {selectedFileInfo.meta.scriptName && (
+                      <MetaChip
+                        label="Mode"
+                        value={selectedFileInfo.meta.scriptName.replace(
+                          /\.d3m$/,
+                          "",
+                        )}
+                      />
+                    )}
+                    {selectedFileInfo.meta.maxPlayers && (
+                      <MetaChip
+                        label="Players"
+                        value={selectedFileInfo.meta.maxPlayers}
+                      />
+                    )}
+                    {selectedFileInfo.meta.missionName && (
+                      <MetaChip
+                        label="Mission"
+                        value={selectedFileInfo.meta.missionName}
+                      />
+                    )}
+                  </>
+                )}
+                {selectedFileInfo.type === "bot-roster" && (
+                  <>
+                    {selectedFileInfo.meta.botCount && (
+                      <MetaChip
+                        label="Bots"
+                        value={selectedFileInfo.meta.botCount}
+                      />
+                    )}
+                    {selectedFileInfo.meta.difficulty && (
+                      <MetaChip
+                        label="Difficulty"
+                        value={
+                          DIFFICULTY_NAMES[selectedFileInfo.meta.difficulty] ??
+                          selectedFileInfo.meta.difficulty
+                        }
+                      />
+                    )}
+                  </>
+                )}
+                {selectedFileInfo.type === "startup-commands" &&
+                  selectedFileInfo.meta.commands && (
+                    <MetaChip
+                      label="Commands"
+                      value={selectedFileInfo.meta.commands}
+                    />
+                  )}
               </div>
             )}
+
+            {/* Preview content */}
+            <div className="flex-1 min-h-0 overflow-auto">
+              {previewLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm text-zinc-600">Loading...</p>
+                </div>
+              ) : previewContent !== null ? (
+                <pre className="px-3 py-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
+                  {previewContent}
+                </pre>
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm text-zinc-600">Unable to read file</p>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-sm text-zinc-600">
+              Select a file to preview its contents
+            </p>
           </div>
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-zinc-600">
-            {profiles.length === 0
-              ? "No server profiles. Create one in the Launch panel to get started."
-              : "Select a profile to edit its configuration"}
-          </p>
-        </div>
-      )}
+        )}
+      </div>
     </div>
+  );
+}
+
+// ============================================================
+// Game File Browser sub-components
+// ============================================================
+
+function GameFileRow({
+  file,
+  isSelected,
+  profiles,
+  onSelect,
+  onImport,
+}: {
+  file: ClassifiedGameFile;
+  isSelected: boolean;
+  profiles: ServerProfile[];
+  onSelect: () => void;
+  onImport: () => void;
+}) {
+  const linkedProfile = file.linkedProfileId
+    ? profiles.find((p) => p.id === file.linkedProfileId)
+    : null;
+
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+        isSelected
+          ? "bg-zinc-800 border border-zinc-700"
+          : "hover:bg-zinc-800/50"
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-zinc-300 truncate">
+          {file.filename}
+        </span>
+      </div>
+      {/* Inline metadata */}
+      <div className="flex items-center gap-2 mt-0.5">
+        {file.type === "server-config" && file.meta.scriptName && (
+          <span className="text-[10px] text-zinc-600">
+            {file.meta.scriptName.replace(/\.d3m$/, "")}
+          </span>
+        )}
+        {file.type === "server-config" && file.meta.maxPlayers && (
+          <span className="text-[10px] text-zinc-600">
+            {file.meta.maxPlayers}p
+          </span>
+        )}
+        {file.type === "bot-roster" && file.meta.botCount && (
+          <span className="text-[10px] text-zinc-600">
+            {file.meta.botCount} bots
+          </span>
+        )}
+        {linkedProfile && (
+          <span className="text-[10px] text-amber-500/60">
+            {linkedProfile.name}
+          </span>
+        )}
+        {file.type === "server-config" && !linkedProfile && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onImport();
+            }}
+            className="text-[10px] text-amber-500/70 hover:text-amber-400 ml-auto transition-colors"
+          >
+            Import
+          </button>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function MetaChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="text-[11px]">
+      <span className="text-zinc-600">{label}: </span>
+      <span className="text-zinc-400">{value}</span>
+    </span>
   );
 }
