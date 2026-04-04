@@ -150,6 +150,30 @@ Once connected, Console/Players/Bots all work identically.
 
 **Reference:** D3Server3 v3.2 screenshots analyzed in `.claude/skills/d3-server-admin/d3server3-feature-map.md`. All dedicated.cfg CVars documented in `d3-dedicated-server-reference.md` with source-verified types, ranges, and defaults.
 
+### Step 0: File & Path Architecture ✅
+
+Foundational refactor separating Pyrodeck's internal config from D3 server config management.
+
+**Two storage domains:**
+- **Pyrodeck internal** (`PYRODECK_CONFIG_DIR`): `pyrodeck.json`, `servers.json`, `profiles.json` — Pyrodeck's own settings, D3 never sees these
+- **D3 server configs** (in `gamePath`): `dedicated.cfg`, `.mps`, `bots.cfg`, `autoexec.dmfc` — files D3 reads at launch, stored in the game directory
+
+**Architecture decision — in-place configs (v2):** Initially designed with a separate `configPath` directory and per-profile subdirectories, but D3's `cfopen()` file resolution is tightly coupled to `cwd` and doesn't search `-additionaldir` paths for config files. After testing, switched to **in-place model**: config files live directly in `gamePath` (the traditional D3 layout). Profiles are lightweight JSON metadata in Pyrodeck's config dir, each pointing at a config filename in gamePath. Launch is simple: `cwd = gamePath`, no `-additionaldir` needed.
+
+**Server profiles:** Each profile is a named reference to a config file in gamePath. Metadata (name, description, timestamps) stored in `profiles.json`. Profile CRUD: list, create, read, update, delete, duplicate, import existing.
+
+- [x] PyrodeckConfig: `gamePath`, `executablePath` replace old `d3InstallPath`/`d3Executable` (removed `configPath`)
+- [x] Auto-migration from legacy config format on first load
+- [x] Split path validation: `validateGamePath`, `validateExecutable`
+- [x] ServerProfile module: lightweight JSON profiles pointing at config files in gamePath
+- [x] ProcessManager: `cwd = gamePath`, simplified launch args
+- [x] Launcher routes: profile-based launch, updated detect endpoint
+- [x] Config routes: profile-aware file management, import existing configs, game file listing
+- [x] Server console: xterm.js terminal for D3 stdout/stderr, file logging to server.log
+- [x] Frontend: LaunchPanel with profile selector, ConfigEditor with sectioned file types
+- [x] ConfigEditor redesign: tabbed sections (Server Config, Ship Settings, Bot Roster, Startup Commands), create/delete companion files, import existing configs as profiles
+- [x] Clear UI labeling: "Pyrodeck Settings" vs "D3 Server Config", profile dropdown shows config filename
+
 ### Step 1: Config Backend — Parse & Generate
 
 Extend `ConfigGenerator` to handle the full dedicated.cfg schema and companion files:
@@ -168,7 +192,6 @@ Strategy: put everything in dedicated.cfg, only generate companion .mps when shi
 - [ ] Companion file linking: cfg `MultiSettingsFile=` points to .mps, cfg `BotConfig=` points to bots.cfg
 - [ ] Bot roster file (bots.cfg) read/write from structured data
 - [ ] autoexec.dmfc generation for settings without CVars ($serverhudnames, $killmsgfilter, $autosavelevel, $autosavedisconnect)
-- [ ] Config file CRUD API: list, create, read (structured), update (structured), delete, duplicate — handles cfg + companion .mps + bots.cfg as a unit
 - [ ] Mission file scanner: list available .mn3 files from D3 install
 
 ### Step 2: Config Form UI — Core Settings

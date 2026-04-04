@@ -15,6 +15,9 @@ import {
 import { sessionManager, serializeCaps } from "./server.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
+import { ServerProfileManager } from "../config/ServerProfile.js";
+
+const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
 
@@ -38,19 +41,33 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const body = request.body as {
-      configFile?: string;
+      profileId?: string;
       telnetPort?: number;
     };
 
     const config = pyrodeckConfig.get();
-    if (!config.d3InstallPath || !config.d3Executable) {
+    if (!config.gamePath || !config.executablePath) {
       return reply.status(400).send({
-        error: "D3 installation path and executable not configured",
+        error: "Game path and executable not configured",
       });
     }
 
-    const configFile = body.configFile ?? config.defaultConfigFile;
-    const cfgPath = path.join(config.d3InstallPath, configFile);
+    const gamePath = config.gamePath;
+
+    // Resolve config file from profile or default
+    let configFile = "dedicated.cfg";
+    if (body.profileId) {
+      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+      try {
+        const profile = await profileManager.read(body.profileId);
+        configFile = profile.configFile;
+        await profileManager.markLaunched(body.profileId);
+      } catch {
+        return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
+      }
+    }
+
+    const cfgPath = path.join(gamePath, configFile);
 
     // Parse the config file to get telnet password
     let telnetPort = body.telnetPort ?? config.defaultTelnetPort;
@@ -74,7 +91,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       telnetPassword = telnetCfg.password ?? "";
     } catch {
       return reply.status(400).send({
-        error: `Cannot read config file: ${configFile}`,
+        error: `Cannot read config file: ${cfgPath}`,
       });
     }
 
@@ -93,12 +110,22 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       sessionManager.remove(existing.id);
     }
 
+    // Resolve executable path (if relative, join with gamePath)
+    let executablePath = config.executablePath;
+    if (!path.isAbsolute(executablePath)) {
+      executablePath = path.join(gamePath, executablePath);
+    }
+
+    // Log file in Pyrodeck's config dir (don't pollute gamePath)
+    const logPath = path.join(CONFIG_DIR, "server.log");
+
     // Start the D3 process
     try {
       await processManager.start({
-        d3Path: config.d3InstallPath,
-        executable: config.d3Executable,
+        executablePath,
+        gamePath,
         configFile,
+        logPath,
         telnetPort,
         telnetPassword,
       });
@@ -197,25 +224,25 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/launcher/detect", async (_request, reply) => {
     const config = pyrodeckConfig.get();
-    if (!config.d3InstallPath) {
-      return reply.status(400).send({ error: "D3 path not configured" });
+    if (!config.gamePath) {
+      return reply.status(400).send({ error: "Game path not configured" });
     }
 
-    const d3Path = config.d3InstallPath;
-    const configFiles: string[] = [];
+    const gamePath = config.gamePath;
     const hogFiles: string[] = [];
+    const missionFiles: string[] = [];
 
     try {
-      const entries = await fs.readdir(d3Path);
+      const entries = await fs.readdir(gamePath);
       for (const entry of entries) {
         const lower = entry.toLowerCase();
-        if (lower.endsWith(".cfg")) configFiles.push(entry);
         if (lower.endsWith(".hog")) hogFiles.push(entry);
+        if (lower.endsWith(".mn3")) missionFiles.push(entry);
       }
     } catch {
-      return reply.status(500).send({ error: "Cannot read D3 directory" });
+      return reply.status(500).send({ error: "Cannot read game directory" });
     }
 
-    return { configFiles, hogFiles };
+    return { hogFiles, missionFiles };
   });
 }

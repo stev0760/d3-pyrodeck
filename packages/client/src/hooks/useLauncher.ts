@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 
 export interface PyrodeckConfig {
-  d3InstallPath: string | null;
-  d3Executable: string | null;
-  defaultConfigFile: string;
+  gamePath: string | null;
+  executablePath: string | null;
   defaultTelnetPort: number;
   preferredMode: "connect" | "launch";
   needsSetup: boolean;
@@ -18,16 +17,25 @@ export interface ProcessStatus {
   stoppedAt: string | null;
 }
 
-export interface DetectResult {
-  configFiles: string[];
-  hogFiles: string[];
+export interface ServerProfile {
+  id: string;
+  name: string;
+  description?: string;
+  configFile: string;
+  createdAt: string;
+  lastLaunchedAt?: string;
 }
 
-export interface ValidationResult {
+export interface DetectResult {
+  hogFiles: string[];
+  missionFiles: string[];
+}
+
+export interface GamePathValidation {
   valid: boolean;
   errors: string[];
-  configFiles: string[];
   hogFiles: string[];
+  missionFiles: string[];
 }
 
 export function useLauncher() {
@@ -35,6 +43,7 @@ export function useLauncher() {
   const [processStatus, setProcessStatus] = useState<ProcessStatus | null>(
     null,
   );
+  const [profiles, setProfiles] = useState<ServerProfile[]>([]);
   const [detectResult, setDetectResult] = useState<DetectResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,16 +108,17 @@ export function useLauncher() {
 
   const validatePath = useCallback(
     async (
-      path: string,
-      executable?: string,
-    ): Promise<ValidationResult | null> => {
+      type: "game" | "executable",
+      pathValue: string,
+      gamePath?: string,
+    ): Promise<GamePathValidation | null> => {
       setError(null);
       try {
         const res = await fetch("/api/pyrodeck/validate-path", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ path, executable }),
+          body: JSON.stringify({ type, path: pathValue, gamePath }),
         });
         return await res.json();
       } catch {
@@ -135,15 +145,102 @@ export function useLauncher() {
     return null;
   }, []);
 
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/profiles", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setProfiles(data.profiles);
+        return data.profiles as ServerProfile[];
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }, []);
+
+  const createProfile = useCallback(
+    async (name: string, opts?: Record<string, unknown>): Promise<ServerProfile | null> => {
+      setError(null);
+      try {
+        const res = await fetch("/api/profiles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ name, ...opts }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Failed to create profile");
+          return null;
+        }
+        await fetchProfiles();
+        return data as ServerProfile;
+      } catch {
+        setError("Failed to create profile");
+        return null;
+      }
+    },
+    [fetchProfiles],
+  );
+
+  const deleteProfile = useCallback(
+    async (id: string): Promise<boolean> => {
+      setError(null);
+      try {
+        const res = await fetch(`/api/profiles/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          setError(data.error || "Failed to delete profile");
+          return false;
+        }
+        await fetchProfiles();
+        return true;
+      } catch {
+        setError("Failed to delete profile");
+        return false;
+      }
+    },
+    [fetchProfiles],
+  );
+
+  const duplicateProfile = useCallback(
+    async (id: string, name?: string): Promise<ServerProfile | null> => {
+      setError(null);
+      try {
+        const res = await fetch(`/api/profiles/${id}/duplicate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Failed to duplicate profile");
+          return null;
+        }
+        await fetchProfiles();
+        return data as ServerProfile;
+      } catch {
+        setError("Failed to duplicate profile");
+        return null;
+      }
+    },
+    [fetchProfiles],
+  );
+
   const launch = useCallback(
-    async (configFile?: string): Promise<boolean> => {
+    async (profileId?: string): Promise<boolean> => {
       setError(null);
       try {
         const res = await fetch("/api/launcher/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ configFile }),
+          body: JSON.stringify({ profileId }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -191,12 +288,17 @@ export function useLauncher() {
   return {
     config,
     processStatus,
+    profiles,
     detectResult,
     loading,
     error,
     updateConfig,
     validatePath,
     detect,
+    fetchProfiles,
+    createProfile,
+    deleteProfile,
+    duplicateProfile,
     launch,
     stop,
   };

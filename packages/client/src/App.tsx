@@ -16,8 +16,9 @@ import { ToastContainer } from "./components/ToastContainer.tsx";
 import { ModeToggle, type AppMode } from "./components/ModeToggle.tsx";
 import { LaunchPanel } from "./components/LaunchPanel.tsx";
 import { ServerSidebar } from "./components/ServerSidebar.tsx";
+import { ServerConsole } from "./components/ServerConsole.tsx";
 
-type Tab = "console" | "players" | "bots" | "config";
+type Tab = "console" | "players" | "bots" | "config" | "server-output";
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const {
@@ -30,6 +31,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     disconnect,
     sendCommand,
     onOutput,
+    onProcessOutput,
     onPlayers,
     onBots,
     onServerInfo,
@@ -65,22 +67,32 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [mode, setMode] = useState<AppMode>(() => {
     return (localStorage.getItem("pyrodeck-mode") as AppMode) ?? "connect";
   });
-  const [activeTab, setActiveTab] = useState<Tab>("console");
+  const [activeTab, setActiveTab] = useState<Tab>(() =>
+    mode === "launch" ? "server-output" : "console"
+  );
   const [connectHost, setConnectHost] = useState("localhost");
   const [connectPort, setConnectPort] = useState(2092);
 
   const handleModeChange = (newMode: AppMode) => {
     setMode(newMode);
     localStorage.setItem("pyrodeck-mode", newMode);
+    // Default to appropriate console tab for each mode
+    setActiveTab(newMode === "launch" ? "server-output" : "console");
   };
 
   const isConnected = connectionState === "ready";
+  const processState = launcher.processStatus?.state;
+  const hasProcess = mode === "launch" && (
+    processState === "starting" || processState === "running" ||
+    processState === "stopping" || processState === "crashed"
+  );
 
   const tabs: { id: Tab; label: string; show: boolean }[] = [
-    { id: "console", label: "Console", show: true },
+    { id: "server-output", label: "Server Output", show: mode === "launch" },
+    { id: "console", label: "Telnet Console", show: true },
     { id: "players", label: "Players", show: isConnected },
     { id: "bots", label: "Bots", show: isConnected && hasFeature("bots") },
-    { id: "config", label: "Config", show: mode === "launch" },
+    { id: "config", label: "D3 Server Config", show: mode === "launch" },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -168,6 +180,20 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
           {/* Tab content */}
           <div className="flex-1 min-h-0 p-3">
+            {activeTab === "server-output" && (
+              <div className="h-full flex flex-col">
+                {hasProcess ? (
+                  <ServerConsole onProcessOutput={onProcessOutput} />
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <p className="text-zinc-600 text-lg">
+                      Launch a D3 server to see output here
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === "console" && (
               <div className="h-full flex flex-col">
                 {isConnected ? (
@@ -205,7 +231,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               />
             )}
 
-            {activeTab === "config" && <ConfigEditor />}
+            {activeTab === "config" && (
+              <ConfigEditor
+                profiles={launcher.profiles}
+                onRefreshProfiles={launcher.fetchProfiles}
+              />
+            )}
           </div>
         </main>
 

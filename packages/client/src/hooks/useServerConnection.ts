@@ -30,6 +30,7 @@ export function useServerConnection() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
+  const processOutputCallbacksRef = useRef<Array<(data: string, stream: string) => void>>([]);
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
@@ -83,6 +84,13 @@ export function useServerConnection() {
               cb((msg.payload as { raw: string }).raw);
             }
             break;
+          case "process_output": {
+            const { stream, data } = msg.payload as { stream: string; data: string };
+            for (const cb of processOutputCallbacksRef.current) {
+              cb(data, stream);
+            }
+            break;
+          }
           case "players":
             for (const cb of playersCallbacksRef.current) {
               cb(msg.payload);
@@ -221,6 +229,15 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onProcessOutput = useCallback((callback: (data: string, stream: string) => void) => {
+    processOutputCallbacksRef.current.push(callback);
+    return () => {
+      processOutputCallbacksRef.current = processOutputCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const onPlayers = useCallback((callback: (data: unknown) => void) => {
     playersCallbacksRef.current.push(callback);
     return () => {
@@ -265,6 +282,7 @@ export function useServerConnection() {
     disconnect,
     sendCommand,
     onOutput,
+    onProcessOutput,
     onPlayers,
     onBots,
     onServerInfo,

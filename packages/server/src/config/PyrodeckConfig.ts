@@ -2,34 +2,103 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export interface PyrodeckConfig {
-  d3InstallPath: string | null;
-  d3Executable: string | null;
-  defaultConfigFile: string;
+  /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
+  gamePath: string | null;
+  /** Full path to D3 binary, or filename if binary is in gamePath. */
+  executablePath: string | null;
+  /** Default telnet port for D3 remote console. */
   defaultTelnetPort: number;
+  /** Preferred UI mode on startup. */
   preferredMode: "connect" | "launch";
 }
 
+/** Legacy config shape for migration from pre-profile versions. */
+interface LegacyPyrodeckConfig {
+  d3InstallPath?: string | null;
+  d3Executable?: string | null;
+  defaultConfigFile?: string;
+  defaultTelnetPort?: number;
+  preferredMode?: "connect" | "launch";
+}
+
 const DEFAULT_CONFIG: PyrodeckConfig = {
-  d3InstallPath: null,
-  d3Executable: null,
-  defaultConfigFile: "dedicated.cfg",
+  gamePath: null,
+  executablePath: null,
   defaultTelnetPort: 2092,
   preferredMode: "connect",
 };
 
+/**
+ * Migrate legacy config fields to new schema.
+ * - d3InstallPath → gamePath
+ * - d3Executable → executablePath (joined with gamePath if relative)
+ * - defaultConfigFile → removed (profiles always use dedicated.cfg)
+ */
+function migrateConfig(
+  raw: Record<string, unknown>,
+): Partial<PyrodeckConfig> {
+  const migrated: Partial<PyrodeckConfig> = {};
+  const legacy = raw as LegacyPyrodeckConfig;
+
+  // Already new format — pass through known fields
+  if ("gamePath" in raw) {
+    migrated.gamePath = (raw.gamePath as string | null) ?? null;
+  }
+  if ("executablePath" in raw) {
+    migrated.executablePath = (raw.executablePath as string | null) ?? null;
+  }
+
+  // Migrate legacy fields
+  if ("d3InstallPath" in raw && !("gamePath" in raw)) {
+    migrated.gamePath = legacy.d3InstallPath ?? null;
+  }
+  if ("d3Executable" in raw && !("executablePath" in raw)) {
+    const exe = legacy.d3Executable;
+    const installPath = legacy.d3InstallPath ?? (migrated.gamePath as string | null);
+    if (exe && installPath) {
+      // If executable is just a filename, join with install path to make it absolute
+      if (!path.isAbsolute(exe) && !exe.includes(path.sep)) {
+        migrated.executablePath = path.join(installPath, exe);
+      } else {
+        migrated.executablePath = exe;
+      }
+    } else if (exe) {
+      migrated.executablePath = exe;
+    }
+  }
+
+  // Pass through shared fields
+  if ("defaultTelnetPort" in raw && typeof raw.defaultTelnetPort === "number") {
+    migrated.defaultTelnetPort = raw.defaultTelnetPort;
+  }
+  if ("preferredMode" in raw && (raw.preferredMode === "connect" || raw.preferredMode === "launch")) {
+    migrated.preferredMode = raw.preferredMode;
+  }
+
+  return migrated;
+}
+
 export class PyrodeckConfigManager {
-  private configPath: string;
+  private filePath: string;
   private config: PyrodeckConfig = { ...DEFAULT_CONFIG };
 
   constructor(configDir: string) {
-    this.configPath = path.join(configDir, "pyrodeck.json");
+    this.filePath = path.join(configDir, "pyrodeck.json");
   }
 
   async load(): Promise<PyrodeckConfig> {
     try {
-      const raw = await fs.readFile(this.configPath, "utf-8");
-      const saved = JSON.parse(raw) as Partial<PyrodeckConfig>;
-      this.config = { ...DEFAULT_CONFIG, ...saved };
+      const raw = await fs.readFile(this.filePath, "utf-8");
+      const saved = JSON.parse(raw) as Record<string, unknown>;
+      const migrated = migrateConfig(saved);
+      const merged = { ...DEFAULT_CONFIG, ...migrated };
+      this.config = merged;
+
+      // If migration changed anything, persist the new format
+      const needsMigration = "d3InstallPath" in saved || "d3Executable" in saved || "defaultConfigFile" in saved;
+      if (needsMigration) {
+        await this.persist();
+      }
     } catch {
       // File doesn't exist or is invalid — use defaults
       this.config = { ...DEFAULT_CONFIG };
@@ -39,10 +108,14 @@ export class PyrodeckConfigManager {
 
   async save(updates: Partial<PyrodeckConfig>): Promise<PyrodeckConfig> {
     this.config = { ...this.config, ...updates };
-    const dir = path.dirname(this.configPath);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2));
+    await this.persist();
     return this.config;
+  }
+
+  private async persist(): Promise<void> {
+    const dir = path.dirname(this.filePath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(this.filePath, JSON.stringify(this.config, null, 2));
   }
 
   get(): PyrodeckConfig {
@@ -50,57 +123,51 @@ export class PyrodeckConfigManager {
   }
 
   needsSetup(): boolean {
-    return !this.config.d3InstallPath;
+    return !this.config.gamePath;
   }
 }
 
-export interface PathValidationResult {
+// --- Path validation ---
+
+export interface GamePathValidation {
   valid: boolean;
   errors: string[];
-  configFiles: string[];
   hogFiles: string[];
+  missionFiles: string[];
+}
+
+export interface ExecutableValidation {
+  valid: boolean;
+  errors: string[];
 }
 
 /**
- * Validate a D3 installation path.
- * Checks that the directory exists, the specified executable is present,
- * and required game files (.hog) exist.
+ * Validate a D3 game data directory.
+ * Checks that the directory exists and contains required game data (d3.hog).
+ * Also scans for available missions (.mn3) and other .hog files.
  */
-export async function validateD3Path(
-  installPath: string,
-  executable: string | null,
-): Promise<PathValidationResult> {
+export async function validateGamePath(gamePath: string): Promise<GamePathValidation> {
   const errors: string[] = [];
-  const configFiles: string[] = [];
   const hogFiles: string[] = [];
+  const missionFiles: string[] = [];
 
   // Check directory exists
   try {
-    const stat = await fs.stat(installPath);
+    const stat = await fs.stat(gamePath);
     if (!stat.isDirectory()) {
-      return { valid: false, errors: ["Path is not a directory"], configFiles, hogFiles };
+      return { valid: false, errors: ["Path is not a directory"], hogFiles, missionFiles };
     }
   } catch {
-    return { valid: false, errors: ["Directory does not exist"], configFiles, hogFiles };
+    return { valid: false, errors: ["Directory does not exist"], hogFiles, missionFiles };
   }
 
-  // Check executable exists
-  if (executable) {
-    const exePath = path.join(installPath, executable);
-    try {
-      await fs.access(exePath);
-    } catch {
-      errors.push(`Executable not found: ${executable}`);
-    }
-  }
-
-  // Scan for .hog files and .cfg files
+  // Scan for game files
   try {
-    const entries = await fs.readdir(installPath);
+    const entries = await fs.readdir(gamePath);
     for (const entry of entries) {
       const lower = entry.toLowerCase();
       if (lower.endsWith(".hog")) hogFiles.push(entry);
-      if (lower.endsWith(".cfg")) configFiles.push(entry);
+      if (lower.endsWith(".mn3")) missionFiles.push(entry);
     }
   } catch {
     errors.push("Cannot read directory contents");
@@ -112,10 +179,31 @@ export async function validateD3Path(
     errors.push("Required file d3.hog not found — game data may be missing");
   }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-    configFiles,
-    hogFiles,
-  };
+  return { valid: errors.length === 0, errors, hogFiles, missionFiles };
 }
+
+/**
+ * Validate a D3 executable path.
+ * Accepts either an absolute path or a filename to look for in gamePath.
+ */
+export async function validateExecutable(
+  executablePath: string,
+  gamePath?: string | null,
+): Promise<ExecutableValidation> {
+  const errors: string[] = [];
+
+  // Resolve path: if not absolute, try joining with gamePath
+  let resolved = executablePath;
+  if (!path.isAbsolute(executablePath) && gamePath) {
+    resolved = path.join(gamePath, executablePath);
+  }
+
+  try {
+    await fs.access(resolved);
+  } catch {
+    errors.push(`Executable not found: ${resolved}`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+

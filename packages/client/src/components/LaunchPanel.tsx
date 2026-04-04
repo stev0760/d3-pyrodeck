@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { useLauncher } from "../hooks/useLauncher.ts";
+import type { useLauncher, ServerProfile } from "../hooks/useLauncher.ts";
 
 type LauncherState = ReturnType<typeof useLauncher>;
 
@@ -19,57 +19,53 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   const {
     config,
     processStatus,
+    profiles,
     error,
     loading,
     updateConfig,
     validatePath,
-    detect,
+    fetchProfiles,
+    createProfile,
     launch,
     stop,
   } = launcher;
 
   // Setup form state
-  const [d3Path, setD3Path] = useState("");
-  const [d3Exe, setD3Exe] = useState("Descent3");
+  const [gamePath, setGamePath] = useState("");
+  const [executablePath, setExecutablePath] = useState("Descent3");
   const [validating, setValidating] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Launch form state
-  const [configFile, setConfigFile] = useState("");
-  const [configFiles, setConfigFiles] = useState<string[]>([]);
+  // Profile state
+  const [selectedProfile, setSelectedProfile] = useState<string>("");
+  const [newProfileName, setNewProfileName] = useState("");
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [launching, setLaunching] = useState(false);
 
   // Sync from saved config
   useEffect(() => {
     if (config) {
-      if (config.d3InstallPath) setD3Path(config.d3InstallPath);
-      if (config.d3Executable) setD3Exe(config.d3Executable);
-      if (config.defaultConfigFile) setConfigFile(config.defaultConfigFile);
+      if (config.gamePath) setGamePath(config.gamePath);
+      if (config.executablePath) setExecutablePath(config.executablePath);
     }
   }, [config]);
 
-  // Detect config files when path is configured
+  // Fetch profiles when path is configured
   useEffect(() => {
-    if (config?.d3InstallPath) {
-      detect().then((result) => {
-        if (result) {
-          setConfigFiles(result.configFiles);
-          if (!configFile && result.configFiles.length > 0) {
-            const defaultCfg = result.configFiles.find((f) =>
-              f.toLowerCase().includes("dedicated"),
-            );
-            setConfigFile(defaultCfg ?? result.configFiles[0]);
-          }
+    if (config?.gamePath) {
+      fetchProfiles().then((result) => {
+        if (result.length > 0 && !selectedProfile) {
+          setSelectedProfile(result[0].id);
         }
       });
     }
-  }, [config?.d3InstallPath, detect, configFile]);
+  }, [config?.gamePath, fetchProfiles, selectedProfile]);
 
   if (loading) {
     return <p className="text-zinc-600 text-sm">Loading...</p>;
   }
 
-  const needsSetup = !config?.d3InstallPath;
+  const needsSetup = !config?.gamePath;
   const state = processStatus?.state ?? "stopped";
   const isActive =
     state === "running" ||
@@ -79,22 +75,44 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   const handleValidate = async () => {
     setValidating(true);
     setValidationErrors([]);
-    const result = await validatePath(d3Path, d3Exe);
-    if (result && result.valid) {
-      await updateConfig({
-        d3InstallPath: d3Path,
-        d3Executable: d3Exe,
-      });
-      setValidationErrors([]);
-    } else if (result) {
-      setValidationErrors(result.errors);
+
+    // Validate game path
+    const gameResult = await validatePath("game", gamePath);
+    if (!gameResult || !gameResult.valid) {
+      setValidationErrors(gameResult?.errors ?? ["Validation failed"]);
+      setValidating(false);
+      return;
     }
+
+    // Validate executable
+    const exeResult = await validatePath("executable", executablePath, gamePath);
+    if (!exeResult || !exeResult.valid) {
+      setValidationErrors(exeResult?.errors ?? ["Executable validation failed"]);
+      setValidating(false);
+      return;
+    }
+
+    await updateConfig({
+      gamePath,
+      executablePath,
+    });
+    setValidationErrors([]);
     setValidating(false);
+  };
+
+  const handleCreateProfile = async () => {
+    if (!newProfileName.trim()) return;
+    const profile = await createProfile(newProfileName.trim());
+    if (profile) {
+      setSelectedProfile(profile.id);
+      setNewProfileName("");
+      setShowCreateForm(false);
+    }
   };
 
   const handleLaunch = async () => {
     setLaunching(true);
-    await launch(configFile || undefined);
+    await launch(selectedProfile || undefined);
     setLaunching(false);
   };
 
@@ -104,47 +122,49 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
 
   const handleReset = async () => {
     await updateConfig({
-      d3InstallPath: null,
-      d3Executable: null,
+      gamePath: null,
+      executablePath: null,
     });
-    setConfigFiles([]);
   };
 
   return (
     <div className="space-y-3">
       <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-        Launch Mode
+        Pyrodeck Settings
       </h3>
 
       {/* Setup or configured view */}
       {needsSetup ? (
         <div className="space-y-2">
           <p className="text-xs text-zinc-500">
-            Set your Descent 3 installation path to get started.
+            Point Pyrodeck to your Descent 3 installation to get started.
           </p>
           <div>
             <label className="text-xs text-zinc-500 block mb-1">
-              D3 Install Path
+              Game Data Path
             </label>
             <input
               type="text"
-              value={d3Path}
-              onChange={(e) => setD3Path(e.target.value)}
+              value={gamePath}
+              onChange={(e) => setGamePath(e.target.value)}
               placeholder="/path/to/descent3"
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
             />
           </div>
           <div>
             <label className="text-xs text-zinc-500 block mb-1">
-              Executable Name
+              Executable
             </label>
             <input
               type="text"
-              value={d3Exe}
-              onChange={(e) => setD3Exe(e.target.value)}
-              placeholder="Descent3"
+              value={executablePath}
+              onChange={(e) => setExecutablePath(e.target.value)}
+              placeholder="Descent3 or /path/to/Descent3"
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
             />
+            <p className="text-xs text-zinc-600 mt-0.5">
+              Filename (looked up in game path) or full path
+            </p>
           </div>
           {validationErrors.length > 0 && (
             <div className="text-xs text-red-400 space-y-0.5">
@@ -155,7 +175,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           )}
           <button
             onClick={handleValidate}
-            disabled={!d3Path || !d3Exe || validating}
+            disabled={!gamePath || !executablePath || validating}
             className="w-full bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-sm py-1.5 rounded transition-colors"
           >
             {validating ? "Validating..." : "Validate & Save"}
@@ -164,15 +184,18 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       ) : (
         <div className="space-y-2">
           {/* Configured path display */}
+          <p className="text-xs text-zinc-600">
+            D3 game directory and executable for this Pyrodeck instance.
+          </p>
           <div className="bg-zinc-800/50 rounded px-2 py-1.5 text-xs">
-            <span className="text-zinc-500">Path: </span>
+            <span className="text-zinc-500">Game: </span>
             <span className="text-zinc-300 break-all">
-              {config?.d3InstallPath}
+              {config?.gamePath}
             </span>
           </div>
           <div className="bg-zinc-800/50 rounded px-2 py-1.5 text-xs">
             <span className="text-zinc-500">Exe: </span>
-            <span className="text-zinc-300">{config?.d3Executable}</span>
+            <span className="text-zinc-300 break-all">{config?.executablePath}</span>
           </div>
 
           {/* Process status */}
@@ -193,23 +216,64 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             )}
           </div>
 
-          {/* Config file selector */}
+          {/* Profile selector */}
           {!isActive && (
             <div>
               <label className="text-xs text-zinc-500 block mb-1">
-                Config File
+                D3 Server Profile
               </label>
-              <select
-                value={configFile}
-                onChange={(e) => setConfigFile(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
-              >
-                {configFiles.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
+              {profiles.length > 0 ? (
+                <select
+                  value={selectedProfile}
+                  onChange={(e) => setSelectedProfile(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
+                >
+                  {profiles.map((p: ServerProfile) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-zinc-500 italic">
+                  No profiles yet. Create one to get started.
+                </p>
+              )}
+
+              {/* Create profile inline */}
+              {showCreateForm ? (
+                <div className="flex gap-1 mt-1">
+                  <input
+                    type="text"
+                    value={newProfileName}
+                    onChange={(e) => setNewProfileName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreateProfile()}
+                    placeholder="Profile name"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-amber-600"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleCreateProfile}
+                    disabled={!newProfileName.trim()}
+                    className="bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-xs px-2 py-1 rounded transition-colors"
+                  >
+                    Create
+                  </button>
+                  <button
+                    onClick={() => { setShowCreateForm(false); setNewProfileName(""); }}
+                    className="text-xs text-zinc-500 hover:text-zinc-300 px-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowCreateForm(true)}
+                  className="text-xs text-amber-500 hover:text-amber-400 mt-1 transition-colors"
+                >
+                  + New Profile
+                </button>
+              )}
             </div>
           )}
 
@@ -225,7 +289,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           ) : (
             <button
               onClick={handleLaunch}
-              disabled={!configFile || launching}
+              disabled={!selectedProfile || launching}
               className="w-full bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-sm py-1.5 rounded transition-colors"
             >
               {launching ? "Starting..." : "Launch Server"}

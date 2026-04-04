@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import {
   PyrodeckConfigManager,
-  validateD3Path,
+  validateGamePath,
+  validateExecutable,
   type PyrodeckConfig,
 } from "../config/PyrodeckConfig.js";
 
@@ -11,7 +12,7 @@ export const pyrodeckConfig = new PyrodeckConfigManager(CONFIG_DIR);
 export async function pyrodeckConfigRoutes(
   app: FastifyInstance,
 ): Promise<void> {
-  // Load config at startup
+  // Load config at startup (auto-migrates legacy format)
   await pyrodeckConfig.load();
 
   app.get("/api/pyrodeck/config", async () => {
@@ -25,19 +26,26 @@ export async function pyrodeckConfigRoutes(
   app.put("/api/pyrodeck/config", async (request, reply) => {
     const updates = request.body as Partial<PyrodeckConfig>;
 
-    // Validate d3InstallPath if being changed
-    if (updates.d3InstallPath !== undefined) {
-      if (updates.d3InstallPath === null) {
-        // Clearing the path is always valid
-      } else {
-        const executable = updates.d3Executable ?? pyrodeckConfig.get().d3Executable;
-        const result = await validateD3Path(updates.d3InstallPath, executable);
-        if (!result.valid) {
-          return reply.status(400).send({
-            error: "Invalid D3 installation path",
-            details: result.errors,
-          });
-        }
+    // Validate gamePath if being changed
+    if (updates.gamePath !== undefined && updates.gamePath !== null) {
+      const result = await validateGamePath(updates.gamePath);
+      if (!result.valid) {
+        return reply.status(400).send({
+          error: "Invalid game data path",
+          details: result.errors,
+        });
+      }
+    }
+
+    // Validate executablePath if being changed
+    if (updates.executablePath !== undefined && updates.executablePath !== null) {
+      const gamePath = updates.gamePath ?? pyrodeckConfig.get().gamePath;
+      const result = await validateExecutable(updates.executablePath, gamePath);
+      if (!result.valid) {
+        return reply.status(400).send({
+          error: "Invalid executable path",
+          details: result.errors,
+        });
       }
     }
 
@@ -49,11 +57,19 @@ export async function pyrodeckConfigRoutes(
   });
 
   app.post("/api/pyrodeck/validate-path", async (request) => {
-    const { path: installPath, executable } = request.body as {
+    const body = request.body as {
+      type: "game" | "executable";
       path: string;
-      executable?: string;
+      gamePath?: string;
     };
 
-    return validateD3Path(installPath, executable ?? null);
+    switch (body.type) {
+      case "game":
+        return validateGamePath(body.path);
+      case "executable":
+        return validateExecutable(body.path, body.gamePath ?? null);
+      default:
+        return { valid: false, errors: ["Unknown validation type"] };
+    }
   });
 }

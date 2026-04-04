@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
+import fs from "node:fs";
 import { EventEmitter } from "node:events";
 
 export type ProcessState =
@@ -20,9 +21,16 @@ export interface ProcessStatus {
 }
 
 export interface LaunchConfig {
-  d3Path: string;
-  executable: string;
+  /** Full path to D3 executable. */
+  executablePath: string;
+  /** Directory containing D3 game data, configs, and missions. Used as cwd. */
+  gamePath: string;
+  /** Config filename in gamePath (e.g., "my-server.cfg"). */
   configFile: string;
+  /** Extra CLI flags (e.g., -autoexec). */
+  additionalArgs?: string[];
+  /** Optional path to write server log file. If set, stdout/stderr are written here. */
+  logPath?: string;
   telnetPort: number;
   telnetPassword: string;
 }
@@ -55,6 +63,7 @@ export class ProcessManager extends EventEmitter {
   private telnetProbeTimer: ReturnType<typeof setInterval> | null = null;
   private telnetReady = false;
   private launchConfig: LaunchConfig | null = null;
+  private logStream: fs.WriteStream | null = null;
 
   /** Send a quit command over telnet for graceful shutdown. Set externally. */
   sendQuitFn: (() => Promise<void>) | null = null;
@@ -76,10 +85,15 @@ export class ProcessManager extends EventEmitter {
     this.telnetReady = false;
     this.setState("starting");
 
-    const exePath = path.join(config.d3Path, config.executable);
+    // Config files live in gamePath alongside game data — the traditional D3 layout.
+    // Use ./ prefix so cfopen() resolves relative to cwd (gamePath).
+    const args = [
+      "-dedicated", `./${config.configFile}`,
+      ...(config.additionalArgs ?? []),
+    ];
 
-    this.child = spawn(exePath, ["-dedicated", `./${config.configFile}`], {
-      cwd: config.d3Path,
+    this.child = spawn(config.executablePath, args, {
+      cwd: config.gamePath,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -94,11 +108,29 @@ export class ProcessManager extends EventEmitter {
     this.status.exitSignal = null;
     this.status.stoppedAt = null;
 
+    // Open log file if configured
+    if (config.logPath) {
+      try {
+        this.logStream = fs.createWriteStream(config.logPath, { flags: "a" });
+        this.logStream.on("error", () => {}); // Don't crash on log write errors
+        const timestamp = new Date().toISOString();
+        this.logStream.write(`\n--- D3 Server started at ${timestamp} ---\n`);
+        this.logStream.write(`  Executable: ${config.executablePath}\n`);
+        this.logStream.write(`  Config: ${config.gamePath}/${config.configFile}\n`);
+        this.logStream.write(`  Args: ${args.join(" ")}\n`);
+        this.logStream.write(`  PID: ${this.child.pid}\n\n`);
+      } catch {
+        // Log file is optional — don't fail the launch
+        this.logStream = null;
+      }
+    }
+
     // Drain stdout/stderr to prevent SIGPIPE if D3 writes faster than we read
     this.child.stdout?.on("data", (chunk: Buffer) => {
       try {
         const text = chunk.toString("utf-8");
         this.emit("stdout", text);
+        this.logStream?.write(text);
         this.checkStdoutForReadiness(text);
       } catch {
         // Never let handler errors break the pipe
@@ -109,6 +141,7 @@ export class ProcessManager extends EventEmitter {
       try {
         const text = chunk.toString("utf-8");
         this.emit("stderr", text);
+        this.logStream?.write(`[stderr] ${text}`);
       } catch {
         // Never let handler errors break the pipe
       }
@@ -183,6 +216,12 @@ export class ProcessManager extends EventEmitter {
 
   private cleanup(): void {
     this.stopTelnetProbe();
+    if (this.logStream) {
+      const timestamp = new Date().toISOString();
+      this.logStream.write(`\n--- D3 Server stopped at ${timestamp} ---\n`);
+      this.logStream.end();
+      this.logStream = null;
+    }
     this.child = null;
     this.status.pid = null;
   }
