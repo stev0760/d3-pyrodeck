@@ -195,6 +195,24 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /** Write a file to gamePath (no profile context needed). */
+  app.put("/api/game-files/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const { content } = request.body as { content: string };
+
+    if (typeof content !== "string") {
+      return reply.status(400).send({ error: "content must be a string" });
+    }
+
+    try {
+      await getProfileManager().writeFile(filename, content);
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Write failed";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
   /** Read a file from gamePath (profile-scoped, same underlying operation). */
   app.get("/api/profiles/:id/files/:filename", async (request, reply) => {
     const { filename } = request.params as { id: string; filename: string };

@@ -174,14 +174,26 @@ Foundational refactor separating Pyrodeck's internal config from D3 server confi
 - [x] ConfigEditor redesign: tabbed sections (Server Config, Ship Settings, Bot Roster, Startup Commands), create/delete companion files, import existing configs as profiles
 - [x] Clear UI labeling: "Pyrodeck Settings" vs "D3 Server Config", profile dropdown shows config filename
 
-### Step 1: Config Backend — Parse & Generate
+### Step 1: Raw Text Editing ✅
 
-Extend `ConfigGenerator` to handle the full dedicated.cfg schema and companion files:
+Direct text editing for all config file types — the "advanced mode" baseline:
 
-**dedicated.cfg** — primary config, `Key=Value` syntax, one per line. Holds all main settings.
-**companion .mps** — `MultiSettingsFile` loaded via cfg. Tab-separated `LABEL<tab>VALUE` format. Loaded *after* cfg so values override. **Only way to ban ships** (`SHIPBAN` entries). Can also do `OBJBAN` for powerups but we use cfg `DisallowPowerup` instead since it works natively.
-**bots.cfg** — bot roster file referenced via `BotConfig=` in cfg. Same `Key=Value` format.
-**autoexec.dmfc** — DMFC commands run at game DLL init. For settings with no CVar.
+- [x] Profile Editor: textarea editing for server config and all companion files (bot roster, ship settings, startup commands)
+- [x] Companion file management: create with custom filename, link existing, unlink (removes CVar without deleting)
+- [x] CVar auto-management: creating/deleting companions auto-updates BotConfig=/MultiSettingsFile= in server config
+- [x] Game File Browser: categorized file list with metadata, preview pane, edit-in-place with save
+- [x] File classification: backend inspects content to categorize as server-config, bot-roster, ship-settings, startup-commands
+- [x] Profile-less file write endpoint for Game Files browser editing
+
+### Step 2: Config Backend — Parse & Generate
+
+Extend `ConfigGenerator` to handle the full dedicated.cfg schema and companion files. This powers the structured form UI in Steps 3-5.
+
+**File formats:**
+- **dedicated.cfg** — `Key=Value` syntax, one per line. Holds all main settings.
+- **companion .mps** — `MultiSettingsFile` loaded via cfg. Tab-separated `LABEL<tab>VALUE` format. **Only way to ban ships** (`SHIPBAN` entries).
+- **bots.cfg** — bot roster referenced via `BotConfig=` in cfg. Same `Key=Value` format.
+- **autoexec.dmfc** — DMFC commands run at game DLL init. For settings with no CVar.
 
 Strategy: put everything in dedicated.cfg, only generate companion .mps when ship bans are needed, generate bots.cfg when bot roster is configured, generate autoexec.dmfc for settings without CVars.
 
@@ -189,14 +201,14 @@ Strategy: put everything in dedicated.cfg, only generate companion .mps when shi
 - [ ] Type-aware parsing with validation (int ranges, string max lengths, enum values)
 - [ ] Handle multi-value keys: multiple `AllowPowerup`/`DisallowPowerup` lines
 - [ ] .mps file read/write: parse existing .mps (tab-separated `LABEL<tab>VALUE`, `TRUE`/`FALSE` bools), generate .mps with `SHIPBAN` entries when ships are restricted
-- [ ] Companion file linking: cfg `MultiSettingsFile=` points to .mps, cfg `BotConfig=` points to bots.cfg
-- [ ] Bot roster file (bots.cfg) read/write from structured data
+- [ ] Bot roster file read/write from structured data
 - [ ] autoexec.dmfc generation for settings without CVars ($serverhudnames, $killmsgfilter, $autosavelevel, $autosavedisconnect)
 - [ ] Mission file scanner: list available .mn3 files from D3 install
 
-### Step 2: Config Form UI — Core Settings
+### Step 3: Config Form UI — Core Settings (Structured Mode)
 
-Main config editor as a structured form (replaces/supplements raw textarea):
+User-friendly structured form that replaces raw text editing as the default view. Raw editing remains available as an "Advanced" toggle. Modeled after D3Server3's proven layout.
+
 - [ ] Identity section: server name (max 32), game type dropdown (Anarchy, Team Anarchy, CTF, Monsterball, Entropy, Hoard, Hyper-Anarchy, Robo-Anarchy, Co-op), mission dropdown (scanned .mn3 files), starting level, MOTD
 - [ ] Network section: PPS (2-40, default 30), max players (2-32), connection model radio (Client/Server, Peer2Peer, Permissable), send rotation velocity, use smoothing
 - [ ] Rules section: time limit (0=disabled), kill goal (0=disabled), respawn time, randomize respawn toggle, difficulty dropdown (Trainee→Insane), audio taunt delay, num teams (2-4, visible for team modes)
@@ -204,8 +216,9 @@ Main config editor as a structured form (replaces/supplements raw textarea):
 - [ ] Remote console section: allow remote console (default on), port, password (auto-generate option)
 - [ ] Form validation matching engine constraints (e.g. PPS 2-40, MaxPlayers 2-32, NumTeams 2-4)
 - [ ] Defaults button to populate recommended values (PPS=30, AccurateCollisions=1, etc.)
+- [ ] Toggle between structured form view and raw text editor for the same file
 
-### Step 3: Config Form UI — Ships & Powerups
+### Step 4: Config Form UI — Ships & Powerups
 
 The distinctive D3Server3 feature — toggle lists for allowed items:
 - [ ] Ship toggles: Pyro-GL, Phoenix, Magnum-AHT, Black Pyro — with "at least one required" validation and Pyro-GL warning
@@ -217,24 +230,21 @@ The distinctive D3Server3 feature — toggle lists for allowed items:
 - [ ] "Allow All" / "Disallow All" per category
 - [ ] Visual indicator for bandwidth-heavy powerups (ProxMinePowerup, Betty4Pack, BlackShark, Seeker3Pack)
 
-### Step 4: Config Form UI — Bots (Matcen Fork)
+### Step 5: Config Form UI — Bots (Matcen Fork)
 
 Bot roster editor (gated on Matcen fork detection via $servercaps):
 - [ ] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown)
 - [ ] Default difficulty selector (applies to bots without per-bot override)
 - [ ] Bot count display with max players warning
 - [ ] Save/load named bot presets (roster files)
-- [ ] Generates `bots.cfg` roster file + `BotConfig=bots.cfg` in dedicated.cfg
+- [ ] Generates roster file + `BotConfig=` in dedicated.cfg
 
-### Step 5: Config Management
+### Step 6: Config Management & Wizard
 
-- [ ] Config file list with create new / duplicate / delete
 - [ ] "New Server Config" wizard: pick game type → form pre-fills sensible defaults for that mode
-- [ ] Switch between structured form view and raw editor view for same file
-- [ ] Config tab improvements: show structured form by default, raw editor as advanced toggle
 - [ ] autoexec.dmfc editor: simple list of DMFC commands to run at server start
 
-### Step 6: Post-Start Settings
+### Step 7: Post-Start Settings
 
 Settings that can't be set in cfg but Pyrodeck can apply after server launch:
 - [ ] Server HUD names (full/team/none) — send `$serverhudnames` after start

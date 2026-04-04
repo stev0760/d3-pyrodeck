@@ -774,6 +774,11 @@ function GameFileBrowser({
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   // Fetch classified files
   const fetchFiles = useCallback(async () => {
@@ -794,13 +799,17 @@ function GameFileBrowser({
     fetchFiles();
   }, [fetchFiles]);
 
-  // Load preview when file selected
+  // Load content when file selected
   useEffect(() => {
     if (!selectedFile) {
       setPreviewContent(null);
+      setEditing(false);
       return;
     }
-    const loadPreview = async () => {
+    setEditing(false);
+    setDirty(false);
+    setSaved(false);
+    const loadContent = async () => {
       setPreviewLoading(true);
       try {
         const res = await fetch(
@@ -810,16 +819,45 @@ function GameFileBrowser({
         if (res.ok) {
           const data = await res.json();
           setPreviewContent(data.content);
+          setEditContent(data.content);
         } else {
           setPreviewContent(null);
+          setEditContent("");
         }
       } catch {
         setPreviewContent(null);
+        setEditContent("");
       }
       setPreviewLoading(false);
     };
-    loadPreview();
+    loadContent();
   }, [selectedFile]);
+
+  const saveFile = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    try {
+      const res = await fetch(
+        `/api/game-files/${encodeURIComponent(selectedFile)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ content: editContent }),
+        },
+      );
+      if (res.ok) {
+        setPreviewContent(editContent);
+        setDirty(false);
+        setSaved(true);
+        fetchFiles();
+        setTimeout(() => setSaved(false), 2000);
+      }
+    } catch {
+      // ignore
+    }
+    setSaving(false);
+  };
 
   // Group files by type
   const grouped = new Map<GameFileType, ClassifiedGameFile[]>();
@@ -951,7 +989,7 @@ function GameFileBrowser({
                   </span>
                 )}
               </div>
-              {/* Context-sensitive actions */}
+              {/* Actions */}
               <div className="flex items-center gap-2">
                 {selectedFileInfo.type === "server-config" &&
                   !selectedFileInfo.linkedProfileId && (
@@ -962,6 +1000,34 @@ function GameFileBrowser({
                       Import as Profile
                     </button>
                   )}
+                {editing ? (
+                  <>
+                    <button
+                      onClick={saveFile}
+                      disabled={!dirty || saving}
+                      className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded transition-colors"
+                    >
+                      {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditing(false);
+                        setEditContent(previewContent ?? "");
+                        setDirty(false);
+                      }}
+                      className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1028,12 +1094,23 @@ function GameFileBrowser({
               </div>
             )}
 
-            {/* Preview content */}
+            {/* Content area */}
             <div className="flex-1 min-h-0 overflow-auto">
               {previewLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-sm text-zinc-600">Loading...</p>
                 </div>
+              ) : editing ? (
+                <textarea
+                  value={editContent}
+                  onChange={(e) => {
+                    setEditContent(e.target.value);
+                    setDirty(true);
+                    setSaved(false);
+                  }}
+                  className="w-full h-full px-3 py-2 bg-transparent font-mono text-xs text-zinc-200 resize-none focus:outline-none"
+                  spellCheck={false}
+                />
               ) : previewContent !== null ? (
                 <pre className="px-3 py-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
                   {previewContent}
