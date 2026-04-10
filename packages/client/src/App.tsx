@@ -242,7 +242,15 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {isConnected && (
           <ServerSidebar
             serverInfo={serverInfoHook.serverInfo}
-            actions={serverInfoHook}
+            actions={{
+              ...serverInfoHook,
+              // In Launch mode, route through launcher.stop() so ProcessManager
+              // knows the exit is intentional (state → "stopped" not "crashed").
+              // In Connect mode, send raw quit since we don't own the process.
+              quitServer: mode === "launch"
+                ? () => { launcher.stop(); }
+                : serverInfoHook.quitServer,
+            }}
           />
         )}
       </div>
