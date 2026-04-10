@@ -17,6 +17,10 @@ import { ModeToggle, type AppMode } from "./components/ModeToggle.tsx";
 import { LaunchPanel } from "./components/LaunchPanel.tsx";
 import { ServerSidebar } from "./components/ServerSidebar.tsx";
 import { ServerConsole } from "./components/ServerConsole.tsx";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 type Tab = "console" | "players" | "bots" | "config" | "server-output";
 
@@ -76,7 +80,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const handleModeChange = (newMode: AppMode) => {
     setMode(newMode);
     localStorage.setItem("pyrodeck-mode", newMode);
-    // Default to appropriate console tab for each mode
     setActiveTab(newMode === "launch" ? "server-output" : "console");
   };
 
@@ -100,43 +103,48 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     setConnectPort(port);
   };
 
+  // Keep activeTab valid when tabs change visibility
+  const visibleTabs = tabs.filter((t) => t.show);
+  useEffect(() => {
+    if (!visibleTabs.find((t) => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0]?.id ?? "console");
+    }
+  }, [visibleTabs, activeTab]);
+
   return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="h-screen bg-background text-foreground flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900 shrink-0">
+      <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-amber-500">D3 Pyrodeck</h1>
+          <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
           {capabilities && capabilities.version > 0 && (
-            <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">
+            <Badge variant="secondary">
               {capabilities.fork} v{capabilities.forkVersion}
-            </span>
+            </Badge>
           )}
         </div>
         <div className="flex items-center gap-3">
           {isConnected && (
-            <span className={`text-xs ${wsConnected ? "text-emerald-500" : "text-red-400"}`}>
+            <Badge variant={wsConnected ? "outline" : "destructive"}>
               WS: {wsConnected ? "live" : "disconnected"}
-            </span>
+            </Badge>
           )}
-          <button
-            onClick={onLogout}
-            className="text-xs text-zinc-500 hover:text-zinc-400"
-          >
+          <Button variant="ghost" size="xs" onClick={onLogout}>
             Logout
-          </button>
+          </Button>
         </div>
       </header>
 
       {/* Reconnection banner */}
       {wsReconnecting && (
-        <div className="px-4 py-2 bg-amber-900/50 border-b border-amber-700/50 text-amber-300 text-sm text-center shrink-0">
+        <div className="px-4 py-2 bg-primary/10 border-b border-primary/30 text-primary text-sm text-center shrink-0">
           Connection lost — Reconnecting...
         </div>
       )}
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
-        <aside className="w-72 shrink-0 border-r border-zinc-800 p-3 overflow-y-auto flex flex-col">
+        <aside className="w-72 shrink-0 border-r border-border bg-sidebar p-3 overflow-y-auto flex flex-col">
           <ModeToggle mode={mode} onChange={handleModeChange} />
 
           {mode === "connect" ? (
@@ -158,71 +166,61 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </aside>
 
         {/* Center content */}
-        <main className="flex-1 flex flex-col min-w-0">
-          {/* Tabs */}
-          <div className="flex border-b border-zinc-800 px-2 shrink-0">
-            {tabs
-              .filter((t) => t.show)
-              .map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === tab.id
-                      ? "border-amber-500 text-amber-400"
-                      : "border-transparent text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-          </div>
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as Tab)}
+          className="flex-1 min-w-0 gap-0"
+        >
+          <TabsList variant="line" className="w-full justify-start px-2 border-b border-border rounded-none h-10">
+            {visibleTabs.map((tab) => (
+              <TabsTrigger key={tab.id} value={tab.id}>
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-          {/* Tab content */}
-          <div className="flex-1 min-h-0 p-3">
-            {activeTab === "server-output" && (
-              <div className="h-full flex flex-col">
-                {hasProcess ? (
-                  <ServerConsole onProcessOutput={onProcessOutput} />
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <p className="text-zinc-600 text-lg">
-                      Launch a D3 server to see output here
-                    </p>
-                  </div>
-                )}
+          <TabsContent value="server-output" className="p-3 min-h-0">
+            {hasProcess ? (
+              <ServerConsole onProcessOutput={onProcessOutput} />
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-muted-foreground text-lg">
+                  Launch a D3 server to see output here
+                </p>
               </div>
             )}
+          </TabsContent>
 
-            {activeTab === "console" && (
+          <TabsContent value="console" className="p-3 min-h-0">
+            {isConnected ? (
               <div className="h-full flex flex-col">
-                {isConnected ? (
-                  <>
-                    <div className="flex-1 min-h-0">
-                      <Console onCommand={sendCommand} onOutput={onOutput} />
-                    </div>
-                    <CommandReference
-                      sendCommand={sendCommand}
-                      hasFeature={hasFeature}
-                    />
-                  </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <p className="text-zinc-600 text-lg">
-                      {mode === "connect"
-                        ? "Connect to a D3 server to get started"
-                        : "Launch a D3 server to get started"}
-                    </p>
-                  </div>
-                )}
+                <div className="flex-1 min-h-0">
+                  <Console onCommand={sendCommand} onOutput={onOutput} />
+                </div>
+                <CommandReference
+                  sendCommand={sendCommand}
+                  hasFeature={hasFeature}
+                />
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-muted-foreground text-lg">
+                  {mode === "connect"
+                    ? "Connect to a D3 server to get started"
+                    : "Launch a D3 server to get started"}
+                </p>
               </div>
             )}
+          </TabsContent>
 
-            {activeTab === "players" && isConnected && (
+          <TabsContent value="players" className="p-3 min-h-0">
+            {isConnected && (
               <PlayerList sendCommand={sendCommand} onPlayers={onPlayers} />
             )}
+          </TabsContent>
 
-            {activeTab === "bots" && isConnected && (
+          <TabsContent value="bots" className="p-3 min-h-0">
+            {isConnected && (
               <BotPanel
                 sendCommand={sendCommand}
                 onBots={onBots}
@@ -230,15 +228,15 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 hasDifficulty={hasFeature("difficulty")}
               />
             )}
+          </TabsContent>
 
-            {activeTab === "config" && (
-              <ConfigEditor
-                profiles={launcher.profiles}
-                onRefreshProfiles={launcher.fetchProfiles}
-              />
-            )}
-          </div>
-        </main>
+          <TabsContent value="config" className="p-3 min-h-0">
+            <ConfigEditor
+              profiles={launcher.profiles}
+              onRefreshProfiles={launcher.fetchProfiles}
+            />
+          </TabsContent>
+        </Tabs>
 
         {/* Right sidebar — server dashboard */}
         {isConnected && (
@@ -259,8 +257,8 @@ function App() {
 
   if (checking) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <p className="text-zinc-500">Loading...</p>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -269,7 +267,11 @@ function App() {
     return <LoginPage onLogin={login} />;
   }
 
-  return <Dashboard onLogout={logout} />;
+  return (
+    <TooltipProvider>
+      <Dashboard onLogout={logout} />
+    </TooltipProvider>
+  );
 }
 
 export default App;

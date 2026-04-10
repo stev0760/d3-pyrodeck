@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
 import type { useLauncher, ServerProfile } from "../hooks/useLauncher.ts";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 type LauncherState = ReturnType<typeof useLauncher>;
 
@@ -8,11 +11,11 @@ interface LaunchPanelProps {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  stopped: "bg-zinc-600",
-  starting: "bg-amber-500 animate-pulse",
+  stopped: "bg-muted-foreground",
+  starting: "bg-primary animate-pulse",
   running: "bg-emerald-500",
-  stopping: "bg-amber-500",
-  crashed: "bg-red-500",
+  stopping: "bg-primary",
+  crashed: "bg-destructive",
 };
 
 export function LaunchPanel({ launcher }: LaunchPanelProps) {
@@ -62,7 +65,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   }, [config?.gamePath, fetchProfiles, selectedProfile]);
 
   if (loading) {
-    return <p className="text-zinc-600 text-sm">Loading...</p>;
+    return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
 
   const needsSetup = !config?.gamePath;
@@ -76,7 +79,6 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     setValidating(true);
     setValidationErrors([]);
 
-    // Validate game path
     const gameResult = await validatePath("game", gamePath);
     if (!gameResult || !gameResult.valid) {
       setValidationErrors(gameResult?.errors ?? ["Validation failed"]);
@@ -84,7 +86,6 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       return;
     }
 
-    // Validate executable
     const exeResult = await validatePath("executable", executablePath, gamePath);
     if (!exeResult || !exeResult.valid) {
       setValidationErrors(exeResult?.errors ?? ["Executable validation failed"]);
@@ -129,18 +130,17 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+      <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
         Pyrodeck Settings
       </h3>
 
-      {/* Setup or configured view */}
       {needsSetup ? (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-muted-foreground">
             Point Pyrodeck to your Descent 3 installation to get started.
           </p>
           <div>
-            <label className="text-xs text-zinc-500 block mb-1">
+            <label className="text-xs text-muted-foreground block mb-1">
               Game Data Path
             </label>
             <input
@@ -148,11 +148,11 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               value={gamePath}
               onChange={(e) => setGamePath(e.target.value)}
               placeholder="/path/to/descent3"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
+              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500 block mb-1">
+            <label className="text-xs text-muted-foreground block mb-1">
               Executable
             </label>
             <input
@@ -160,73 +160,76 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               value={executablePath}
               onChange={(e) => setExecutablePath(e.target.value)}
               placeholder="Descent3 or /path/to/Descent3"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
+              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <p className="text-xs text-zinc-600 mt-0.5">
+            <p className="text-[11px] text-muted-foreground mt-0.5">
               Filename (looked up in game path) or full path
             </p>
           </div>
           {validationErrors.length > 0 && (
-            <div className="text-xs text-red-400 space-y-0.5">
+            <div className="text-xs text-destructive space-y-0.5">
               {validationErrors.map((e, i) => (
                 <p key={i}>{e}</p>
               ))}
             </div>
           )}
-          <button
+          <Button
             onClick={handleValidate}
             disabled={!gamePath || !executablePath || validating}
-            className="w-full bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-sm py-1.5 rounded transition-colors"
+            className="w-full"
           >
             {validating ? "Validating..." : "Validate & Save"}
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="space-y-2">
-          {/* Configured path display */}
-          <p className="text-xs text-zinc-600">
+          <p className="text-[11px] text-muted-foreground">
             D3 game directory and executable for this Pyrodeck instance.
           </p>
-          <div className="bg-zinc-800/50 rounded px-2 py-1.5 text-xs">
-            <span className="text-zinc-500">Game: </span>
-            <span className="text-zinc-300 break-all">
+          <div className="bg-muted rounded-md px-2 py-1.5 text-xs">
+            <span className="text-muted-foreground">Game: </span>
+            <span className="text-foreground/80 break-all font-mono text-[11px]">
               {config?.gamePath}
             </span>
           </div>
-          <div className="bg-zinc-800/50 rounded px-2 py-1.5 text-xs">
-            <span className="text-zinc-500">Exe: </span>
-            <span className="text-zinc-300 break-all">{config?.executablePath}</span>
+          <div className="bg-muted rounded-md px-2 py-1.5 text-xs">
+            <span className="text-muted-foreground">Exe: </span>
+            <span className="text-foreground/80 break-all font-mono text-[11px]">
+              {config?.executablePath}
+            </span>
           </div>
 
+          <Separator />
+
           {/* Process status */}
-          <div className="flex items-center gap-2 py-1">
+          <div className="flex items-center gap-2 py-0.5">
             <div
               className={`w-2 h-2 rounded-full ${STATUS_COLORS[state] ?? STATUS_COLORS.stopped}`}
             />
-            <span className="text-xs text-zinc-400 capitalize">{state}</span>
+            <span className="text-xs text-foreground/70 capitalize">{state}</span>
             {processStatus?.pid && (
-              <span className="text-xs text-zinc-600">
+              <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
                 PID {processStatus.pid}
-              </span>
+              </Badge>
             )}
             {state === "crashed" && processStatus && processStatus.exitCode !== null && (
-              <span className="text-xs text-red-400">
+              <Badge variant="destructive" className="text-[10px] py-0 px-1.5">
                 exit {processStatus.exitCode}
-              </span>
+              </Badge>
             )}
           </div>
 
           {/* Profile selector */}
           {!isActive && (
             <div>
-              <label className="text-xs text-zinc-500 block mb-1">
+              <label className="text-xs text-muted-foreground block mb-1">
                 D3 Server Profile
               </label>
               {profiles.length > 0 ? (
                 <select
                   value={selectedProfile}
                   onChange={(e) => setSelectedProfile(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-amber-600"
+                  className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {profiles.map((p: ServerProfile) => (
                     <option key={p.id} value={p.id}>
@@ -235,12 +238,11 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                   ))}
                 </select>
               ) : (
-                <p className="text-xs text-zinc-500 italic">
+                <p className="text-xs text-muted-foreground italic">
                   No profiles yet. Create one to get started.
                 </p>
               )}
 
-              {/* Create profile inline */}
               {showCreateForm ? (
                 <div className="flex gap-1 mt-1">
                   <input
@@ -249,68 +251,70 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                     onChange={(e) => setNewProfileName(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleCreateProfile()}
                     placeholder="Profile name"
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-amber-600"
+                    className="flex-1 bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                     autoFocus
                   />
-                  <button
-                    onClick={handleCreateProfile}
-                    disabled={!newProfileName.trim()}
-                    className="bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-xs px-2 py-1 rounded transition-colors"
-                  >
+                  <Button size="xs" onClick={handleCreateProfile} disabled={!newProfileName.trim()}>
                     Create
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     onClick={() => { setShowCreateForm(false); setNewProfileName(""); }}
-                    className="text-xs text-zinc-500 hover:text-zinc-300 px-1"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </div>
               ) : (
-                <button
+                <Button
+                  variant="link"
+                  size="xs"
                   onClick={() => setShowCreateForm(true)}
-                  className="text-xs text-amber-500 hover:text-amber-400 mt-1 transition-colors"
+                  className="mt-1 px-0 text-primary"
                 >
                   + New Profile
-                </button>
+                </Button>
               )}
             </div>
           )}
 
           {/* Launch / Stop button */}
           {isActive ? (
-            <button
+            <Button
+              variant="destructive"
               onClick={handleStop}
               disabled={state === "stopping"}
-              className="w-full bg-red-700 hover:bg-red-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-100 font-medium text-sm py-1.5 rounded transition-colors"
+              className="w-full"
             >
               {state === "stopping" ? "Stopping..." : "Stop Server"}
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
               onClick={handleLaunch}
               disabled={!selectedProfile || launching}
-              className="w-full bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-sm py-1.5 rounded transition-colors"
+              className="w-full"
             >
               {launching ? "Starting..." : "Launch Server"}
-            </button>
+            </Button>
           )}
 
           {/* Reset path */}
           {!isActive && (
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={handleReset}
-              className="w-full text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+              className="w-full text-muted-foreground"
             >
               Change D3 path
-            </button>
+            </Button>
           )}
         </div>
       )}
 
       {/* Error display */}
       {error && (
-        <p className="text-xs text-red-400 bg-red-950/30 rounded px-2 py-1.5">
+        <p className="text-xs text-destructive bg-destructive/10 rounded-md px-2 py-1.5">
           {error}
         </p>
       )}

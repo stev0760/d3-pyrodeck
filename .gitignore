@@ -37,3 +37,7 @@ packages/server/config/
 
 # Dev log (local working notes)
 DEVLOG.md
+
+# Playwright MCP artifacts and screenshots
+.playwright-mcp/
+*.png
