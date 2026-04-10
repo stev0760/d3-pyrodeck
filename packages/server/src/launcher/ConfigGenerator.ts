@@ -106,7 +106,7 @@ export function generateDedicatedCfg(
     `Scriptname=${opts.scriptName ?? "anarchy.d3m"}`,
     `ConnectionName=Direct TCP~IP`,
     `MaxPlayers=${opts.maxPlayers ?? 8}`,
-    `PPS=${opts.pps ?? 30}`,
+    `PPS=${opts.pps ?? 20}`,
     `Timelimit=${opts.timeLimit ?? 0}`,
     `Killgoal=${opts.killGoal ?? 0}`,
     `AllowRemoteConsole=1`,

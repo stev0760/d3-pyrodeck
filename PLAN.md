@@ -210,12 +210,12 @@ Strategy: put everything in dedicated.cfg, only generate companion .mps when shi
 User-friendly structured form that replaces raw text editing as the default view. Raw editing remains available as an "Advanced" toggle. Modeled after D3Server3's proven layout.
 
 - [ ] Identity section: server name (max 32), game type dropdown (Anarchy, Team Anarchy, CTF, Monsterball, Entropy, Hoard, Hyper-Anarchy, Robo-Anarchy, Co-op), mission dropdown (scanned .mn3 files), starting level, MOTD
-- [ ] Network section: PPS (2-40, default 30), max players (2-32), connection model radio (Client/Server, Peer2Peer, Permissable), send rotation velocity, use smoothing
+- [ ] Network section: PPS (default 20 — vanilla D3/Matcen cap is 20; **TODO: research PiccuEngine PPS cap** to set correct range/max for the slider), max players (2-32), connection model radio (Client/Server, Peer2Peer, Permissable), send rotation velocity, use smoothing
 - [ ] Rules section: time limit (0=disabled), kill goal (0=disabled), respawn time, randomize respawn toggle, difficulty dropdown (Trainee→Insane), audio taunt delay, num teams (2-4, visible for team modes)
 - [ ] Gameplay toggles: accurate collisions, bright players, allow mouselook
 - [ ] Remote console section: allow remote console (default on), port, password (auto-generate option)
 - [ ] Form validation matching engine constraints (e.g. PPS 2-40, MaxPlayers 2-32, NumTeams 2-4)
-- [ ] Defaults button to populate recommended values (PPS=30, AccurateCollisions=1, etc.)
+- [ ] Defaults button to populate recommended values (PPS=20 for vanilla/Matcen, AccurateCollisions=1, etc.)
 - [ ] Toggle between structured form view and raw text editor for the same file
 
 ### Step 4: Config Form UI — Ships & Powerups
@@ -257,6 +257,11 @@ Settings that can't be set in cfg but Pyrodeck can apply after server launch:
 ## Phase 4 — Docker & Deployment
 
 **Goal:** One-command VPS deployment with game file management.
+
+**Platform note:** Pyrodeck is cross-platform (Node.js). Linux is the primary dev/test
+platform, but Windows is equally important — PiccuEngine servers are Windows-only currently.
+Connect mode works with all D3 builds everywhere (vanilla 1.5, Matcen, PiccuEngine).
+Launch mode works wherever the target D3 build runs. See DEVLOG for engine compatibility details.
 
 - [ ] Docker image (Alpine) with `docker-compose.yml`
 - [ ] Structured volumes: gamedata, config
