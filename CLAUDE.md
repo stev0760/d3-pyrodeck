@@ -31,6 +31,28 @@ pnpm monorepo:
 
 The D3 engine fork source is at `/home/steve/Projects/Descent3-mulitplayer-bots-fork/Descent3`. Useful for tracing D3 server behavior, command routing, and DMFC internals.
 
+## UI Testing Pipeline
+
+Playwright MCP is configured for automated browser testing. Use it to verify UI changes
+instead of asking for manual screenshots.
+
+**Setup:** `claude mcp add playwright -- npx @playwright/mcp@latest --browser chromium`
+MCP tools load at session start — tools are available as `mcp__playwright__browser_*`.
+
+**Workflow:**
+1. Start dev servers: `pnpm dev` from project root (both client + server in parallel)
+2. Navigate: `browser_navigate` to `http://localhost:5173`
+3. Inspect: `browser_snapshot` for accessibility tree (use for finding element refs before clicking)
+4. Interact: `browser_click`, `browser_type`, `browser_fill_form` using `ref=` from snapshot
+5. Verify: `browser_take_screenshot` to visually confirm state — save to named files for reference
+
+**Tips:**
+- Always `browser_snapshot` before clicking — refs change between page states
+- Screenshots are expensive on context (use sparingly, prefer snapshots for logic)
+- Save screenshots to descriptive filenames (`test-01-initial-load.png`) for easy reference
+- The `depth` parameter on `browser_snapshot` can trim large trees
+- `.playwright-mcp/` and `*.png` are gitignored
+
 ## Guidelines
 
 - Start simple, prove it works, add complexity later
