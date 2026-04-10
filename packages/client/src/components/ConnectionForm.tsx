@@ -1,5 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import type { ConnectionState, ServerCapabilities } from "../hooks/useServerConnection.ts";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface ConnectionFormProps {
   connectionState: ConnectionState;
@@ -12,9 +14,9 @@ interface ConnectionFormProps {
 }
 
 const STATE_COLORS: Record<ConnectionState, string> = {
-  disconnected: "bg-zinc-500",
-  connecting: "bg-amber-500 animate-pulse",
-  probing: "bg-amber-500 animate-pulse",
+  disconnected: "bg-muted-foreground",
+  connecting: "bg-primary animate-pulse",
+  probing: "bg-primary animate-pulse",
   ready: "bg-emerald-500",
 };
 
@@ -39,7 +41,6 @@ export function ConnectionForm({
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Update fields when saved server is selected
   useEffect(() => {
     if (initialHost) setHost(initialHost);
     if (initialPort) setPort(String(initialPort));
@@ -61,17 +62,17 @@ export function ConnectionForm({
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+    <div className="bg-card border border-border rounded-lg p-4">
       {/* Status bar */}
       <div className="flex items-center gap-2 mb-4">
         <div className={`w-2.5 h-2.5 rounded-full ${STATE_COLORS[connectionState]}`} />
-        <span className="text-sm text-zinc-400">
+        <span className="text-sm text-foreground/70">
           {STATE_LABELS[connectionState]}
         </span>
         {capabilities && capabilities.version > 0 && (
-          <span className="text-xs text-zinc-600 ml-auto">
+          <Badge variant="secondary" className="ml-auto text-[10px]">
             {capabilities.fork} v{capabilities.forkVersion}
-          </span>
+          </Badge>
         )}
       </div>
 
@@ -79,65 +80,66 @@ export function ConnectionForm({
         <form onSubmit={handleConnect} className="space-y-3">
           <div className="grid grid-cols-[1fr_80px] gap-2">
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Host</label>
+              <label className="block text-xs text-muted-foreground mb-1">Host</label>
               <input
                 type="text"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                className="w-full px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder="localhost"
                 disabled={loading}
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Port</label>
+              <label className="block text-xs text-muted-foreground mb-1">Port</label>
               <input
                 type="number"
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
-                className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                className="w-full px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 disabled={loading}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs text-zinc-500 mb-1">
+            <label className="block text-xs text-muted-foreground mb-1">
               Console Password
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               placeholder="Server console password"
               disabled={loading}
             />
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <button
+          <Button
             type="submit"
             disabled={loading || !host || !password}
-            className="w-full py-1.5 px-3 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded transition-colors"
+            className="w-full"
           >
             {loading ? "Connecting..." : "Connect"}
-          </button>
+          </Button>
         </form>
       ) : (
         <div>
-          <p className="text-sm text-zinc-400 mb-3">
+          <p className="text-sm text-foreground/70 mb-3">
             Connected to{" "}
-            <span className="text-zinc-200 font-mono">{host}:{port}</span>
+            <span className="text-foreground font-mono">{host}:{port}</span>
           </p>
-          <button
+          <Button
+            variant="secondary"
             onClick={handleDisconnect}
             disabled={loading}
-            className="w-full py-1.5 px-3 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm font-medium rounded transition-colors"
+            className="w-full"
           >
             Disconnect
-          </button>
+          </Button>
         </div>
       )}
     </div>

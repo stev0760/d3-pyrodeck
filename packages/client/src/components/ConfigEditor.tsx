@@ -31,7 +31,7 @@ const FILE_TYPE_INFO: Record<
   "server-config": {
     label: "Server Config",
     pluralLabel: "Server Configs",
-    color: "text-amber-400",
+    color: "text-primary",
   },
   "bot-roster": {
     label: "Bot Roster",
@@ -51,7 +51,7 @@ const FILE_TYPE_INFO: Record<
   unknown: {
     label: "Other",
     pluralLabel: "Other Files",
-    color: "text-zinc-400",
+    color: "text-foreground/60",
   },
 };
 
@@ -94,21 +94,21 @@ export function ConfigEditor({
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-4">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-300">
+            <h2 className="text-sm font-semibold text-foreground/80">
               D3 Server Configuration
             </h2>
-            <p className="text-xs text-zinc-600">
+            <p className="text-xs text-muted-foreground">
               Manage server profiles and config files
             </p>
           </div>
           {/* View toggle */}
-          <div className="flex bg-zinc-800 rounded p-0.5">
+          <div className="flex bg-muted rounded p-0.5">
             <button
               onClick={() => setView("profiles")}
               className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
                 view === "profiles"
-                  ? "bg-zinc-700 text-zinc-100"
-                  : "text-zinc-500 hover:text-zinc-300"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground/80"
               }`}
             >
               Profiles
@@ -117,16 +117,16 @@ export function ConfigEditor({
               onClick={() => setView("game-files")}
               className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
                 view === "game-files"
-                  ? "bg-zinc-700 text-zinc-100"
-                  : "text-zinc-500 hover:text-zinc-300"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground/80"
               }`}
             >
               Game Files
             </button>
           </div>
         </div>
-        <div className="bg-amber-900/20 border border-amber-700/30 rounded-md px-2 py-1">
-          <p className="text-xs text-amber-400">
+        <div className="bg-primary/10 border border-primary/20 rounded-md px-2 py-1">
+          <p className="text-xs text-primary">
             Changes take effect after server restart
           </p>
         </div>
@@ -379,7 +379,7 @@ function ProfileEditor({
   if (profiles.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-sm text-zinc-600">
+        <p className="text-sm text-muted-foreground">
           No server profiles. Create one in the Launch panel to get started.
         </p>
       </div>
@@ -391,11 +391,11 @@ function ProfileEditor({
       {/* Left nav: profile selector + file navigation */}
       <div className="w-60 shrink-0 flex flex-col overflow-y-auto">
         {/* Profile selector */}
-        <label className="text-xs text-zinc-500 mb-1">Profile</label>
+        <label className="text-xs text-muted-foreground mb-1">Profile</label>
         <select
           value={selectedProfileId}
           onChange={(e) => setSelectedProfileId(e.target.value)}
-          className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 mb-3"
+          className="px-2 py-1.5 bg-muted border border-border rounded text-sm text-foreground mb-3"
         >
           <option value="">Select profile...</option>
           {profiles.map((p) => (
@@ -417,7 +417,7 @@ function ProfileEditor({
 
             {/* Companion files section */}
             <div className="mt-3 mb-1">
-              <span className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Companion Files
               </span>
             </div>
@@ -461,8 +461,8 @@ function ProfileEditor({
             ) : (
               <div className="mb-0.5">
                 {showBotCreate ? (
-                  <div className="px-2 py-1.5 bg-zinc-800/50 rounded text-xs space-y-1.5">
-                    <div className="font-medium text-zinc-400">
+                  <div className="px-2 py-1.5 bg-muted/50 rounded text-xs space-y-1.5">
+                    <div className="font-medium text-foreground/60">
                       New Bot Roster
                     </div>
                     <input
@@ -470,7 +470,7 @@ function ProfileEditor({
                       value={newBotFilename}
                       onChange={(e) => setNewBotFilename(e.target.value)}
                       placeholder="bots.cfg"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-600"
+                      className="w-full bg-background border border-border rounded px-2 py-1 text-xs text-foreground/90 font-mono focus:outline-none focus:border-ring"
                       autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && newBotFilename.trim()) {
@@ -498,21 +498,21 @@ function ProfileEditor({
                           }
                         }}
                         disabled={!newBotFilename.trim()}
-                        className="text-[10px] text-amber-500 hover:text-amber-400 disabled:text-zinc-600"
+                        className="text-[10px] text-primary hover:text-primary disabled:text-muted-foreground"
                       >
                         Create
                       </button>
                       <button
                         onClick={() => setShowBotCreate(false)}
-                        className="text-[10px] text-zinc-600 hover:text-zinc-400"
+                        className="text-[10px] text-muted-foreground hover:text-foreground/60"
                       >
                         Cancel
                       </button>
                     </div>
                   </div>
                 ) : showBotLink ? (
-                  <div className="px-2 py-1.5 bg-zinc-800/50 rounded text-xs space-y-1">
-                    <div className="font-medium text-zinc-400">
+                  <div className="px-2 py-1.5 bg-muted/50 rounded text-xs space-y-1">
+                    <div className="font-medium text-foreground/60">
                       Link Existing Bot Roster
                     </div>
                     {availableBotFiles.length > 0 ? (
@@ -523,11 +523,11 @@ function ProfileEditor({
                             onClick={() =>
                               linkCompanionFile(f.filename, "BotConfig")
                             }
-                            className="w-full text-left px-1.5 py-1 rounded text-[11px] font-mono text-zinc-300 hover:bg-zinc-700 transition-colors"
+                            className="w-full text-left px-1.5 py-1 rounded text-[11px] font-mono text-foreground/80 hover:bg-accent transition-colors"
                           >
                             {f.filename}
                             {f.meta.botCount && (
-                              <span className="text-zinc-600 ml-1">
+                              <span className="text-muted-foreground ml-1">
                                 ({f.meta.botCount} bots)
                               </span>
                             )}
@@ -535,13 +535,13 @@ function ProfileEditor({
                         ))}
                       </div>
                     ) : (
-                      <p className="text-[11px] text-zinc-600 italic">
+                      <p className="text-[11px] text-muted-foreground italic">
                         No bot roster files found
                       </p>
                     )}
                     <button
                       onClick={() => setShowBotLink(false)}
-                      className="text-[10px] text-zinc-600 hover:text-zinc-400"
+                      className="text-[10px] text-muted-foreground hover:text-foreground/60"
                     >
                       Cancel
                     </button>
@@ -550,14 +550,14 @@ function ProfileEditor({
                   <div className="flex flex-col gap-0.5">
                     <button
                       onClick={() => setShowBotCreate(true)}
-                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
+                      className="w-full text-left px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground/60 hover:bg-muted/50 transition-colors"
                     >
                       <span className="font-medium">Bot Roster</span>
-                      <span className="text-zinc-700 ml-1">(create new)</span>
+                      <span className="text-muted-foreground/60 ml-1">(create new)</span>
                     </button>
                     <button
                       onClick={() => setShowBotLink(true)}
-                      className="w-full text-left px-2 py-0.5 rounded text-[11px] text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors"
+                      className="w-full text-left px-2 py-0.5 rounded text-[11px] text-muted-foreground hover:text-foreground/60 hover:bg-muted/50 transition-colors"
                     >
                       Link existing roster...
                     </button>
@@ -608,13 +608,13 @@ function ProfileEditor({
           <>
             {/* Editor header */}
             <div className="flex items-center justify-between mb-2 shrink-0">
-              <span className="text-xs text-zinc-500 font-mono">
+              <span className="text-xs text-muted-foreground font-mono">
                 {editingFile}
               </span>
               <button
                 onClick={saveFile}
                 disabled={!dirty || saving}
-                className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded transition-colors"
+                className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
               >
                 {saving ? "Saving..." : saved ? "Saved!" : "Save"}
               </button>
@@ -626,13 +626,13 @@ function ProfileEditor({
                 setDirty(true);
                 setSaved(false);
               }}
-              className="flex-1 w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg font-mono text-sm text-zinc-200 resize-none focus:outline-none focus:ring-1 focus:ring-amber-500"
+              className="flex-1 w-full px-3 py-2 bg-background border border-border rounded-lg font-mono text-sm text-foreground/90 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
               spellCheck={false}
             />
           </>
         ) : (
           <div className="h-full flex items-center justify-center">
-            <p className="text-sm text-zinc-600">
+            <p className="text-sm text-muted-foreground">
               Select a profile to edit its configuration
             </p>
           </div>
@@ -662,12 +662,12 @@ function NavButton({
       onClick={onClick}
       className={`text-left px-2 py-1.5 rounded text-xs transition-colors ${
         isActive
-          ? "bg-amber-900/30 text-amber-400 border border-amber-700/40"
-          : "text-zinc-300 hover:bg-zinc-800"
+          ? "bg-primary/15 text-primary border border-primary/30"
+          : "text-foreground/80 hover:bg-muted"
       }`}
     >
       <div className="font-medium">{label}</div>
-      <div className="text-zinc-500 font-mono text-[11px] mt-0.5">
+      <div className="text-muted-foreground font-mono text-[11px] mt-0.5">
         {filename}
       </div>
     </button>
@@ -698,25 +698,25 @@ function CompanionEntry({
         disabled={!exists}
         className={`flex-1 text-left px-2 py-1.5 rounded text-xs transition-colors ${
           isActive
-            ? "bg-amber-900/30 text-amber-400 border border-amber-700/40"
+            ? "bg-primary/15 text-primary border border-primary/30"
             : exists
-              ? "text-zinc-300 hover:bg-zinc-800"
-              : "text-zinc-600"
+              ? "text-foreground/80 hover:bg-muted"
+              : "text-muted-foreground"
         }`}
       >
         <div className="font-medium">
           {label}
           {!exists && (
-            <span className="text-red-400/60 ml-1 font-normal">(missing)</span>
+            <span className="text-destructive/60 ml-1 font-normal">(missing)</span>
           )}
         </div>
-        <div className="text-zinc-500 font-mono text-[11px] mt-0.5">
+        <div className="text-muted-foreground font-mono text-[11px] mt-0.5">
           {filename}
         </div>
       </button>
       <button
         onClick={onUnlink}
-        className="text-zinc-600 hover:text-red-400 p-1 transition-colors"
+        className="text-muted-foreground hover:text-destructive p-1 transition-colors"
         title={`${unlinkLabel} ${filename}`}
       >
         <svg
@@ -749,11 +749,11 @@ function CompanionCreateButton({
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/50 transition-colors mb-0.5"
+      className="w-full text-left px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground/60 hover:bg-muted/50 transition-colors mb-0.5"
     >
       <span className="font-medium">{label}</span>
-      <span className="text-zinc-700 ml-1">(create)</span>
-      <div className="text-[11px] text-zinc-700 mt-0.5">{description}</div>
+      <span className="text-muted-foreground/60 ml-1">(create)</span>
+      <div className="text-[11px] text-muted-foreground/60 mt-0.5">{description}</div>
     </button>
   );
 }
@@ -902,7 +902,7 @@ function GameFileBrowser({
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-sm text-zinc-600">Scanning game directory...</p>
+        <p className="text-sm text-muted-foreground">Scanning game directory...</p>
       </div>
     );
   }
@@ -910,7 +910,7 @@ function GameFileBrowser({
   if (gameFiles.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-sm text-zinc-600">
+        <p className="text-sm text-muted-foreground">
           No config files found in game directory
         </p>
       </div>
@@ -922,10 +922,10 @@ function GameFileBrowser({
       {/* Left: categorized file list */}
       <div className="w-72 shrink-0 overflow-y-auto space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-zinc-500">Files in game directory</p>
+          <p className="text-xs text-muted-foreground">Files in game directory</p>
           <button
             onClick={fetchFiles}
-            className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            className="text-xs text-muted-foreground hover:text-foreground/60 transition-colors"
           >
             Refresh
           </button>
@@ -945,7 +945,7 @@ function GameFileBrowser({
                 >
                   {info.pluralLabel}
                 </span>
-                <span className="text-[10px] text-zinc-700">
+                <span className="text-[10px] text-muted-foreground/60">
                   ({files.length})
                 </span>
               </div>
@@ -969,22 +969,22 @@ function GameFileBrowser({
       </div>
 
       {/* Right: preview pane */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-background border border-border rounded-lg overflow-hidden">
         {selectedFile && selectedFileInfo ? (
           <>
             {/* Preview header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 shrink-0">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-zinc-300">
+                <span className="text-xs font-mono text-foreground/80">
                   {selectedFile}
                 </span>
                 <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded ${FILE_TYPE_INFO[selectedFileInfo.type].color} bg-zinc-800`}
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${FILE_TYPE_INFO[selectedFileInfo.type].color} bg-muted`}
                 >
                   {FILE_TYPE_INFO[selectedFileInfo.type].label}
                 </span>
                 {selectedFileInfo.linkedProfileId && (
-                  <span className="text-[10px] text-amber-500/70 bg-amber-900/20 px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-primary/70 bg-primary/10 px-1.5 py-0.5 rounded">
                     Linked to profile
                   </span>
                 )}
@@ -995,7 +995,7 @@ function GameFileBrowser({
                   !selectedFileInfo.linkedProfileId && (
                     <button
                       onClick={() => importAsProfile(selectedFile)}
-                      className="text-xs text-amber-500 hover:text-amber-400 transition-colors"
+                      className="text-xs text-primary hover:text-primary transition-colors"
                     >
                       Import as Profile
                     </button>
@@ -1005,7 +1005,7 @@ function GameFileBrowser({
                     <button
                       onClick={saveFile}
                       disabled={!dirty || saving}
-                      className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-medium rounded transition-colors"
+                      className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
                     >
                       {saving ? "Saving..." : saved ? "Saved!" : "Save"}
                     </button>
@@ -1015,7 +1015,7 @@ function GameFileBrowser({
                         setEditContent(previewContent ?? "");
                         setDirty(false);
                       }}
-                      className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                      className="text-xs text-muted-foreground hover:text-foreground/80 transition-colors"
                     >
                       Cancel
                     </button>
@@ -1023,7 +1023,7 @@ function GameFileBrowser({
                 ) : (
                   <button
                     onClick={() => setEditing(true)}
-                    className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                    className="text-xs text-muted-foreground hover:text-foreground/80 transition-colors"
                   >
                     Edit
                   </button>
@@ -1033,7 +1033,7 @@ function GameFileBrowser({
 
             {/* Metadata bar */}
             {Object.keys(selectedFileInfo.meta).length > 0 && (
-              <div className="px-3 py-1.5 border-b border-zinc-800/50 flex flex-wrap gap-3 shrink-0">
+              <div className="px-3 py-1.5 border-b border-border/50 flex flex-wrap gap-3 shrink-0">
                 {selectedFileInfo.type === "server-config" && (
                   <>
                     {selectedFileInfo.meta.gameName && (
@@ -1098,7 +1098,7 @@ function GameFileBrowser({
             <div className="flex-1 min-h-0 overflow-auto">
               {previewLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-sm text-zinc-600">Loading...</p>
+                  <p className="text-sm text-muted-foreground">Loading...</p>
                 </div>
               ) : editing ? (
                 <textarea
@@ -1108,23 +1108,23 @@ function GameFileBrowser({
                     setDirty(true);
                     setSaved(false);
                   }}
-                  className="w-full h-full px-3 py-2 bg-transparent font-mono text-xs text-zinc-200 resize-none focus:outline-none"
+                  className="w-full h-full px-3 py-2 bg-transparent font-mono text-xs text-foreground/90 resize-none focus:outline-none"
                   spellCheck={false}
                 />
               ) : previewContent !== null ? (
-                <pre className="px-3 py-2 text-xs font-mono text-zinc-400 whitespace-pre-wrap">
+                <pre className="px-3 py-2 text-xs font-mono text-foreground/60 whitespace-pre-wrap">
                   {previewContent}
                 </pre>
               ) : (
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-sm text-zinc-600">Unable to read file</p>
+                  <p className="text-sm text-muted-foreground">Unable to read file</p>
                 </div>
               )}
             </div>
           </>
         ) : (
           <div className="h-full flex items-center justify-center">
-            <p className="text-sm text-zinc-600">
+            <p className="text-sm text-muted-foreground">
               Select a file to preview its contents
             </p>
           </div>
@@ -1160,34 +1160,34 @@ function GameFileRow({
       onClick={onSelect}
       className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
         isSelected
-          ? "bg-zinc-800 border border-zinc-700"
-          : "hover:bg-zinc-800/50"
+          ? "bg-muted border border-border"
+          : "hover:bg-muted/50"
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="font-mono text-zinc-300 truncate">
+        <span className="font-mono text-foreground/80 truncate">
           {file.filename}
         </span>
       </div>
       {/* Inline metadata */}
       <div className="flex items-center gap-2 mt-0.5">
         {file.type === "server-config" && file.meta.scriptName && (
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[10px] text-muted-foreground">
             {file.meta.scriptName.replace(/\.d3m$/, "")}
           </span>
         )}
         {file.type === "server-config" && file.meta.maxPlayers && (
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[10px] text-muted-foreground">
             {file.meta.maxPlayers}p
           </span>
         )}
         {file.type === "bot-roster" && file.meta.botCount && (
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[10px] text-muted-foreground">
             {file.meta.botCount} bots
           </span>
         )}
         {linkedProfile && (
-          <span className="text-[10px] text-amber-500/60">
+          <span className="text-[10px] text-primary/60">
             {linkedProfile.name}
           </span>
         )}
@@ -1197,7 +1197,7 @@ function GameFileRow({
               e.stopPropagation();
               onImport();
             }}
-            className="text-[10px] text-amber-500/70 hover:text-amber-400 ml-auto transition-colors"
+            className="text-[10px] text-primary/70 hover:text-primary ml-auto transition-colors"
           >
             Import
           </button>
@@ -1210,8 +1210,8 @@ function GameFileRow({
 function MetaChip({ label, value }: { label: string; value: string }) {
   return (
     <span className="text-[11px]">
-      <span className="text-zinc-600">{label}: </span>
-      <span className="text-zinc-400">{value}</span>
+      <span className="text-muted-foreground">{label}: </span>
+      <span className="text-foreground/60">{value}</span>
     </span>
   );
 }

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface BotEntry {
   index: number;
@@ -34,14 +36,12 @@ export function BotPanel({
     sendCommand("$botlist");
   }, [sendCommand]);
 
-  // Auto-refresh bot list
   useEffect(() => {
     refresh();
     const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
   }, [refresh]);
 
-  // Receive structured bot data from server-side parser
   useEffect(() => {
     const unsubscribe = onBots((data: unknown) => {
       const payload = data as { bots: BotEntry[] };
@@ -65,27 +65,27 @@ export function BotPanel({
   return (
     <div className="h-full flex flex-col">
       {/* Add Bot Form */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 mb-3">
-        <h3 className="text-xs text-zinc-500 font-medium mb-2">Add Bot</h3>
+      <div className="bg-card border border-border rounded-lg p-3 mb-3">
+        <h3 className="text-xs text-muted-foreground font-medium mb-2">Add Bot</h3>
         <div className="flex gap-2 items-end">
           <div className="flex-1">
-            <label className="block text-xs text-zinc-500 mb-1">Name</label>
+            <label className="block text-xs text-muted-foreground mb-1">Name</label>
             <input
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="Bot name"
-              className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               onKeyDown={(e) => e.key === "Enter" && addBot()}
             />
           </div>
           {hasShips && (
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Ship</label>
+              <label className="block text-xs text-muted-foreground mb-1">Ship</label>
               <select
                 value={newShip}
                 onChange={(e) => setNewShip(e.target.value)}
-                className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100"
+                className="px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground"
               >
                 {SHIPS.map((s) => (
                   <option key={s} value={s}>
@@ -97,13 +97,13 @@ export function BotPanel({
           )}
           {hasDifficulty && (
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">
+              <label className="block text-xs text-muted-foreground mb-1">
                 Difficulty
               </label>
               <select
                 value={newDifficulty}
                 onChange={(e) => setNewDifficulty(e.target.value)}
-                className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100"
+                className="px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground"
               >
                 {DIFFICULTIES.map((d) => (
                   <option key={d} value={d}>
@@ -113,49 +113,43 @@ export function BotPanel({
               </select>
             </div>
           )}
-          <button
-            onClick={addBot}
-            disabled={!newName.trim()}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded transition-colors"
-          >
+          <Button onClick={addBot} disabled={!newName.trim()}>
             Add
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Bot List */}
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-medium text-zinc-300">
+        <h3 className="text-sm font-medium text-foreground">
           Active Bots ({bots.length})
         </h3>
         <div className="flex gap-2">
-          <button
-            onClick={refresh}
-            className="px-2 py-0.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
-          >
+          <Button variant="secondary" size="xs" onClick={refresh}>
             Refresh
-          </button>
+          </Button>
           {bots.length > 0 && (
-            <button
+            <Button
+              variant="destructive"
+              size="xs"
               onClick={() => {
                 sendCommand("$removebots");
                 setTimeout(refresh, 500);
               }}
-              className="px-2 py-0.5 text-xs bg-red-900/50 hover:bg-red-700 text-red-300 rounded"
             >
               Remove All
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
       {bots.length === 0 ? (
-        <p className="text-sm text-zinc-600">No bots active</p>
+        <p className="text-sm text-muted-foreground">No bots active</p>
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-zinc-500 border-b border-zinc-800">
+              <tr className="text-left text-xs text-muted-foreground border-b border-border">
                 <th className="pb-1 font-medium">#</th>
                 <th className="pb-1 font-medium">Name</th>
                 <th className="pb-1 font-medium">Ship</th>
@@ -168,11 +162,11 @@ export function BotPanel({
               {bots.map((bot) => (
                 <tr
                   key={bot.index}
-                  className="border-b border-zinc-800/50 text-zinc-300"
+                  className="border-b border-border/50 text-foreground/80"
                 >
-                  <td className="py-1.5 text-zinc-500">{bot.index}</td>
+                  <td className="py-1.5 text-muted-foreground">{bot.index}</td>
                   <td className="py-1.5">{bot.callsign}</td>
-                  <td className="py-1.5 text-zinc-400">{bot.ship}</td>
+                  <td className="py-1.5 text-muted-foreground">{bot.ship}</td>
                   <td className="py-1.5">
                     {hasDifficulty ? (
                       <select
@@ -182,7 +176,7 @@ export function BotPanel({
                             `$botdifficulty ${bot.index} ${e.target.value}`,
                           )
                         }
-                        className="px-1 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-300"
+                        className="px-1 py-0.5 bg-input border border-border rounded-md text-xs text-foreground"
                       >
                         {DIFFICULTIES.map((d) => (
                           <option key={d} value={d}>
@@ -191,30 +185,26 @@ export function BotPanel({
                         ))}
                       </select>
                     ) : (
-                      <span className="text-zinc-400">{bot.difficulty}</span>
+                      <span className="text-muted-foreground">{bot.difficulty}</span>
                     )}
                   </td>
                   <td className="py-1.5">
-                    <span
-                      className={`text-xs px-1.5 py-0.5 rounded ${
-                        bot.alive
-                          ? "bg-emerald-900/50 text-emerald-400"
-                          : "bg-red-900/50 text-red-400"
-                      }`}
-                    >
+                    <Badge variant={bot.alive ? "outline" : "destructive"} className="text-[10px]">
                       {bot.alive ? "Alive" : "Dead"}
-                    </span>
+                    </Badge>
                   </td>
                   <td className="py-1.5 text-right">
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="xs"
                       onClick={() => {
                         sendCommand(`$removebot ${bot.index}`);
                         setTimeout(refresh, 500);
                       }}
-                      className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
+                      className="text-[10px] h-5 px-1.5 hover:bg-destructive hover:text-white"
                     >
                       Remove
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}

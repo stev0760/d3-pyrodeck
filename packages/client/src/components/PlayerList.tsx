@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface PlayerScore {
   name: string;
-  pnum: number; // D3 player slot number (1-based, 0 is server)
+  pnum: number;
   points: number;
   kills: number;
   deaths: number;
@@ -25,7 +27,6 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
     sendCommand("$scores");
   }, [sendCommand]);
 
-  // Auto-refresh
   useEffect(() => {
     if (!autoRefresh) return;
     refresh();
@@ -33,12 +34,10 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
     return () => clearInterval(interval);
   }, [autoRefresh, refresh]);
 
-  // Receive structured player data from server-side parser
   useEffect(() => {
     const unsubscribe = onPlayers((data: unknown) => {
       const payload = data as { players: PlayerScore[] };
       if (payload.players) {
-        // Add pnum (1-based slot order) since server parser doesn't include it
         const withPnum = payload.players.map((p, i) => ({
           ...p,
           pnum: i + 1,
@@ -52,11 +51,11 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-medium text-zinc-300">
+        <h2 className="text-sm font-medium text-foreground">
           Players ({players.filter((p) => !p.isObserver).length})
         </h2>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-zinc-500">
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
             <input
               type="checkbox"
               checked={autoRefresh}
@@ -65,22 +64,19 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
             />
             Auto
           </label>
-          <button
-            onClick={refresh}
-            className="px-2 py-0.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
-          >
+          <Button variant="secondary" size="xs" onClick={refresh}>
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
       {players.length === 0 ? (
-        <p className="text-sm text-zinc-600">No player data yet</p>
+        <p className="text-sm text-muted-foreground">No player data yet</p>
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-zinc-500 border-b border-zinc-800">
+              <tr className="text-left text-xs text-muted-foreground border-b border-border">
                 <th className="pb-1 font-medium">Player</th>
                 <th className="pb-1 font-medium text-right">Pts</th>
                 <th className="pb-1 font-medium text-right">K</th>
@@ -94,26 +90,26 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
               {players.map((p, i) => (
                 <tr
                   key={`${p.name}-${i}`}
-                  className={`border-b border-zinc-800/50 ${
+                  className={`border-b border-border/50 ${
                     p.isObserver
                       ? "opacity-40"
                       : p.isBot
-                        ? "text-zinc-400"
-                        : "text-zinc-200"
+                        ? "text-muted-foreground"
+                        : "text-foreground"
                   }`}
                 >
                   <td className="py-1.5">
                     <span className="flex items-center gap-1.5">
                       {p.name}
                       {p.isBot && (
-                        <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-zinc-500 rounded">
+                        <Badge variant="secondary" className="text-[10px] py-0 px-1">
                           BOT
-                        </span>
+                        </Badge>
                       )}
                       {p.isObserver && (
-                        <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-zinc-500 rounded">
+                        <Badge variant="secondary" className="text-[10px] py-0 px-1">
                           OBS
-                        </span>
+                        </Badge>
                       )}
                     </span>
                   </td>
@@ -121,24 +117,28 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
                   <td className="py-1.5 text-right font-mono">{p.kills}</td>
                   <td className="py-1.5 text-right font-mono">{p.deaths}</td>
                   <td className="py-1.5 text-right font-mono">{p.suicides}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-500">
+                  <td className="py-1.5 text-right font-mono text-muted-foreground">
                     {p.ping === null ? "---" : p.ping}
                   </td>
                   <td className="py-1.5 text-right">
                     {!p.isObserver && (
                       <div className="flex gap-1 justify-end">
-                        <button
+                        <Button
+                          variant="secondary"
+                          size="xs"
                           onClick={() => sendCommand(`$kick ${p.pnum}`)}
-                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-amber-600 text-zinc-400 hover:text-white rounded transition-colors"
+                          className="text-[10px] h-5 px-1.5 hover:bg-primary hover:text-primary-foreground"
                         >
                           Kick
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="xs"
                           onClick={() => sendCommand(`$ban ${p.pnum}`)}
-                          className="px-1.5 py-0.5 text-[10px] bg-zinc-800 hover:bg-red-600 text-zinc-400 hover:text-white rounded transition-colors"
+                          className="text-[10px] h-5 px-1.5 hover:bg-destructive hover:text-white"
                         >
                           Ban
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </td>

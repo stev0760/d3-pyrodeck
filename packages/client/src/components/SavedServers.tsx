@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
 
 interface SavedServer {
   id: string;
@@ -55,35 +56,38 @@ export function SavedServers({ onSelect }: SavedServersProps) {
 
   if (servers.length === 0 && !showAdd) {
     return (
-      <button
+      <Button
+        variant="ghost"
+        size="xs"
         onClick={() => setShowAdd(true)}
-        className="text-xs text-zinc-500 hover:text-zinc-400 mb-2"
+        className="mb-2 text-muted-foreground"
       >
         + Save a server
-      </button>
+      </Button>
     );
   }
 
   return (
     <div className="mb-3">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-zinc-500 font-medium">Saved Servers</span>
-        <button
+        <span className="text-xs text-muted-foreground font-medium">Saved Servers</span>
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={() => setShowAdd(!showAdd)}
-          className="text-xs text-zinc-500 hover:text-zinc-400"
         >
           {showAdd ? "Cancel" : "+ Add"}
-        </button>
+        </Button>
       </div>
 
       {showAdd && (
-        <div className="space-y-1 mb-2 p-2 bg-zinc-800 rounded">
+        <div className="space-y-1 mb-2 p-2 bg-muted rounded-md">
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Display name"
-            className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 focus:outline-none"
+            className="w-full px-2 py-1 bg-input border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <div className="grid grid-cols-[1fr_60px] gap-1">
             <input
@@ -91,22 +95,23 @@ export function SavedServers({ onSelect }: SavedServersProps) {
               value={host}
               onChange={(e) => setHost(e.target.value)}
               placeholder="Host"
-              className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 focus:outline-none"
+              className="w-full px-2 py-1 bg-input border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <input
               type="number"
               value={port}
               onChange={(e) => setPort(e.target.value)}
-              className="w-full px-2 py-1 bg-zinc-700 border border-zinc-600 rounded text-xs text-zinc-100 focus:outline-none"
+              className="w-full px-2 py-1 bg-input border border-border rounded-md text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-          <button
+          <Button
+            size="xs"
             onClick={handleAdd}
             disabled={!name || !host}
-            className="w-full py-1 text-xs bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 text-white rounded"
+            className="w-full"
           >
             Save
-          </button>
+          </Button>
         </div>
       )}
 
@@ -114,12 +119,12 @@ export function SavedServers({ onSelect }: SavedServersProps) {
         {servers.map((s) => (
           <div
             key={s.id}
-            className="flex items-center gap-2 p-1.5 bg-zinc-800 rounded hover:bg-zinc-750 group cursor-pointer"
+            className="flex items-center gap-2 p-1.5 bg-muted rounded-md hover:bg-accent group cursor-pointer transition-colors"
             onClick={() => onSelect(s.host, s.port)}
           >
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-zinc-200 truncate">{s.name}</div>
-              <div className="text-xs text-zinc-500 font-mono truncate">
+              <div className="text-xs text-foreground truncate">{s.name}</div>
+              <div className="text-xs text-muted-foreground font-mono truncate">
                 {s.host}:{s.port}
               </div>
             </div>
@@ -128,7 +133,7 @@ export function SavedServers({ onSelect }: SavedServersProps) {
                 e.stopPropagation();
                 handleDelete(s.id);
               }}
-              className="text-zinc-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+              className="text-muted-foreground hover:text-destructive text-xs opacity-0 group-hover:opacity-100 transition-opacity"
             >
               x
             </button>

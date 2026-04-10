@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 
 interface CommandDef {
   cmd: string;
   label: string;
   args?: { name: string; placeholder: string; type?: "number" | "text" }[];
-  /** If true, show a select dropdown instead of text input */
   select?: { name: string; options: { value: string; label: string }[] }[];
 }
 
@@ -12,7 +12,6 @@ interface CommandCategory {
   id: string;
   label: string;
   commands: CommandDef[];
-  /** Only show this category when a feature flag is present */
   requireFeature?: string;
 }
 
@@ -286,7 +285,6 @@ function CommandButton({
   const execute = useCallback(() => {
     const parts = [def.cmd];
 
-    // Add text/number args first
     if (def.args) {
       for (const arg of def.args) {
         const val = argValues[arg.name]?.trim();
@@ -294,7 +292,6 @@ function CommandButton({
       }
     }
 
-    // Add select values
     if (def.select) {
       for (const sel of def.select) {
         const val = selectValues[sel.name];
@@ -310,32 +307,36 @@ function CommandButton({
 
   if (!hasInputs) {
     return (
-      <button
+      <Button
+        variant="outline"
+        size="xs"
         onClick={() => sendCommand(def.cmd)}
-        className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-400 border border-zinc-700 rounded transition-colors font-mono"
+        className="font-mono"
         title={def.cmd}
       >
         {def.label}
-      </button>
+      </Button>
     );
   }
 
   if (!expanded) {
     return (
-      <button
+      <Button
+        variant="outline"
+        size="xs"
         onClick={() => setExpanded(true)}
-        className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-400 border border-zinc-700 rounded transition-colors font-mono"
+        className="font-mono"
         title={`${def.cmd} (click to expand)`}
       >
         {def.label}
-        <span className="ml-1 text-zinc-600">...</span>
-      </button>
+        <span className="ml-1 text-muted-foreground">...</span>
+      </Button>
     );
   }
 
   return (
-    <div className="flex items-center gap-1.5 bg-zinc-800/80 border border-zinc-600 rounded px-2 py-1">
-      <span className="text-xs text-amber-500/70 font-mono shrink-0">{def.cmd}</span>
+    <div className="flex items-center gap-1.5 bg-muted border border-border rounded-md px-2 py-1">
+      <span className="text-xs text-primary/70 font-mono shrink-0">{def.cmd}</span>
 
       {def.args?.map((arg) => (
         <input
@@ -351,7 +352,7 @@ function CommandButton({
             if (e.key === "Escape") setExpanded(false);
           }}
           autoFocus={def.args?.indexOf(arg) === 0}
-          className="w-16 px-1.5 py-0.5 text-xs bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+          className="w-16 px-1.5 py-0.5 text-xs bg-background border border-border rounded-md text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
       ))}
 
@@ -362,7 +363,7 @@ function CommandButton({
           onChange={(e) =>
             setSelectValues((prev) => ({ ...prev, [sel.name]: e.target.value }))
           }
-          className="px-1 py-0.5 text-xs bg-zinc-900 border border-zinc-700 rounded text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+          className="px-1 py-0.5 text-xs bg-background border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           {sel.options.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -372,17 +373,14 @@ function CommandButton({
         </select>
       ))}
 
-      <button
-        onClick={execute}
-        className="px-1.5 py-0.5 text-xs bg-amber-600 hover:bg-amber-500 text-black rounded transition-colors font-medium"
-      >
+      <Button size="xs" onClick={execute}>
         Run
-      </button>
+      </Button>
       <button
         onClick={() => setExpanded(false)}
-        className="px-1 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+        className="px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        ✕
+        x
       </button>
     </div>
   );
@@ -410,11 +408,10 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
   );
 
   return (
-    <div className="shrink-0 border-t border-zinc-800">
-      {/* Toggle bar */}
+    <div className="shrink-0 border-t border-border">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
       >
         <span className="font-medium">Command Reference</span>
         <svg
@@ -428,13 +425,12 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
         </svg>
       </button>
 
-      {/* Expanded panel */}
       {expanded && (
         <div className="px-3 pb-3 max-h-64 overflow-y-auto">
           <div className="space-y-3">
             {visibleCategories.map((cat) => (
               <div key={cat.id}>
-                <h4 className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold mb-1.5">
+                <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">
                   {cat.label}
                 </h4>
                 <div className="flex flex-wrap gap-1.5">

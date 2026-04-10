@@ -13,16 +13,16 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`px-4 py-3 rounded border text-sm shadow-lg flex items-start gap-2 ${
+          className={`px-4 py-3 rounded-md border text-sm shadow-lg flex items-start gap-2 ${
             toast.type === "error"
-              ? "bg-red-950/90 border-red-800/50 text-red-300"
-              : "bg-zinc-800/90 border-zinc-700/50 text-zinc-300"
+              ? "bg-destructive/10 border-destructive/30 text-destructive"
+              : "bg-card border-border text-foreground"
           }`}
         >
           <span className="flex-1">{toast.message}</span>
           <button
             onClick={() => onDismiss(toast.id)}
-            className="text-zinc-500 hover:text-zinc-300 shrink-0"
+            className="text-muted-foreground hover:text-foreground shrink-0"
           >
             &times;
           </button>
