@@ -75,7 +75,7 @@ export class TelnetConnection implements ServerConnection {
         clearTimeout(timeout);
         if (!settled) {
           settled = true;
-          reject(new Error(`Connection failed: ${err.message}`));
+          reject(new Error(`Connection failed: ${err.message || err.code || String(err)}`));
         }
       });
     });
