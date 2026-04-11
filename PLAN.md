@@ -221,14 +221,16 @@ Direct text editing for all config file types — the "advanced mode" baseline:
 - [x] Disallowed powerups rendered with strikethrough for clarity
 - [x] Normalizes AllowPowerup= allow-list → DisallowPowerup= disallow-list on load (UI always uses disallow pattern)
 
-### Step 5: Config Form UI — Bots (Matcen Fork)
+### Step 5: Config Form UI — Bots (Matcen Fork) ✅
 
-Bot roster editor (gated on Matcen fork detection via $servercaps):
-- [ ] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown)
-- [ ] Default difficulty selector (applies to bots without per-bot override)
-- [ ] Bot count display with max players warning
-- [ ] Save/load named bot presets (roster files)
-- [ ] Generates roster file + `BotConfig=` in dedicated.cfg
+Bot roster editor (available when a bot roster companion file is linked to the profile):
+- [x] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown)
+- [x] Default difficulty selector (applies to bots without per-bot override)
+- [x] Bot count display with max players warning (fetches maxPlayers from structured config)
+- [x] Save/load named bot presets — covered by existing Game Files browser + companion link/unlink
+- [x] Generates roster file + `BotConfig=` in dedicated.cfg
+- [x] Structured/Raw toggle (same pattern as ServerConfigForm)
+- [x] At-or-near max players warnings; Add form hidden when full
 
 ### Step 6: Config Management & Wizard
 

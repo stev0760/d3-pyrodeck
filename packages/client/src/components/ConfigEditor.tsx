@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ServerProfile } from "../hooks/useLauncher.ts";
 import { ServerConfigForm } from "./ServerConfigForm.tsx";
+import { BotRosterForm } from "./BotRosterForm.tsx";
 
 interface ConfigEditorProps {
   profiles: ServerProfile[];
@@ -165,6 +166,7 @@ function ProfileEditor({
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [configViewMode, setConfigViewMode] = useState<"structured" | "raw">("structured");
+  const [botViewMode, setBotViewMode] = useState<"structured" | "raw">("structured");
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -478,7 +480,7 @@ function ProfileEditor({
                         if (e.key === "Enter" && newBotFilename.trim()) {
                           createCompanionFile(
                             newBotFilename.trim(),
-                            "BotCount=0\nBotDifficulty=2\n",
+                            "BotCount=0\nBotDifficulty=hotshot\n",
                             "BotConfig",
                           );
                           setShowBotCreate(false);
@@ -492,7 +494,7 @@ function ProfileEditor({
                           if (newBotFilename.trim()) {
                             createCompanionFile(
                               newBotFilename.trim(),
-                              "BotCount=0\nBotDifficulty=2\n",
+                              "BotCount=0\nBotDifficulty=hotshot\n",
                               "BotConfig",
                             );
                             setShowBotCreate(false);
@@ -614,7 +616,7 @@ function ProfileEditor({
                 <span className="text-xs text-muted-foreground font-mono">
                   {editingFile}
                 </span>
-                {/* Structured/Raw toggle — only for the main server config */}
+                {/* Structured/Raw toggle — for server config and bot roster */}
                 {selectedProfile && editingFile === selectedProfile.configFile && (
                   <div className="flex bg-muted rounded p-0.5">
                     <button
@@ -639,17 +641,50 @@ function ProfileEditor({
                     </button>
                   </div>
                 )}
+                {selectedProfile && companions?.botConfig?.exists &&
+                  editingFile === companions.botConfig.filename && (
+                  <div className="flex bg-muted rounded p-0.5">
+                    <button
+                      onClick={() => setBotViewMode("structured")}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                        botViewMode === "structured"
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
+                      }`}
+                    >
+                      Structured
+                    </button>
+                    <button
+                      onClick={() => setBotViewMode("raw")}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                        botViewMode === "raw"
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
+                      }`}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                )}
               </div>
-              {/* Save button — only shown in raw mode (structured form has its own) */}
-              {(configViewMode === "raw" || editingFile !== selectedProfile?.configFile) && (
-                <button
-                  onClick={saveFile}
-                  disabled={!dirty || saving}
-                  className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
-                >
-                  {saving ? "Saving..." : saved ? "Saved!" : "Save"}
-                </button>
-              )}
+              {/* Save button — only shown in raw mode (structured forms have their own) */}
+              {(() => {
+                const isServerCfg = editingFile === selectedProfile?.configFile;
+                const isBotRoster = editingFile === companions?.botConfig?.filename && companions?.botConfig?.exists;
+                const showSave =
+                  (isServerCfg && configViewMode === "raw") ||
+                  (isBotRoster && botViewMode === "raw") ||
+                  (!isServerCfg && !isBotRoster);
+                return showSave ? (
+                  <button
+                    onClick={saveFile}
+                    disabled={!dirty || saving}
+                    className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
+                  >
+                    {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+                  </button>
+                ) : null;
+              })()}
             </div>
 
             {/* Structured form or raw textarea */}
@@ -662,6 +697,14 @@ function ProfileEditor({
                   fetchCompanions(selectedProfile.id);
                   onRefreshProfiles();
                 }}
+              />
+            ) : selectedProfile &&
+              companions?.botConfig?.exists &&
+              editingFile === companions.botConfig.filename &&
+              botViewMode === "structured" ? (
+              <BotRosterForm
+                profileId={selectedProfile.id}
+                onSaved={() => fetchCompanions(selectedProfile.id)}
               />
             ) : (
               <textarea
