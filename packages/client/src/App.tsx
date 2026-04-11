@@ -241,6 +241,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {/* Right sidebar — server dashboard */}
         {isConnected && (
           <ServerSidebar
+            mode={mode}
             serverInfo={serverInfoHook.serverInfo}
             actions={{
               ...serverInfoHook,

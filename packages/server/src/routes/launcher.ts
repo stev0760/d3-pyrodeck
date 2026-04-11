@@ -56,11 +56,13 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
     // Resolve config file from profile or default
     let configFile = "dedicated.cfg";
+    let profileLogPath: string | undefined;
     if (body.profileId) {
       const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
       try {
         const profile = await profileManager.read(body.profileId);
         configFile = profile.configFile;
+        profileLogPath = profile.logPath;
         await profileManager.markLaunched(body.profileId);
       } catch {
         return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
@@ -116,8 +118,8 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       executablePath = path.join(gamePath, executablePath);
     }
 
-    // Log file in Pyrodeck's config dir (don't pollute gamePath)
-    const logPath = path.join(CONFIG_DIR, "server.log");
+    // Log file: use profile-specific path if set, otherwise default to config dir
+    const logPath = profileLogPath ?? path.join(CONFIG_DIR, "server.log");
 
     // Start the D3 process
     try {

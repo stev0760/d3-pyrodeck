@@ -22,6 +22,7 @@ export interface ServerProfile {
   name: string;
   description?: string;
   configFile: string;
+  logPath?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }

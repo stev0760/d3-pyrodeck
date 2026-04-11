@@ -8,6 +8,7 @@ type ServerInfoActions = ReturnType<typeof useServerInfo>;
 interface ServerSidebarProps {
   serverInfo: NetGameInfo | null;
   actions: ServerInfoActions;
+  mode: "launch" | "connect";
 }
 
 function Stepper({
@@ -75,7 +76,7 @@ function InfoRow({
   );
 }
 
-export function ServerSidebar({ serverInfo, actions }: ServerSidebarProps) {
+export function ServerSidebar({ serverInfo, actions, mode }: ServerSidebarProps) {
   const [warpLevel, setWarpLevel] = useState("1");
   const [confirmQuit, setConfirmQuit] = useState(false);
 
@@ -195,7 +196,8 @@ export function ServerSidebar({ serverInfo, actions }: ServerSidebarProps) {
             </div>
           </div>
 
-          {/* Danger Zone */}
+          {/* Danger Zone — only shown in Connect mode; Launch mode uses Stop Server in the left panel */}
+          {mode === "connect" && (
           <div className="px-3 py-2 mt-auto">
             <Separator className="mb-2" />
             {!confirmQuit ? (
@@ -236,6 +238,7 @@ export function ServerSidebar({ serverInfo, actions }: ServerSidebarProps) {
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </aside>

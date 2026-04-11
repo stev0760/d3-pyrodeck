@@ -53,12 +53,20 @@ const POWERUP_CATEGORIES: { label: string; powerups: string[] }[] = [
     powerups: ["SuperLaser", "Fusioncannon", "MassDriver", "Microwave", "Plasmacannon", "EMDlauncher", "Omegacannon", "Vauss", "Napalm"],
   },
   {
+    label: "Ammo",
+    powerups: ["Vauss clip", "MassDriverAmmo", "NapalmTank"],
+  },
+  {
     label: "Secondary Weapons",
     powerups: ["Concussion", "Homing", "Smart", "Mega", "Frag", "Guided", "ImpactMortar", "NapalmRocket", "Cyclone", "BlackShark"],
   },
   {
+    label: "4-Packs",
+    powerups: ["4PackHoming", "4PackConc", "4PackFrag", "4PackGuided"],
+  },
+  {
     label: "Utility",
-    powerups: ["Energy", "Shield", "QuadLaser", "Cloak", "Invulnerability", "Afterburner", "Converter"],
+    powerups: ["Energy", "Shield", "QuadLaser", "Cloak", "Invulnerability", "RapidFire", "Afterburner", "Converter", "FullMap", "HeadlightPowerup", "ThiefAutoMap"],
   },
   {
     label: "Countermeasures",

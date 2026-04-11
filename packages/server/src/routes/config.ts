@@ -89,7 +89,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   /** Update profile metadata. */
   app.patch("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const updates = request.body as { name?: string; description?: string };
+    const updates = request.body as { name?: string; description?: string; logPath?: string | null };
 
     try {
       const profile = await getProfileManager().update(id, updates);

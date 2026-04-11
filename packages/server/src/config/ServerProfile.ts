@@ -16,6 +16,8 @@ export interface ServerProfile {
   description?: string;
   /** Config filename in gamePath (e.g., "my-server.cfg"). */
   configFile: string;
+  /** Optional absolute path for the server log file. Defaults to server.log in Pyrodeck config dir. */
+  logPath?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -215,10 +217,10 @@ export class ServerProfileManager {
     return profile;
   }
 
-  /** Update profile metadata (name, description). */
+  /** Update profile metadata (name, description, logPath). */
   async update(
     id: string,
-    updates: { name?: string; description?: string },
+    updates: { name?: string; description?: string; logPath?: string | null },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
     const profile = profiles.find((p) => p.id === id);
@@ -226,6 +228,13 @@ export class ServerProfileManager {
 
     if (updates.name !== undefined) profile.name = updates.name;
     if (updates.description !== undefined) profile.description = updates.description;
+    if (updates.logPath !== undefined) {
+      if (updates.logPath === null || updates.logPath === "") {
+        delete profile.logPath;
+      } else {
+        profile.logPath = updates.logPath;
+      }
+    }
 
     await this.saveProfiles(profiles);
     return profile;
