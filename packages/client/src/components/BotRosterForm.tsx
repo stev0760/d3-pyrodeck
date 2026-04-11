@@ -212,9 +212,11 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
     );
   }
 
+  const MAX_BOTS = 16; // Engine hard cap (BotLoadRosterFile clamps to MAX_BOTS)
+  const effectiveLimit = Math.min(maxPlayers, MAX_BOTS);
   const botCount = roster.bots.length;
-  const atOrOverLimit = botCount >= maxPlayers;
-  const nearLimit = botCount >= maxPlayers - 1 && !atOrOverLimit;
+  const atOrOverLimit = botCount >= effectiveLimit;
+  const nearLimit = botCount >= effectiveLimit - 1 && !atOrOverLimit;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
@@ -227,9 +229,14 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
           <span className="text-xs text-muted-foreground">
             / {maxPlayers} max players
           </span>
-          {atOrOverLimit && (
+          {atOrOverLimit && botCount >= MAX_BOTS && (
             <span className="text-xs font-medium text-destructive">
-              Bot count fills all slots — no room for human players
+              At engine limit (MAX_BOTS=16)
+            </span>
+          )}
+          {atOrOverLimit && botCount < MAX_BOTS && (
+            <span className="text-xs font-medium text-destructive">
+              Fills all player slots — no room for humans
             </span>
           )}
           {nearLimit && (
@@ -387,7 +394,9 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
 
       {atOrOverLimit && (
         <p className="text-xs text-muted-foreground italic">
-          Remove bots to make room before adding more, or increase Max Players in Server Config.
+          {botCount >= MAX_BOTS
+            ? "Engine limit reached (MAX_BOTS=16). Remove bots to add more."
+            : "Remove bots or increase Max Players in Server Config to add more."}
         </p>
       )}
     </div>

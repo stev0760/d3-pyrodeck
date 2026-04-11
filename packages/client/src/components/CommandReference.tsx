@@ -236,11 +236,6 @@ const CATEGORIES: CommandCategory[] = [
       { cmd: "$removebots", label: "Remove All Bots" },
       { cmd: "$botlist", label: "Bot List" },
       {
-        cmd: "$botstat",
-        label: "Bot Status",
-        args: [{ name: "index", placeholder: "index or all", type: "text" }],
-      },
-      {
         cmd: "$botdifficulty",
         label: "Bot Difficulty",
         args: [
@@ -259,6 +254,32 @@ const CATEGORIES: CommandCategory[] = [
           },
         ],
       },
+    ],
+  },
+  {
+    id: "bot-debug",
+    label: "Bot Debug",
+    requireFeature: "bots",
+    commands: [
+      {
+        cmd: "$botstat",
+        label: "Bot Stat",
+        args: [{ name: "index", placeholder: "index or all", type: "text" }],
+      },
+      {
+        cmd: "$botmov",
+        label: "Bot Mov Log",
+        select: [
+          {
+            name: "toggle",
+            options: [
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ],
+          },
+        ],
+      },
+      { cmd: "$bothelp", label: "Bot Help" },
       { cmd: "$servercaps", label: "Server Caps" },
     ],
   },
