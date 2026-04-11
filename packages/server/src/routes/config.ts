@@ -1,6 +1,19 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { ServerProfileManager } from "../config/ServerProfile.js";
-import { parseDedicatedCfg, getCfgValue } from "../launcher/ConfigGenerator.js";
+import {
+  parseDedicatedCfg,
+  getCfgValue,
+  entriesToStructured,
+  structuredToString,
+  parseMpsFile,
+  generateMpsFile,
+  parseBotRoster,
+  generateBotRoster,
+  type DedicatedCfgData,
+  type BotRosterData,
+} from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
@@ -256,6 +269,204 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Write failed";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  // --- Structured config (bidirectional parse/generate) ---
+
+  /**
+   * GET /api/profiles/:id/structured-config
+   * Returns the profile's server config as a fully typed DedicatedCfgData object.
+   * Ship bans are merged in from the .mps file if one is referenced.
+   */
+  app.get("/api/profiles/:id/structured-config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const manager = getProfileManager();
+      const profile = await manager.read(id);
+
+      let cfgContent: string;
+      try {
+        cfgContent = await manager.readFile(profile.configFile);
+      } catch {
+        return reply.status(400).send({ error: "Cannot read server config" });
+      }
+
+      const entries = parseDedicatedCfg(cfgContent);
+      const data = entriesToStructured(entries);
+
+      // Merge ship bans from .mps file if one is referenced
+      if (data.multiSettingsFile) {
+        try {
+          const mpsContent = await manager.readFile(data.multiSettingsFile);
+          const mpsData = parseMpsFile(mpsContent);
+          data.bannedShips = mpsData.bannedShips;
+        } catch {
+          // .mps file missing — not fatal, bannedShips stays []
+        }
+      }
+
+      return data;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to read config";
+      return reply.status(404).send({ error: message });
+    }
+  });
+
+  /**
+   * PUT /api/profiles/:id/structured-config
+   * Write the profile's server config from a DedicatedCfgData object.
+   * Generates .mps file for ship bans and updates MultiSettingsFile= CVar accordingly.
+   */
+  app.put("/api/profiles/:id/structured-config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const data = request.body as DedicatedCfgData;
+
+    if (!data || typeof data !== "object") {
+      return reply.status(400).send({ error: "Invalid config data" });
+    }
+
+    try {
+      const manager = getProfileManager();
+      const profile = await manager.read(id);
+
+      // Handle .mps file for ship bans
+      if (data.bannedShips && data.bannedShips.length > 0) {
+        // Determine .mps filename — use existing reference or derive from config filename
+        const mpsFilename = data.multiSettingsFile
+          ?? profile.configFile.replace(/\.cfg$/i, ".mps");
+        const mpsContent = generateMpsFile({ bannedShips: data.bannedShips });
+        await manager.writeFile(mpsFilename, mpsContent);
+        data.multiSettingsFile = mpsFilename;
+      } else {
+        // No ships banned — remove the MultiSettingsFile= reference so D3 doesn't
+        // load the .mps. The file stays on disk in case the user manages it manually.
+        data.multiSettingsFile = null;
+      }
+
+      const cfgContent = structuredToString(data);
+      await manager.writeFile(profile.configFile, cfgContent);
+
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to write config";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  // --- Bot roster structured access ---
+
+  /**
+   * GET /api/profiles/:id/bot-roster
+   * Parse the profile's bot roster file (BotConfig=) into structured data.
+   */
+  app.get("/api/profiles/:id/bot-roster", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const manager = getProfileManager();
+      const profile = await manager.read(id);
+
+      const cfgContent = await manager.readFile(profile.configFile);
+      const entries = parseDedicatedCfg(cfgContent);
+      const botConfigFile = getCfgValue(entries, "BotConfig");
+
+      if (!botConfigFile) {
+        return reply.status(404).send({ error: "No bot roster file configured" });
+      }
+
+      let rosterContent: string;
+      try {
+        rosterContent = await manager.readFile(botConfigFile);
+      } catch {
+        return reply.status(404).send({ error: `Bot roster file not found: ${botConfigFile}` });
+      }
+
+      return parseBotRoster(rosterContent);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to read bot roster";
+      return reply.status(404).send({ error: message });
+    }
+  });
+
+  /**
+   * PUT /api/profiles/:id/bot-roster
+   * Write structured bot roster data to the profile's roster file.
+   */
+  app.put("/api/profiles/:id/bot-roster", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const data = request.body as BotRosterData;
+
+    if (!data || typeof data !== "object") {
+      return reply.status(400).send({ error: "Invalid roster data" });
+    }
+
+    try {
+      const manager = getProfileManager();
+      const profile = await manager.read(id);
+
+      const cfgContent = await manager.readFile(profile.configFile);
+      const entries = parseDedicatedCfg(cfgContent);
+      let botConfigFile = getCfgValue(entries, "BotConfig");
+
+      if (!botConfigFile) {
+        // Auto-create a roster filename alongside the config
+        botConfigFile = profile.configFile.replace(/\.cfg$/i, "-bots.cfg");
+        await manager.ensureConfigReference(profile.configFile, "BotConfig", botConfigFile);
+      }
+
+      const rosterContent = generateBotRoster(data);
+      await manager.writeFile(botConfigFile, rosterContent);
+
+      return { ok: true, filename: botConfigFile };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to write bot roster";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  // --- Mission scanner ---
+
+  /**
+   * GET /api/game-files/missions
+   * List available .mn3 mission files from gamePath/missions/.
+   */
+  app.get("/api/game-files/missions", async (_request, reply) => {
+    const config = pyrodeckConfig.get();
+    if (!config.gamePath) {
+      return reply.status(400).send({ error: "Game path not configured" });
+    }
+    try {
+      const missionsDir = path.join(config.gamePath, "missions");
+      const entries = await fs.readdir(missionsDir);
+      const missions = entries.filter((f) => f.toLowerCase().endsWith(".mn3")).sort();
+      return { missions };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list missions";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  /**
+   * GET /api/game-files/netgames
+   * List available .d3m game type scripts from gamePath/netgames/.
+   * Returns filenames without the .d3m extension for use as Scriptname= values.
+   */
+  app.get("/api/game-files/netgames", async (_request, reply) => {
+    const config = pyrodeckConfig.get();
+    if (!config.gamePath) {
+      return reply.status(400).send({ error: "Game path not configured" });
+    }
+    try {
+      const netgamesDir = path.join(config.gamePath, "netgames");
+      const entries = await fs.readdir(netgamesDir);
+      const scripts = entries
+        .filter((f) => f.toLowerCase().endsWith(".d3m"))
+        .map((f) => f.slice(0, -4))  // strip .d3m
+        .sort();
+      return { scripts };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list netgames";
       return reply.status(400).send({ error: message });
     }
   });

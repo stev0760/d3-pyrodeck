@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ServerProfile } from "../hooks/useLauncher.ts";
+import { ServerConfigForm } from "./ServerConfigForm.tsx";
 
 interface ConfigEditorProps {
   profiles: ServerProfile[];
@@ -163,6 +164,7 @@ function ProfileEditor({
 }) {
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [configViewMode, setConfigViewMode] = useState<"structured" | "raw">("structured");
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -608,27 +610,71 @@ function ProfileEditor({
           <>
             {/* Editor header */}
             <div className="flex items-center justify-between mb-2 shrink-0">
-              <span className="text-xs text-muted-foreground font-mono">
-                {editingFile}
-              </span>
-              <button
-                onClick={saveFile}
-                disabled={!dirty || saving}
-                className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
-              >
-                {saving ? "Saving..." : saved ? "Saved!" : "Save"}
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground font-mono">
+                  {editingFile}
+                </span>
+                {/* Structured/Raw toggle — only for the main server config */}
+                {selectedProfile && editingFile === selectedProfile.configFile && (
+                  <div className="flex bg-muted rounded p-0.5">
+                    <button
+                      onClick={() => setConfigViewMode("structured")}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                        configViewMode === "structured"
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
+                      }`}
+                    >
+                      Structured
+                    </button>
+                    <button
+                      onClick={() => setConfigViewMode("raw")}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                        configViewMode === "raw"
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
+                      }`}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                )}
+              </div>
+              {/* Save button — only shown in raw mode (structured form has its own) */}
+              {(configViewMode === "raw" || editingFile !== selectedProfile?.configFile) && (
+                <button
+                  onClick={saveFile}
+                  disabled={!dirty || saving}
+                  className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
+                >
+                  {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+                </button>
+              )}
             </div>
-            <textarea
-              value={content}
-              onChange={(e) => {
-                setContent(e.target.value);
-                setDirty(true);
-                setSaved(false);
-              }}
-              className="flex-1 w-full px-3 py-2 bg-background border border-border rounded-lg font-mono text-sm text-foreground/90 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              spellCheck={false}
-            />
+
+            {/* Structured form or raw textarea */}
+            {selectedProfile &&
+            editingFile === selectedProfile.configFile &&
+            configViewMode === "structured" ? (
+              <ServerConfigForm
+                profileId={selectedProfile.id}
+                onSaved={() => {
+                  fetchCompanions(selectedProfile.id);
+                  onRefreshProfiles();
+                }}
+              />
+            ) : (
+              <textarea
+                value={content}
+                onChange={(e) => {
+                  setContent(e.target.value);
+                  setDirty(true);
+                  setSaved(false);
+                }}
+                className="flex-1 w-full px-3 py-2 bg-background border border-border rounded-lg font-mono text-sm text-foreground/90 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                spellCheck={false}
+              />
+            )}
           </>
         ) : (
           <div className="h-full flex items-center justify-center">

@@ -139,7 +139,7 @@ Once connected, Console/Players/Bots all work identically.
 - [x] $scores parser: handle D3's 19-char name truncation (colon lost on long names) with fallback text/number boundary detection
 
 ### Not Yet Done
-- [ ] Quit button should route through launcher stop for graceful shutdown (currently sends raw `quit`, Pyrodeck sees it as a crash)
+- [x] Quit button should route through launcher stop for graceful shutdown (currently sends raw `quit`, Pyrodeck sees it as a crash)
 - [ ] Packaging as single executable (evaluate Bun `--compile` vs Node SEA)
 
 ---
@@ -185,50 +185,41 @@ Direct text editing for all config file types — the "advanced mode" baseline:
 - [x] File classification: backend inspects content to categorize as server-config, bot-roster, ship-settings, startup-commands
 - [x] Profile-less file write endpoint for Game Files browser editing
 
-### Step 2: Config Backend — Parse & Generate
+### Step 2: Config Backend — Parse & Generate ✅
 
-Extend `ConfigGenerator` to handle the full dedicated.cfg schema and companion files. This powers the structured form UI in Steps 3-5.
+- [x] Bidirectional cfg parsing: `entriesToStructured()` / `structuredToString()` with full `DedicatedCfgData` schema
+- [x] Type-aware parsing with D3 engine defaults for missing keys
+- [x] Handle multi-value keys: `AllowPowerup`/`DisallowPowerup` collected as arrays
+- [x] .mps file read/write: `parseMpsFile()` / `generateMpsFile()` with `SHIPBAN` support
+- [x] Bot roster file read/write: `parseBotRoster()` / `generateBotRoster()`
+- [x] `GET/PUT /api/profiles/:id/structured-config` — structured config API (merges ship bans from .mps)
+- [x] `GET/PUT /api/profiles/:id/bot-roster` — structured bot roster API
+- [x] `GET /api/game-files/missions` — scans `gamePath/missions/` for .mn3 files
+- [x] `GET /api/game-files/netgames` — scans `gamePath/netgames/` for .d3m game types
+- [x] 27 unit tests covering parse/generate round-trips for all formats
 
-**File formats:**
-- **dedicated.cfg** — `Key=Value` syntax, one per line. Holds all main settings.
-- **companion .mps** — `MultiSettingsFile` loaded via cfg. Tab-separated `LABEL<tab>VALUE` format. **Only way to ban ships** (`SHIPBAN` entries).
-- **bots.cfg** — bot roster referenced via `BotConfig=` in cfg. Same `Key=Value` format.
-- **autoexec.dmfc** — DMFC commands run at game DLL init. For settings with no CVar.
+### Step 3: Config Form UI — Core Settings (Structured Mode) ✅
 
-Strategy: put everything in dedicated.cfg, only generate companion .mps when ship bans are needed, generate bots.cfg when bot roster is configured, generate autoexec.dmfc for settings without CVars.
+- [x] Identity section: server name (max 32), game type dropdown (scanned from netgames/), mission dropdown (scanned from missions/), MOTD
+- [x] Network section: PPS (2-40, rec. 20), max players (2-32), network model radio (Client/Server, Peer-to-Peer, Permissable), send rotation velocity, use smoothing
+- [x] Rules section: time limit, kill goal, respawn time, randomize respawn, difficulty dropdown (Trainee→Insane), num teams (visible for team modes)
+- [x] Gameplay toggles: accurate collisions, bright players, allow mouselook
+- [x] Remote console section: allow/disable toggle, port, password with auto-generate button
+- [x] Structured/Raw toggle in editor header — raw textarea always available as fallback
+- [x] Save/Reset controls with unsaved-changes indicator
+- [ ] Defaults button to populate recommended values
+- [ ] Form validation error display (currently clamped silently at engine min/max)
 
-- [ ] Bidirectional cfg parsing: parse existing cfg into structured object, generate cfg from structured object
-- [ ] Type-aware parsing with validation (int ranges, string max lengths, enum values)
-- [ ] Handle multi-value keys: multiple `AllowPowerup`/`DisallowPowerup` lines
-- [ ] .mps file read/write: parse existing .mps (tab-separated `LABEL<tab>VALUE`, `TRUE`/`FALSE` bools), generate .mps with `SHIPBAN` entries when ships are restricted
-- [ ] Bot roster file read/write from structured data
-- [ ] autoexec.dmfc generation for settings without CVars ($serverhudnames, $killmsgfilter, $autosavelevel, $autosavedisconnect)
-- [ ] Mission file scanner: list available .mn3 files from D3 install
+### Step 4: Config Form UI — Ships & Powerups ✅
 
-### Step 3: Config Form UI — Core Settings (Structured Mode)
-
-User-friendly structured form that replaces raw text editing as the default view. Raw editing remains available as an "Advanced" toggle. Modeled after D3Server3's proven layout.
-
-- [ ] Identity section: server name (max 32), game type dropdown (Anarchy, Team Anarchy, CTF, Monsterball, Entropy, Hoard, Hyper-Anarchy, Robo-Anarchy, Co-op), mission dropdown (scanned .mn3 files), starting level, MOTD
-- [ ] Network section: PPS (default 20 — vanilla D3/Matcen cap is 20; **TODO: research PiccuEngine PPS cap** to set correct range/max for the slider), max players (2-32), connection model radio (Client/Server, Peer2Peer, Permissable), send rotation velocity, use smoothing
-- [ ] Rules section: time limit (0=disabled), kill goal (0=disabled), respawn time, randomize respawn toggle, difficulty dropdown (Trainee→Insane), audio taunt delay, num teams (2-4, visible for team modes)
-- [ ] Gameplay toggles: accurate collisions, bright players, allow mouselook
-- [ ] Remote console section: allow remote console (default on), port, password (auto-generate option)
-- [ ] Form validation matching engine constraints (e.g. PPS 2-40, MaxPlayers 2-32, NumTeams 2-4)
-- [ ] Defaults button to populate recommended values (PPS=20 for vanilla/Matcen, AccurateCollisions=1, etc.)
-- [ ] Toggle between structured form view and raw text editor for the same file
-
-### Step 4: Config Form UI — Ships & Powerups
-
-The distinctive D3Server3 feature — toggle lists for allowed items:
-- [ ] Ship toggles: Pyro-GL, Phoenix, Magnum-AHT, Black Pyro — with "at least one required" validation and Pyro-GL warning
-- [ ] Powerup toggles organized in 4 categories matching D3Server3:
-  - Primary weapons: SuperLaser, Fusioncannon, MassDriver, Microwave, Plasmacannon, EMDlauncher, Omegacannon, Vauss, Napalm
-  - Secondary weapons: Concussion, Homing, Smart, Mega, Frag, Guided, ImpactMortar, NapalmRocket, Cyclone, BlackShark
-  - Utility: Energy, Shield, QuadLaser, Cloak, Invulnerability, Afterburner, Converter
-  - Counter-measures: Chaff, Betty4Pack, Seeker3Pack, GunboyPowerup, ProxMinePowerup
-- [ ] "Allow All" / "Disallow All" per category
-- [ ] Visual indicator for bandwidth-heavy powerups (ProxMinePowerup, Betty4Pack, BlackShark, Seeker3Pack)
+- [x] Ship toggles: Pyro-GL, Phoenix, Magnum-AHT, Black Pyro — "at least one required" validation, Pyro-GL ban warning
+- [x] Ship bans written to .mps file, MultiSettingsFile= auto-added/removed from cfg
+- [x] Powerup toggles in 4 categories: Primary Weapons, Secondary Weapons, Utility, Countermeasures
+- [x] "Allow all" / "Disallow all" per category + global Allow All / Disallow All
+- [x] Running count: "X/30 allowed"
+- [x] Bandwidth-heavy indicator (BW label) on ProxMinePowerup, Betty4Pack, BlackShark, Seeker3Pack
+- [x] Disallowed powerups rendered with strikethrough for clarity
+- [x] Normalizes AllowPowerup= allow-list → DisallowPowerup= disallow-list on load (UI always uses disallow pattern)
 
 ### Step 5: Config Form UI — Bots (Matcen Fork)
 
