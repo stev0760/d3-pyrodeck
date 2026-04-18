@@ -435,8 +435,9 @@ export function generateMpsFile(data: MpsData): string {
 
 export interface BotEntry {
   name: string;
-  ship?: string;     // pyro | phoenix | magnum | blackpyro
+  ship?: string;       // pyro | phoenix | magnum | blackpyro
   difficulty?: string; // trainee | rookie | hotshot | ace | insane
+  team?: number;       // 1-indexed (1–4), undefined = auto-balance
 }
 
 export interface BotRosterData {
@@ -459,10 +460,13 @@ export function parseBotRoster(content: string): BotRosterData {
   for (let i = 1; i <= botCount; i++) {
     const name = get(`BotName${i}`);
     if (!name) continue;
+    const teamVal = get(`BotTeam${i}`);
+    const team = teamVal ? parseInt(teamVal, 10) : undefined;
     bots.push({
       name,
       ship: get(`BotShip${i}`),
       difficulty: get(`BotDifficulty${i}`),
+      team: team !== undefined && team >= 1 && team <= 4 ? team : undefined,
     });
   }
 
@@ -487,6 +491,7 @@ export function generateBotRoster(data: BotRosterData): string {
     lines.push(`BotName${n}=${bot.name}`);
     if (bot.ship) lines.push(`BotShip${n}=${bot.ship}`);
     if (bot.difficulty) lines.push(`BotDifficulty${n}=${bot.difficulty}`);
+    if (bot.team !== undefined && bot.team >= 1 && bot.team <= 4) lines.push(`BotTeam${n}=${bot.team}`);
   }
 
   return lines.join("\n") + "\n";

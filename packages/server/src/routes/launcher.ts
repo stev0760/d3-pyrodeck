@@ -16,10 +16,227 @@ import { sessionManager, serializeCaps } from "./server.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
+import type { PlaylistEntry } from "../launcher/PlaylistManager.js";
+import { playlistManager } from "../launcher/playlistInstance.js";
+
+export { playlistManager };
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
+
+// Restore playlist activation state from disk on startup
+playlistManager.restoreState().catch(() => {});
+
+// Wire playlist events to WebSocket broadcasts
+playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
+  wsBroadcast("playlist_timer", { gameEndAt });
+});
+
+playlistManager.on("voteAnnounce", (options: PlaylistEntry[], timeoutMs: number) => {
+  wsBroadcast("playlist_vote_announce", {
+    options: options.map((o, i) => ({ index: i + 1, id: o.id, label: o.label, missionName: o.missionName })),
+    timeoutMs,
+    deadline: Date.now() + timeoutMs,
+  });
+
+  // Broadcast voting announcement to players in-game
+  if (options.length > 0 && playlistManager.sendCommandFn) {
+    const lines: string[] = [
+      "say Vote for next mission! Type a number in chat:",
+    ];
+    options.forEach((o, i) => {
+      lines.push(`say  ${i + 1} = ${o.label}`);
+    });
+    const send = playlistManager.sendCommandFn;
+    (async () => {
+      for (const line of lines) {
+        try { await send(line); } catch { /* ignore */ }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    })().catch(() => {});
+  }
+});
+
+playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
+  wsBroadcast("playlist_vote_result", {
+    winner: { id: winner.id, label: winner.label, missionName: winner.missionName },
+    counts,
+  });
+
+  // Announce winner in-game
+  if (playlistManager.sendCommandFn) {
+    playlistManager.sendCommandFn(`say Next mission: ${winner.label}`)
+      .catch(() => {});
+  }
+});
+
+/**
+ * Register a one-shot telnetReady handler so auto-connect fires after (re)start.
+ * Called from POST /start and from the playlist rotate handler.
+ */
+function registerAutoConnect(telnetPassword: string): void {
+  // Remove any stale once-handler from a launch that crashed before telnet was ready
+  processManager.removeAllListeners("telnetReady");
+
+  processManager.once("telnetReady", async (port: number) => {
+    console.log(`[Pyrodeck] D3 telnet ready on port ${port}, auto-connecting...`);
+
+    try {
+      // Disconnect any stale session
+      const existing = sessionManager.getActive();
+      if (existing) {
+        sessionManager.remove(existing.id);
+      }
+
+      const connection = new TelnetConnection();
+      const session = sessionManager.create(
+        connection,
+        "localhost",
+        port,
+        telnetPassword,
+      );
+
+      sessionManager.updateState(session.id, "connecting");
+      await connection.connect("localhost", port, telnetPassword);
+
+      // Probe capabilities
+      sessionManager.updateState(session.id, "probing");
+      let capabilities: ServerCapabilities;
+      try {
+        const capsResponse = await connection.send("$servercaps");
+        const parsed = parseServercaps(capsResponse);
+        capabilities = parsed ?? { ...VANILLA_CAPS, features: new Set() };
+      } catch {
+        capabilities = { ...VANILLA_CAPS, features: new Set() };
+      }
+
+      sessionManager.updateCapabilities(session.id, capabilities);
+      sessionManager.updateState(session.id, "ready");
+      wireSessionToClients();
+
+      // Wire up graceful quit
+      processManager.sendQuitFn = async () => {
+        try { await connection.send("quit"); } catch { /* connection may be dead */ }
+      };
+
+      // Wire playlist manager's command sender
+      playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
+
+      // Anchor playlist timer if a playlist is active
+      if (playlistManager.isActive()) {
+        playlistManager.anchorTimer().catch(() => {});
+      }
+
+      // Broadcast to WS clients
+      wsBroadcast("connection_state", { state: "ready" });
+      wsBroadcast("capabilities", serializeCaps(capabilities));
+
+      // Broadcast current playlist status
+      const playlistStatus = playlistManager.getStatus();
+      if (playlistStatus.activePlaylistId) {
+        wsBroadcast("playlist_status", playlistStatus as unknown as Record<string, unknown>);
+      }
+
+      console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
+      wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
+    }
+  });
+}
+
+// Rotate: stop server, swap mission CVar, restart
+playlistManager.on("rotate", async (entry: PlaylistEntry) => {
+  const config = pyrodeckConfig.get();
+  const gamePath = config.gamePath;
+
+  if (!gamePath) {
+    wsBroadcast("error", { message: "Playlist rotation failed: game path not configured" });
+    return;
+  }
+
+  // Announce rotation if server is running
+  if (playlistManager.sendCommandFn && processManager.isRunning()) {
+    try {
+      await playlistManager.sendCommandFn(`say Changing mission to: ${entry.label}`);
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch { /* ignore */ }
+  }
+
+  // Get the current profile's config file
+  const launchStatus = processManager.getStatus();
+  if (launchStatus.state === "running" || launchStatus.state === "starting") {
+    await processManager.stop();
+  }
+
+  // Swap MissionName in the active profile's config file
+  const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+  try {
+    const profiles = await profileManager.list();
+    if (profiles.length > 0) {
+      // Use the most recently launched profile
+      const sorted = profiles
+        .filter((p) => p.lastLaunchedAt)
+        .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""));
+      const activeProfile = sorted[0] ?? profiles[0];
+
+      await profileManager.ensureConfigReference(
+        activeProfile.configFile,
+        "MissionName",
+        entry.missionName,
+      );
+
+      if (entry.startingLevel !== undefined) {
+        await profileManager.ensureConfigReference(
+          activeProfile.configFile,
+          "SetLevel",
+          String(entry.startingLevel),
+        );
+      }
+
+      // Restart the server with the updated config
+      const cfgPath = path.join(gamePath, activeProfile.configFile);
+      try {
+        const cfgContent = await fs.readFile(cfgPath, "utf-8");
+        const entries = parseDedicatedCfg(cfgContent);
+        const telnetCfg = extractTelnetConfig(entries);
+
+        if (telnetCfg.enabled && telnetCfg.password) {
+          let executablePath = config.executablePath ?? "";
+          if (!path.isAbsolute(executablePath)) {
+            executablePath = path.join(gamePath, executablePath);
+          }
+          const logPath = activeProfile.logPath ?? path.join(CONFIG_DIR, "server.log");
+
+          // Register auto-connect handler BEFORE calling start()
+          registerAutoConnect(telnetCfg.password);
+
+          await profileManager.markLaunched(activeProfile.id);
+          await processManager.start({
+            executablePath,
+            gamePath,
+            configFile: activeProfile.configFile,
+            logPath,
+            telnetPort: telnetCfg.port,
+            telnetPassword: telnetCfg.password,
+          });
+
+          wsBroadcast("playlist_rotate", {
+            entry: { id: entry.id, label: entry.label, missionName: entry.missionName },
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        wsBroadcast("error", { message: `Playlist restart failed: ${message}` });
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    wsBroadcast("error", { message: `Playlist rotation error: ${message}` });
+  }
+});
 
 // Wire process events to WebSocket broadcasts
 processManager.on("stateChange", (state: string) => {
@@ -28,6 +245,8 @@ processManager.on("stateChange", (state: string) => {
 
 processManager.on("stdout", (data: string) => {
   wsBroadcast("process_output", { stream: "stdout", data });
+  // Feed to playlist manager for level-end detection and vote parsing
+  playlistManager.onStdoutChunk(data);
 });
 
 processManager.on("stderr", (data: string) => {
@@ -121,6 +340,9 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     // Log file: use profile-specific path if set, otherwise default to config dir
     const logPath = profileLogPath ?? path.join(CONFIG_DIR, "server.log");
 
+    // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
+    registerAutoConnect(telnetPassword);
+
     // Start the D3 process
     try {
       await processManager.start({
@@ -135,65 +357,6 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       const message = err instanceof Error ? err.message : String(err);
       return reply.status(500).send({ error: message });
     }
-
-    // Remove any stale handlers from previous launches that crashed
-    // before telnetReady fired (once handlers stay registered if never consumed)
-    processManager.removeAllListeners("telnetReady");
-
-    // Auto-connect telnet when ready
-    processManager.once("telnetReady", async (port: number) => {
-      app.log.info("D3 server telnet ready on port %d, auto-connecting...", port);
-
-      try {
-        const connection = new TelnetConnection();
-        const session = sessionManager.create(
-          connection,
-          "localhost",
-          port,
-          telnetPassword,
-        );
-
-        sessionManager.updateState(session.id, "connecting");
-        await connection.connect("localhost", port, telnetPassword);
-
-        // Probe capabilities
-        sessionManager.updateState(session.id, "probing");
-        let capabilities: ServerCapabilities;
-        try {
-          const capsResponse = await connection.send("$servercaps");
-          const parsed = parseServercaps(capsResponse);
-          capabilities = parsed ?? { ...VANILLA_CAPS, features: new Set() };
-        } catch {
-          capabilities = { ...VANILLA_CAPS, features: new Set() };
-        }
-
-        sessionManager.updateCapabilities(session.id, capabilities);
-        sessionManager.updateState(session.id, "ready");
-        wireSessionToClients();
-
-        // Wire up graceful quit
-        processManager.sendQuitFn = async () => {
-          try {
-            await connection.send("quit");
-          } catch {
-            // Connection may already be dead
-          }
-        };
-
-        // Broadcast to WS clients
-        wsBroadcast("connection_state", { state: "ready" });
-        wsBroadcast("capabilities", serializeCaps(capabilities));
-
-        app.log.info(
-          "Launch Mode: auto-connected to D3 server (session %s)",
-          session.id,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        app.log.error("Launch Mode: telnet auto-connect failed: %s", message);
-        wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
-      }
-    });
 
     return {
       status: processManager.getStatus(),
@@ -212,6 +375,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       sessionManager.remove(session.id);
     }
     processManager.sendQuitFn = null;
+    playlistManager.sendCommandFn = null;
 
     await processManager.stop();
 

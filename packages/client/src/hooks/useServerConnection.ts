@@ -34,6 +34,7 @@ export function useServerConnection() {
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
   const shouldReconnectRef = useRef(false);
@@ -116,6 +117,15 @@ export function useServerConnection() {
             break;
           case "error":
             setError((msg.payload as { message: string }).message);
+            break;
+          case "playlist_timer":
+          case "playlist_rotate":
+          case "playlist_status":
+          case "playlist_vote_announce":
+          case "playlist_vote_result":
+            for (const cb of playlistCallbacksRef.current) {
+              cb(msg.type, msg.payload);
+            }
             break;
         }
       } catch {
@@ -272,6 +282,15 @@ export function useServerConnection() {
     [capabilities],
   );
 
+  const onPlaylistEvent = useCallback((callback: (type: string, data: unknown) => void) => {
+    playlistCallbacksRef.current.push(callback);
+    return () => {
+      playlistCallbacksRef.current = playlistCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   return {
     connectionState,
     capabilities,
@@ -286,6 +305,7 @@ export function useServerConnection() {
     onPlayers,
     onBots,
     onServerInfo,
+    onPlaylistEvent,
     hasFeature,
   };
 }

@@ -224,15 +224,28 @@ function NumberInput({
   min?: number;
   max?: number;
 }) {
+  const [raw, setRaw] = useState(String(value));
+
+  // Sync display when parent value changes (e.g. increment/decrement)
+  useEffect(() => {
+    setRaw(String(value));
+  }, [value]);
+
   return (
     <input
       type="number"
-      value={value}
+      value={raw}
       min={min}
       max={max}
       onChange={(e) => {
+        setRaw(e.target.value);
         const n = parseInt(e.target.value, 10);
         if (!isNaN(n)) onChange(n);
+      }}
+      onBlur={() => {
+        // If left blank or invalid, snap back to last committed value
+        const n = parseInt(raw, 10);
+        if (isNaN(n)) setRaw(String(value));
       }}
       className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground/90 focus:outline-none focus:ring-1 focus:ring-ring"
     />
@@ -502,6 +515,13 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
               )}
             </Field>
           </Row>
+          <Field label="Starting Level" hint="(1 = first level in mission)">
+            <NumberInput
+              value={data.startingLevel}
+              onChange={(v) => update({ startingLevel: Math.max(1, v) })}
+              min={1}
+            />
+          </Field>
           <Field label="Message of the Day" hint="(max 400)">
             <textarea
               value={data.motd}
@@ -573,7 +593,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
         {/* Rules */}
         <Section title="Rules">
           <Row>
-            <Field label="Time Limit" hint="(min, 0=off)">
+            <Field label="Time Limit" hint="(minutes, 0 = off)">
               <NumberInput
                 value={data.timeLimit}
                 onChange={(v) => update({ timeLimit: Math.max(0, v) })}

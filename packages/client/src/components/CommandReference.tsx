@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 
 interface CommandDef {
@@ -226,6 +226,16 @@ const CATEGORIES: CommandCategory[] = [
               { value: "insane", label: "Insane" },
             ],
           },
+          {
+            name: "team",
+            options: [
+              { value: "", label: "Team..." },
+              { value: "1", label: "Team 1" },
+              { value: "2", label: "Team 2" },
+              { value: "3", label: "Team 3" },
+              { value: "4", label: "Team 4" },
+            ],
+          },
         ],
       },
       {
@@ -407,6 +417,11 @@ function CommandButton({
   );
 }
 
+const CMDREF_HEIGHT_KEY = "pyrodeck-cmdref-height";
+const CMDREF_MIN_HEIGHT = 80;
+const CMDREF_MAX_HEIGHT = 600;
+const CMDREF_DEFAULT_HEIGHT = 256;
+
 export function CommandReference({ sendCommand, hasFeature }: CommandReferenceProps) {
   const [expanded, setExpanded] = useState(() => {
     try {
@@ -416,6 +431,19 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
     }
   });
 
+  const [height, setHeight] = useState(() => {
+    try {
+      const stored = localStorage.getItem(CMDREF_HEIGHT_KEY);
+      return stored ? parseInt(stored, 10) : CMDREF_DEFAULT_HEIGHT;
+    } catch {
+      return CMDREF_DEFAULT_HEIGHT;
+    }
+  });
+
+  const draggingRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const dragStartHeightRef = useRef(0);
+
   useEffect(() => {
     try {
       localStorage.setItem("pyrodeck-cmdref-expanded", String(expanded));
@@ -424,12 +452,55 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
     }
   }, [expanded]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CMDREF_HEIGHT_KEY, String(height));
+    } catch {
+      // ignore
+    }
+  }, [height]);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    dragStartYRef.current = e.clientY;
+    dragStartHeightRef.current = height;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const delta = dragStartYRef.current - ev.clientY;
+      const newHeight = Math.min(
+        CMDREF_MAX_HEIGHT,
+        Math.max(CMDREF_MIN_HEIGHT, dragStartHeightRef.current + delta),
+      );
+      setHeight(newHeight);
+    };
+
+    const onMouseUp = () => {
+      draggingRef.current = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [height]);
+
   const visibleCategories = CATEGORIES.filter(
     (cat) => !cat.requireFeature || hasFeature(cat.requireFeature),
   );
 
   return (
     <div className="shrink-0 border-t border-border">
+      {expanded && (
+        <div
+          onMouseDown={handleDragStart}
+          className="h-1.5 w-full cursor-ns-resize flex items-center justify-center group hover:bg-primary/20 transition-colors"
+          title="Drag to resize"
+        >
+          <div className="w-8 h-0.5 rounded-full bg-border group-hover:bg-primary/50 transition-colors" />
+        </div>
+      )}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -447,7 +518,7 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 max-h-64 overflow-y-auto">
+        <div className="px-3 pb-3 overflow-y-auto" style={{ height }}>
           <div className="space-y-3">
             {visibleCategories.map((cat) => (
               <div key={cat.id}>

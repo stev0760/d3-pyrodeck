@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**Phase 2 (Launch Mode) — complete. Phase 3 (Structured Config) — in progress.**
+**Phase 2 (Launch Mode) — complete. Phase 3 (Structured Config) — Steps 1–5 complete. Phase 3 Step 6 (Playlist system) — Layer 1 complete.**
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -17,7 +17,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 
 ### Console
 - Live terminal (xterm.js) with command input, history (up/down), and 5000-line scrollback
-- Collapsible command reference drawer with 5 categories (Players, Teams, Server, Stats, Bots) — click-to-execute for simple commands, inline inputs for parameterized commands
+- Collapsible, resizable command reference drawer with 6 categories (Players, Teams, Server, Stats, Bots, Bot Debug) — click-to-execute for simple commands, inline inputs for parameterized commands
 - D3 color codes and null bytes stripped from output
 
 ### Server Console (Launch mode)
@@ -31,8 +31,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 
 ### Bots (Matcen fork only)
 - Auto-detected via `$servercaps` probe — bot UI only appears when connected to a Matcen fork server
-- Add bots with name, ship, and difficulty selection
-- Active bot list with per-bot difficulty adjustment and remove controls
+- Add bots with name, ship, difficulty, and team selection
+- Active bot list with per-bot difficulty, team adjustment, and remove controls
 - Bulk remove all bots
 
 ### Server Dashboard
@@ -41,11 +41,26 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Quick actions: end level, warp to level, balance teams
 - Quit server with confirmation dialog
 
+### Server Playlists (Launch mode)
+
+- Create named playlists with ordered mission entries (label, `.mn3` filename, optional starting level)
+- Three rotation modes: Sequential (in order, looping), Shuffle (Fisher-Yates, reshuffles on loop), Weighted (random draw by weight)
+- Activate/deactivate from the Playlists tab or the Server sidebar widget
+- On level end (`"Ending level."` in stdout), server automatically stops, swaps `MissionName=` in the active profile config, and restarts
+- Timer anchoring: queries `$netgameinfo` on activation and every 60s for drift correction; countdown visible in sidebar
+- Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
+- Voting language uses "mission" terminology throughout
+
 ### Config Editor (Launch mode)
 - Server profile system — named configurations pointing at config files in the D3 game directory
 - Tabbed editor sections: Server Config, Ship Settings, Bot Roster, Startup Commands
+- **Structured form UI** (no .cfg editing required): server identity, network settings, rules, ship bans, powerup toggles, bot roster
+- Starting level (SetLevel) exposed in the identity section
+- Bot Roster: per-bot name, ship, difficulty, and team assignment (1–4 or auto-balance); roster count vs max-players warnings; default difficulty
+- Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
+- Raw textarea fallback always available via structured/raw toggle
 - Import existing config files as new profiles
 
 ### Game Files Browser (Launch mode)
@@ -142,5 +157,5 @@ docs/
 
 - Web admin auth is not yet implemented (D3 console password is the only auth layer)
 - Single server connection only (multi-server planned for Phase 5)
-- Config editor is raw text only (structured form UI planned for Phase 3)
 - Quit button sends raw `quit` — Pyrodeck interprets this as a crash rather than intentional shutdown
+- Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)

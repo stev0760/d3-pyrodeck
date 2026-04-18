@@ -1,0 +1,702 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
+import { EventEmitter } from "node:events";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface PlaylistEntry {
+  id: string;
+  label: string;
+  /** MissionName= value (the .mn3 filename, without path) */
+  missionName: string;
+  /** Optional starting level within the mission (SetLevel=). Omit to use mission default. */
+  startingLevel?: number;
+  /** Relative weight for weighted-random mode (default: 1) */
+  weight?: number;
+}
+
+export type PlaylistMode = "sequential" | "shuffle" | "weighted";
+
+export interface PlaylistVoting {
+  enabled: boolean;
+  /** How many seconds before a level ends to open voting (default: 120) */
+  preAnnounceSeconds: number;
+  /** How many seconds to keep voting open after announcement (default: 60) */
+  voteOpenSeconds: number;
+  /** How many top options to offer (default: 3, max: 9) */
+  optionCount: number;
+}
+
+export interface Playlist {
+  id: string;
+  name: string;
+  mode: PlaylistMode;
+  entries: PlaylistEntry[];
+  voting: PlaylistVoting;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaylistState {
+  activePlaylistId: string | null;
+  currentIndex: number;
+  shuffleOrder: number[] | null;
+}
+
+// ---------------------------------------------------------------------------
+// Vote tracking
+// ---------------------------------------------------------------------------
+
+interface VoteEntry {
+  /** Option index (0-based into the offered options array) */
+  optionIndex: number;
+  /** The actual playlist entry this resolves to */
+  playlistEntryId: string;
+}
+
+// ---------------------------------------------------------------------------
+// Internal state machine states
+// ---------------------------------------------------------------------------
+
+type PlaylistStatus = "inactive" | "active" | "voting" | "restarting";
+
+const PLAYLISTS_FILE = "playlists.json";
+const STATE_FILE = "playlist-state.json";
+
+// How often (ms) to query $netgameinfo to correct timer drift
+const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
+
+// ---------------------------------------------------------------------------
+// PlaylistManager
+// ---------------------------------------------------------------------------
+
+/**
+ * Manages server mission playlists.
+ *
+ * Events:
+ *   rotate(entry: PlaylistEntry)   — time to stop the server, swap mission, restart
+ *   voteAnnounce(options: PlaylistEntry[], timeoutMs: number)  — broadcast voting options
+ *   voteResult(winner: PlaylistEntry)  — voting resolved
+ *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
+ */
+export class PlaylistManager extends EventEmitter {
+  private configDir: string;
+  private gamePath: string;
+
+  /** Called to send a D3 console command (set by launcher.ts on telnet ready) */
+  sendCommandFn: ((cmd: string) => Promise<string>) | null = null;
+
+  private status: PlaylistStatus = "inactive";
+  private activePlaylist: Playlist | null = null;
+  private currentIndex = 0;
+  private shuffleOrder: number[] | null = null;
+
+  // Timer tracking
+  private gameEndAt: number | null = null; // epoch ms
+  private timerInterval: ReturnType<typeof setInterval> | null = null;
+  private driftCorrectionInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Vote tracking
+  private voteOptions: PlaylistEntry[] = [];
+  private votes: Map<string, VoteEntry> = new Map(); // playerName → vote
+  private voteDeadline: number | null = null;
+  private voteTimer: ReturnType<typeof setTimeout> | null = null;
+  private preAnnounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Stdout line buffering
+  private stdoutLineBuffer = "";
+
+  constructor(configDir: string) {
+    super();
+    this.configDir = configDir;
+    this.gamePath = ""; // Not used by PlaylistManager — file ops are delegated to launcher.ts
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRUD
+  // ---------------------------------------------------------------------------
+
+  private get playlistsPath(): string {
+    return path.join(this.configDir, PLAYLISTS_FILE);
+  }
+
+  private async loadPlaylists(): Promise<Playlist[]> {
+    try {
+      const raw = await fs.readFile(this.playlistsPath, "utf-8");
+      return JSON.parse(raw) as Playlist[];
+    } catch {
+      return [];
+    }
+  }
+
+  private async savePlaylists(playlists: Playlist[]): Promise<void> {
+    await fs.mkdir(this.configDir, { recursive: true });
+    await fs.writeFile(this.playlistsPath, JSON.stringify(playlists, null, 2));
+  }
+
+  async list(): Promise<Playlist[]> {
+    return this.loadPlaylists();
+  }
+
+  async read(id: string): Promise<Playlist> {
+    const playlists = await this.loadPlaylists();
+    const pl = playlists.find((p) => p.id === id);
+    if (!pl) throw new Error(`Playlist not found: ${id}`);
+    return pl;
+  }
+
+  async create(
+    name: string,
+    mode: PlaylistMode = "sequential",
+    entries: Omit<PlaylistEntry, "id">[] = [],
+  ): Promise<Playlist> {
+    const playlists = await this.loadPlaylists();
+    const now = new Date().toISOString();
+    const playlist: Playlist = {
+      id: crypto.randomUUID(),
+      name,
+      mode,
+      entries: entries.map((e) => ({ ...e, id: crypto.randomUUID() })),
+      voting: {
+        enabled: false,
+        preAnnounceSeconds: 120,
+        voteOpenSeconds: 60,
+        optionCount: 3,
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    playlists.push(playlist);
+    await this.savePlaylists(playlists);
+    return playlist;
+  }
+
+  async update(
+    id: string,
+    updates: Partial<Omit<Playlist, "id" | "createdAt">>,
+  ): Promise<Playlist> {
+    const playlists = await this.loadPlaylists();
+    const idx = playlists.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error(`Playlist not found: ${id}`);
+    playlists[idx] = {
+      ...playlists[idx],
+      ...updates,
+      id: playlists[idx].id,
+      createdAt: playlists[idx].createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.savePlaylists(playlists);
+    // If this is the active playlist, refresh our in-memory copy
+    if (this.activePlaylist?.id === id) {
+      this.activePlaylist = playlists[idx];
+    }
+    return playlists[idx];
+  }
+
+  async delete(id: string): Promise<void> {
+    if (this.activePlaylist?.id === id) {
+      this.deactivate();
+    }
+    const playlists = await this.loadPlaylists();
+    const filtered = playlists.filter((p) => p.id !== id);
+    if (filtered.length === playlists.length) throw new Error(`Playlist not found: ${id}`);
+    await this.savePlaylists(filtered);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Activation / deactivation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Activate a playlist. The next time the current level ends, the manager
+   * will rotate to the first entry and trigger a server restart.
+   *
+   * Does NOT restart the server immediately — the current level plays out.
+   * If the server is not yet running when activating, the rotation will begin
+   * once the first "Ending level." signal is received.
+   */
+  async activate(id: string): Promise<void> {
+    const playlist = await this.read(id);
+    if (playlist.entries.length === 0) {
+      throw new Error("Cannot activate playlist with no entries");
+    }
+
+    this.activePlaylist = playlist;
+    this.currentIndex = 0;
+    this.status = "active";
+    this.shuffleOrder = null;
+
+    if (playlist.mode === "shuffle") {
+      this.buildShuffleOrder();
+    }
+
+    // Cancel any pending timers from a previous activation
+    this.clearTimers();
+
+    // Query current game state to anchor timer (if server is running)
+    if (this.sendCommandFn) {
+      this.anchorTimer().catch(() => {});
+      this.startDriftCorrection();
+    }
+
+    await this.saveState();
+    this.emitTimerUpdate();
+  }
+
+  deactivate(): void {
+    this.activePlaylist = null;
+    this.status = "inactive";
+    this.clearTimers();
+    this.gameEndAt = null;
+    this.emitTimerUpdate();
+    this.saveState().catch(() => {});
+  }
+
+  isActive(): boolean {
+    return this.status !== "inactive";
+  }
+
+  getStatus(): {
+    status: PlaylistStatus;
+    activePlaylistId: string | null;
+    currentIndex: number;
+    currentEntry: PlaylistEntry | null;
+    gameEndAt: number | null;
+    voteOptions: PlaylistEntry[];
+    voteDeadline: number | null;
+  } {
+    return {
+      status: this.status,
+      activePlaylistId: this.activePlaylist?.id ?? null,
+      currentIndex: this.currentIndex,
+      currentEntry: this.currentEntryOrNull(),
+      gameEndAt: this.gameEndAt,
+      voteOptions: this.voteOptions,
+      voteDeadline: this.voteDeadline,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stdout line feeding
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Feed a raw stdout chunk from ProcessManager.
+   * Buffers partial lines and processes complete ones.
+   */
+  onStdoutChunk(chunk: string): void {
+    this.stdoutLineBuffer += chunk;
+    const lines = this.stdoutLineBuffer.split("\n");
+    // Keep the incomplete last fragment in the buffer
+    this.stdoutLineBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      this.onStdoutLine(line);
+    }
+  }
+
+  private onStdoutLine(line: string): void {
+    const trimmed = line.trim();
+
+    // Level end signal — always authoritative regardless of timer state
+    if (trimmed === "Ending level." || trimmed.includes("Mission over.")) {
+      this.onLevelEnd();
+      return;
+    }
+
+    // Chat message — check for vote
+    if (this.status === "voting") {
+      // D3 dedicated stdout format: "*PlayerName says: message"
+      const voteMatch = trimmed.match(/^\*(.+?) says: (\d)$/);
+      if (voteMatch) {
+        const [, playerName, digit] = voteMatch;
+        const optionIndex = parseInt(digit, 10) - 1; // "1" → index 0
+        if (optionIndex >= 0 && optionIndex < this.voteOptions.length) {
+          this.votes.set(playerName, {
+            optionIndex,
+            playlistEntryId: this.voteOptions[optionIndex].id,
+          });
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Timer anchoring
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Query $netgameinfo and anchor the game end timer.
+   * Called on activation and periodically for drift correction.
+   */
+  async anchorTimer(): Promise<void> {
+    if (!this.sendCommandFn || !this.activePlaylist) return;
+
+    try {
+      const raw = await this.sendCommandFn("$netgameinfo");
+      this.parseAndAnchorFromNetgameinfo(raw);
+    } catch {
+      // Non-fatal — we'll try again on next drift correction
+    }
+  }
+
+  /**
+   * Parse $netgameinfo output and update the gameEndAt timestamp.
+   * Also gates voting: only enabled when timeLimit > 0 and killGoal == 0.
+   */
+  parseAndAnchorFromNetgameinfo(raw: string): void {
+    if (!this.activePlaylist) return;
+
+    const lines = raw.split("\n").map((l) => l.trim());
+    const get = (prefix: string): string | undefined =>
+      lines.find((l) => l.startsWith(prefix))?.slice(prefix.length).trim();
+
+    const timeLeftStr = get("Time Left:");
+    const timeLimitStr = get("Time Limit:");
+    const goalStr = get("Goal:");
+
+    const timeLimit = this.parseTimeLimit(timeLimitStr);
+    const killGoal = goalStr && goalStr !== "None"
+      ? (parseInt(goalStr.match(/^(\d+)/)?.[1] ?? "0", 10) || 0)
+      : 0;
+
+    if (timeLeftStr && timeLimit > 0) {
+      const secondsLeft = this.parseTimeLeft(timeLeftStr);
+      this.gameEndAt = Date.now() + secondsLeft * 1000;
+
+      // Schedule voting pre-announce if voting enabled and game has a time limit but no kill goal
+      if (this.activePlaylist.voting.enabled && killGoal === 0 && this.status === "active") {
+        this.scheduleVoting(secondsLeft);
+      }
+    } else {
+      // No time limit — no timer, no voting
+      this.gameEndAt = null;
+      this.clearVoteTimers();
+    }
+
+    this.emitTimerUpdate();
+  }
+
+  /** Update timer anchor when admin changes time limit via $settimelimit */
+  onTimelimitChanged(newLimitMinutes: number, timeLeftSeconds?: number): void {
+    if (!this.activePlaylist) return;
+
+    if (newLimitMinutes <= 0) {
+      this.gameEndAt = null;
+      this.clearVoteTimers();
+    } else {
+      const seconds = timeLeftSeconds ?? newLimitMinutes * 60;
+      this.gameEndAt = Date.now() + seconds * 1000;
+
+      if (this.activePlaylist.voting.enabled && this.status === "active") {
+        this.scheduleVoting(seconds);
+      }
+    }
+    this.emitTimerUpdate();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Level end handler
+  // ---------------------------------------------------------------------------
+
+  private onLevelEnd(): void {
+    if (!this.activePlaylist || this.status === "restarting") return;
+
+    // If voting is open, tally immediately; otherwise rotate
+    if (this.status === "voting" && this.voteOptions.length > 0) {
+      this.tallyVotes();
+    } else {
+      this.triggerRotate();
+    }
+  }
+
+  private triggerRotate(entry?: PlaylistEntry): void {
+    if (!this.activePlaylist || this.status === "restarting") return;
+
+    this.status = "restarting";
+    this.clearTimers();
+
+    const next = entry ?? this.advanceAndGetEntry();
+    this.emit("rotate", next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Voting
+  // ---------------------------------------------------------------------------
+
+  private scheduleVoting(secondsLeft: number): void {
+    if (!this.activePlaylist) return;
+    const { preAnnounceSeconds, voteOpenSeconds } = this.activePlaylist.voting;
+
+    this.clearVoteTimers();
+
+    const announceIn = (secondsLeft - preAnnounceSeconds) * 1000;
+    const closeAfter = voteOpenSeconds * 1000;
+
+    if (announceIn > 0) {
+      this.preAnnounceTimer = setTimeout(() => {
+        this.openVoting(closeAfter);
+      }, announceIn);
+    } else if (secondsLeft > 10) {
+      // We're already inside the announce window — open immediately
+      this.openVoting(closeAfter);
+    }
+  }
+
+  private openVoting(closeAfterMs: number): void {
+    if (!this.activePlaylist || this.status !== "active") return;
+
+    this.status = "voting";
+    this.votes.clear();
+    this.voteOptions = this.buildVoteOptions();
+    this.voteDeadline = Date.now() + closeAfterMs;
+
+    this.emit("voteAnnounce", this.voteOptions, closeAfterMs);
+
+    this.voteTimer = setTimeout(() => {
+      this.tallyVotes();
+    }, closeAfterMs);
+  }
+
+  private tallyVotes(): void {
+    if (!this.activePlaylist) return;
+
+    this.clearVoteTimers();
+
+    if (this.voteOptions.length === 0) {
+      this.triggerRotate();
+      return;
+    }
+
+    // Count votes per option index
+    const counts = new Array<number>(this.voteOptions.length).fill(0);
+    for (const vote of this.votes.values()) {
+      if (vote.optionIndex < counts.length) {
+        counts[vote.optionIndex]++;
+      }
+    }
+
+    // Find winner (most votes; ties go to lowest index = "first option wins")
+    let maxVotes = -1;
+    let winnerIdx = 0;
+    for (let i = 0; i < counts.length; i++) {
+      if (counts[i] > maxVotes) {
+        maxVotes = counts[i];
+        winnerIdx = i;
+      }
+    }
+
+    const winner = this.voteOptions[winnerIdx];
+    this.emit("voteResult", winner, counts);
+
+    // Update current index to match winner position in the full playlist
+    const entryIdx = this.activePlaylist.entries.findIndex((e) => e.id === winner.id);
+    if (entryIdx !== -1) {
+      // Set currentIndex to the one AFTER winner, so advance() picks the next one
+      // after the winner when the next level ends naturally.
+      // Actually, we want the winner to be the NEXT mission, so set currentIndex to it.
+      this.currentIndex = entryIdx;
+    }
+
+    this.triggerRotate(winner);
+  }
+
+  /**
+   * Build the vote options list — pick up to `optionCount` upcoming missions
+   * (excluding the current one).
+   */
+  private buildVoteOptions(): PlaylistEntry[] {
+    if (!this.activePlaylist) return [];
+
+    const { entries, mode, voting } = this.activePlaylist;
+    if (entries.length <= 1) return entries.slice();
+
+    const count = Math.min(voting.optionCount, 9, entries.length - 1);
+    const options: PlaylistEntry[] = [];
+
+    if (mode === "sequential") {
+      // Offer the next `count` entries after current
+      for (let i = 1; i <= count && options.length < count; i++) {
+        const idx = (this.currentIndex + i) % entries.length;
+        options.push(entries[idx]);
+      }
+    } else {
+      // Shuffle or weighted: pick `count` random distinct entries (excluding current)
+      const pool = entries.filter((_, i) => i !== this.currentIndex);
+      // Fisher-Yates partial shuffle
+      for (let i = 0; i < Math.min(count, pool.length); i++) {
+        const j = i + Math.floor(Math.random() * (pool.length - i));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+        options.push(pool[i]);
+      }
+    }
+
+    return options;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Index advancement
+  // ---------------------------------------------------------------------------
+
+  private advanceAndGetEntry(): PlaylistEntry {
+    if (!this.activePlaylist) throw new Error("No active playlist");
+    const { entries, mode } = this.activePlaylist;
+
+    if (mode === "sequential") {
+      this.currentIndex = (this.currentIndex + 1) % entries.length;
+      return entries[this.currentIndex];
+    }
+
+    if (mode === "shuffle") {
+      if (!this.shuffleOrder || this.shuffleOrder.length === 0) {
+        this.buildShuffleOrder();
+      }
+      const idx = this.shuffleOrder!.shift()!;
+      if (this.shuffleOrder!.length === 0) {
+        this.buildShuffleOrder();
+      }
+      this.currentIndex = idx;
+      return entries[idx];
+    }
+
+    // weighted
+    const entry = this.weightedDraw();
+    this.currentIndex = this.activePlaylist.entries.indexOf(entry);
+    return entry;
+  }
+
+  private buildShuffleOrder(): void {
+    if (!this.activePlaylist) return;
+    const n = this.activePlaylist.entries.length;
+    const order = Array.from({ length: n }, (_, i) => i);
+    // Fisher-Yates
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    this.shuffleOrder = order;
+  }
+
+  private weightedDraw(): PlaylistEntry {
+    const entries = this.activePlaylist!.entries;
+    const weights = entries.map((e) => Math.max(1, e.weight ?? 1));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < entries.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return entries[i];
+    }
+    return entries[entries.length - 1];
+  }
+
+  private currentEntryOrNull(): PlaylistEntry | null {
+    if (!this.activePlaylist) return null;
+    return this.activePlaylist.entries[this.currentIndex] ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Timer helpers
+  // ---------------------------------------------------------------------------
+
+  private startDriftCorrection(): void {
+    this.driftCorrectionInterval = setInterval(() => {
+      if (this.status === "active" || this.status === "voting") {
+        this.anchorTimer().catch(() => {});
+      }
+    }, DRIFT_CORRECTION_INTERVAL_MS);
+  }
+
+  private clearTimers(): void {
+    this.clearVoteTimers();
+    if (this.driftCorrectionInterval) {
+      clearInterval(this.driftCorrectionInterval);
+      this.driftCorrectionInterval = null;
+    }
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+  }
+
+  private clearVoteTimers(): void {
+    if (this.preAnnounceTimer) {
+      clearTimeout(this.preAnnounceTimer);
+      this.preAnnounceTimer = null;
+    }
+    if (this.voteTimer) {
+      clearTimeout(this.voteTimer);
+      this.voteTimer = null;
+    }
+    this.voteOptions = [];
+    this.voteDeadline = null;
+    this.votes.clear();
+    if (this.status === "voting") this.status = "active";
+  }
+
+  private emitTimerUpdate(): void {
+    this.emit("timerUpdate", this.gameEndAt);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Utility parsers
+  // ---------------------------------------------------------------------------
+
+  /** Parse "M:SS" or "MM:SS" timeLeft string to total seconds. */
+  private parseTimeLeft(str: string): number {
+    const parts = str.split(":").map((p) => parseInt(p, 10));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      return parts[0] * 60 + parts[1];
+    }
+    return 0;
+  }
+
+  /** Parse "Time Limit:" value: "None" → 0, "N minute(s)" → N */
+  private parseTimeLimit(str?: string): number {
+    if (!str || str === "None") return 0;
+    const m = str.match(/^(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Persistence
+  // ---------------------------------------------------------------------------
+
+  private async saveState(): Promise<void> {
+    try {
+      const state: PlaylistState = {
+        activePlaylistId: this.activePlaylist?.id ?? null,
+        currentIndex: this.currentIndex,
+        shuffleOrder: this.shuffleOrder,
+      };
+      await fs.mkdir(this.configDir, { recursive: true });
+      await fs.writeFile(
+        path.join(this.configDir, STATE_FILE),
+        JSON.stringify(state, null, 2),
+      );
+    } catch {
+      // State persistence is best-effort
+    }
+  }
+
+  async restoreState(): Promise<void> {
+    try {
+      const raw = await fs.readFile(path.join(this.configDir, STATE_FILE), "utf-8");
+      const state = JSON.parse(raw) as PlaylistState;
+      if (state.activePlaylistId) {
+        try {
+          const playlist = await this.read(state.activePlaylistId);
+          this.activePlaylist = playlist;
+          this.status = "active";
+          this.currentIndex = state.currentIndex ?? 0;
+          this.shuffleOrder = state.shuffleOrder ?? null;
+        } catch {
+          // Playlist was deleted — clear state
+        }
+      }
+    } catch {
+      // No saved state
+    }
+  }
+}

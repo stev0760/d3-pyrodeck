@@ -8,6 +8,7 @@ interface BotEntry {
   name: string;
   ship?: string;        // pyro | phoenix | magnum | blackpyro
   difficulty?: string;  // trainee | rookie | hotshot | ace | insane
+  team?: number;        // 1-indexed (1–4), undefined = auto-balance
 }
 
 interface BotRosterData {
@@ -92,6 +93,7 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
   const [newName, setNewName] = useState("");
   const [newShip, setNewShip] = useState("pyro");
   const [newDifficulty, setNewDifficulty] = useState("");
+  const [newTeam, setNewTeam] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,11 +185,13 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
       name: newName.trim(),
       ship: newShip || "pyro",
       difficulty: newDifficulty || undefined,
+      team: newTeam ? parseInt(newTeam, 10) : undefined,
     };
     const bots = [...roster.bots, entry];
     updateRoster({ bots, botCount: bots.length });
     setNewName("");
     setNewDifficulty("");
+    setNewTeam("");
   };
 
   if (loading) {
@@ -332,6 +336,20 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
                 ))}
               </select>
 
+              {/* Team assignment */}
+              <select
+                value={bot.team !== undefined ? String(bot.team) : ""}
+                onChange={(e) => updateBot(i, { team: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                className="w-20 shrink-0 px-2 py-1 bg-muted border border-border rounded text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                title="Team assignment (team modes only)"
+              >
+                <option value="">Auto</option>
+                <option value="1">Team 1</option>
+                <option value="2">Team 2</option>
+                <option value="3">Team 3</option>
+                <option value="4">Team 4</option>
+              </select>
+
               {/* Remove */}
               <button
                 onClick={() => removeBot(i)}
@@ -381,6 +399,18 @@ export function BotRosterForm({ profileId, onSaved }: BotRosterFormProps) {
             {DIFFICULTY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
+          </select>
+          <select
+            value={newTeam}
+            onChange={(e) => setNewTeam(e.target.value)}
+            className="w-20 shrink-0 px-2 py-1 bg-muted border border-border rounded text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            title="Team assignment (team modes only)"
+          >
+            <option value="">Auto</option>
+            <option value="1">Team 1</option>
+            <option value="2">Team 2</option>
+            <option value="3">Team 3</option>
+            <option value="4">Team 4</option>
           </select>
           <button
             onClick={addBot}

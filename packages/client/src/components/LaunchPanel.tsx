@@ -244,26 +244,29 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               )}
 
               {showCreateForm ? (
-                <div className="flex gap-1 mt-1">
+                <div className="flex flex-col gap-1 mt-1">
                   <input
                     type="text"
                     value={newProfileName}
                     onChange={(e) => setNewProfileName(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleCreateProfile()}
                     placeholder="Profile name"
-                    className="flex-1 bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                     autoFocus
                   />
-                  <Button size="xs" onClick={handleCreateProfile} disabled={!newProfileName.trim()}>
-                    Create
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => { setShowCreateForm(false); setNewProfileName(""); }}
-                  >
-                    Cancel
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button size="xs" onClick={handleCreateProfile} disabled={!newProfileName.trim()} className="flex-1">
+                      Create
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => { setShowCreateForm(false); setNewProfileName(""); }}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Button

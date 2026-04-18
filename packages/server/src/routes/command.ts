@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 // TODO: Re-enable auth import when web admin auth is added back
 import { sessionManager, responseParser, serializeCaps } from "./server.js";
+import { playlistManager } from "../launcher/playlistInstance.js";
 
 interface WsCommand {
   type: "command";
@@ -133,6 +134,20 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
                     JSON.stringify({ type: msgType, payload: parsed.parsed }),
                   );
                 }
+
+                // Forward $netgameinfo to playlist manager for timer anchoring
+                if (commandName === "$netgameinfo") {
+                  playlistManager.parseAndAnchorFromNetgameinfo(rawResponse);
+                }
+              }
+            }
+
+            // Detect settimelimit command so playlist timer stays in sync
+            if (commandName === "$settimelimit") {
+              const parts = command.trim().split(/\s+/);
+              const newLimit = parts[1] ? parseInt(parts[1], 10) : NaN;
+              if (!isNaN(newLimit)) {
+                playlistManager.onTimelimitChanged(newLimit);
               }
             }
           } catch (cmdErr) {

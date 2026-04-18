@@ -17,12 +17,14 @@ import { ModeToggle, type AppMode } from "./components/ModeToggle.tsx";
 import { LaunchPanel } from "./components/LaunchPanel.tsx";
 import { ServerSidebar } from "./components/ServerSidebar.tsx";
 import { ServerConsole } from "./components/ServerConsole.tsx";
+import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
+import { usePlaylist } from "./hooks/usePlaylist.ts";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-type Tab = "console" | "players" | "bots" | "config" | "server-output";
+type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists";
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const {
@@ -39,10 +41,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     onPlayers,
     onBots,
     onServerInfo,
+    onPlaylistEvent,
     hasFeature,
   } = useServerConnection();
 
   const launcher = useLauncher();
+  const playlistHook = usePlaylist({ onPlaylistEvent });
   const serverInfoHook = useServerInfo({
     sendCommand,
     onServerInfo,
@@ -96,6 +100,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     { id: "players", label: "Players", show: isConnected },
     { id: "bots", label: "Bots", show: isConnected && hasFeature("bots") },
     { id: "config", label: "D3 Server Config", show: mode === "launch" },
+    { id: "playlists", label: "Playlists", show: mode === "launch" },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -236,6 +241,20 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               onRefreshProfiles={launcher.fetchProfiles}
             />
           </TabsContent>
+
+          <TabsContent value="playlists" className="p-3 min-h-0">
+            <PlaylistEditor
+              playlists={playlistHook.playlists}
+              status={playlistHook.status}
+              loading={playlistHook.loading}
+              error={playlistHook.error}
+              onCreatePlaylist={playlistHook.createPlaylist}
+              onUpdatePlaylist={playlistHook.updatePlaylist}
+              onDeletePlaylist={playlistHook.deletePlaylist}
+              onActivate={playlistHook.activatePlaylist}
+              onDeactivate={playlistHook.deactivatePlaylist}
+            />
+          </TabsContent>
         </Tabs>
 
         {/* Right sidebar — server dashboard */}
@@ -252,6 +271,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 ? () => { launcher.stop(); }
                 : serverInfoHook.quitServer,
             }}
+            playlists={playlistHook.playlists}
+            playlistStatus={playlistHook.status}
+            onActivatePlaylist={playlistHook.activatePlaylist}
+            onDeactivatePlaylist={playlistHook.deactivatePlaylist}
           />
         )}
       </div>

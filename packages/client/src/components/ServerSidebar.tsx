@@ -2,6 +2,8 @@ import { useState, useCallback } from "react";
 import type { NetGameInfo, useServerInfo } from "../hooks/useServerInfo.ts";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { PlaylistPanel } from "./PlaylistPanel.tsx";
+import type { Playlist, PlaylistStatus } from "../hooks/usePlaylist.ts";
 
 type ServerInfoActions = ReturnType<typeof useServerInfo>;
 
@@ -9,6 +11,10 @@ interface ServerSidebarProps {
   serverInfo: NetGameInfo | null;
   actions: ServerInfoActions;
   mode: "launch" | "connect";
+  playlists?: Playlist[];
+  playlistStatus?: PlaylistStatus;
+  onActivatePlaylist?: (id: string) => void;
+  onDeactivatePlaylist?: () => void;
 }
 
 function Stepper({
@@ -76,7 +82,15 @@ function InfoRow({
   );
 }
 
-export function ServerSidebar({ serverInfo, actions, mode }: ServerSidebarProps) {
+export function ServerSidebar({
+  serverInfo,
+  actions,
+  mode,
+  playlists = [],
+  playlistStatus,
+  onActivatePlaylist,
+  onDeactivatePlaylist,
+}: ServerSidebarProps) {
   const [warpLevel, setWarpLevel] = useState("1");
   const [confirmQuit, setConfirmQuit] = useState(false);
 
@@ -151,6 +165,19 @@ export function ServerSidebar({ serverInfo, actions, mode }: ServerSidebarProps)
               min={0}
             />
           </div>
+
+          {/* Playlist — Launch mode only */}
+          {mode === "launch" && playlistStatus && onActivatePlaylist && onDeactivatePlaylist && (
+            <>
+              <Separator />
+              <PlaylistPanel
+                playlists={playlists}
+                status={playlistStatus}
+                onActivate={onActivatePlaylist}
+                onDeactivate={onDeactivatePlaylist}
+              />
+            </>
+          )}
 
           <Separator />
 

@@ -83,9 +83,10 @@ This is a living document tracking the implementation roadmap. The spec (`D3_PYR
 - [ ] Web admin auth (deferred per CLAUDE.md — re-add when core is stable)
 
 ### Step 13: Console Command Reference Drawer ✅
-- Collapsible drawer below the terminal with command categories
+- Collapsible, resizable drawer below the terminal with command categories (drag handle to resize, height persisted in localStorage)
 - Click-to-execute for no-arg commands, inline inputs for commands with arguments
-- Bots category gated on `$servercaps` feature detection
+- 6 categories: Players, Teams, Server, Stats, Bots, Bot Debug — Bots/Bot Debug gated on `$servercaps` feature detection
+- `$addbot` supports optional team arg (4th positional: `$addbot <name> <ship> <difficulty> <team>`)
 - State persisted in localStorage
 
 ---
@@ -200,7 +201,7 @@ Direct text editing for all config file types — the "advanced mode" baseline:
 
 ### Step 3: Config Form UI — Core Settings (Structured Mode) ✅
 
-- [x] Identity section: server name (max 32), game type dropdown (scanned from netgames/), mission dropdown (scanned from missions/), MOTD
+- [x] Identity section: server name (max 32), game type dropdown (scanned from netgames/), mission dropdown (scanned from missions/), starting level (SetLevel), MOTD
 - [x] Network section: PPS (2-40, rec. 20), max players (2-32), network model radio (Client/Server, Peer-to-Peer, Permissable), send rotation velocity, use smoothing
 - [x] Rules section: time limit, kill goal, respawn time, randomize respawn, difficulty dropdown (Trainee→Insane), num teams (visible for team modes)
 - [x] Gameplay toggles: accurate collisions, bright players, allow mouselook
@@ -224,7 +225,8 @@ Direct text editing for all config file types — the "advanced mode" baseline:
 ### Step 5: Config Form UI — Bots (Matcen Fork) ✅
 
 Bot roster editor (available when a bot roster companion file is linked to the profile):
-- [x] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown)
+- [x] Bot roster form: add/remove/reorder bots (name, ship dropdown, difficulty dropdown, team dropdown)
+- [x] Per-bot team assignment (1–4 or Auto) — written as `BotTeam<n>=` in bots.cfg; requires Matcen fork v0.8.6+
 - [x] Default difficulty selector (applies to bots without per-bot override)
 - [x] Bot count display with max players warning (fetches maxPlayers from structured config)
 - [x] Save/load named bot presets — covered by existing Game Files browser + companion link/unlink
@@ -232,8 +234,39 @@ Bot roster editor (available when a bot roster companion file is linked to the p
 - [x] Structured/Raw toggle (same pattern as ServerConfigForm)
 - [x] At-or-near max players warnings; Add form hidden when full
 
-### Step 6: Config Management & Wizard
+### Step 6: Server Playlists ✅ (Layer 1 complete)
 
+Automatic mission rotation triggered by level-end stdout detection.
+
+**Architecture:**
+- `PlaylistManager` (singleton via `playlistInstance.ts`) — CRUD, state machine (inactive → active → voting → restarting), stdout line buffer, timer anchoring
+- `playlists.ts` routes — CRUD + activate/deactivate + status
+- `launcher.ts` — wires stdout to PlaylistManager, handles `rotate` event (stop → swap MissionName → restart), `registerAutoConnect()` shared between initial launch and rotation restarts
+- `command.ts` — forwards `$netgameinfo` responses to PlaylistManager for timer anchoring; intercepts `$settimelimit` for live correction
+- Frontend: `usePlaylist` hook, `PlaylistEditor` component (Playlists tab, Launch mode), `PlaylistPanel` widget in ServerSidebar
+
+**Layer 1 (complete):**
+- [x] Playlist CRUD: name, mode (sequential/shuffle/weighted), entries (label, missionName, startingLevel, weight)
+- [x] Stdout line buffering — "Ending level." detection
+- [x] `rotate` event: stop server → `ensureConfigReference(MissionName)` → restart with same profile
+- [x] `registerAutoConnect()` called before every `processManager.start()` (both user-initiated and rotation restarts)
+- [x] Playlist persistence to `config/playlists.json`; activation state to `playlist-state.json`
+- [x] PlaylistEditor UI: list view, detail editor with entry management, voting config
+- [x] PlaylistPanel in ServerSidebar: active status, current/next mission, timer countdown, activate selector
+
+**Layer 2 (timer/frontend) ✅:**
+- [x] Countdown display in PlaylistPanel using `gameEndAt` epoch ms from WS `playlist_timer`
+- [x] Periodic drift correction queries (60s interval) already running on activation
+
+**Layer 3 (voting — backend complete, UX polish pending):**
+- [x] Vote parsing: `/^\*(.+?) says: (\d)$/` regex, single digit, one vote per player, last wins
+- [x] Vote options broadcast via `say` in-game with "mission" terminology; deadline countdown in sidebar
+- [x] Tally on `voteDeadline` timeout or immediately when "Ending level." fires during active vote
+- [x] Vote options visible in PlaylistPanel during voting state
+- [ ] Repeat `say` reminder announcements at intervals during vote window
+- [ ] Vote result toast / sidebar summary after tally
+
+**Config Wizard (deferred):**
 - [ ] "New Server Config" wizard: pick game type → form pre-fills sensible defaults for that mode
 - [ ] autoexec.dmfc editor: simple list of DMFC commands to run at server start
 
