@@ -2,8 +2,8 @@
  * Parser for $botlist output.
  *
  * Example:
- *   Bot 0: '[BOT] Phantom' slot=2 ship=Pyro-GL diff=Hotshot (alive)
- *   Bot 1: '[BOT] Viper' slot=3 ship=Phoenix diff=Ace (dead)
+ *   Bot 0: 'Phantom [BOT]' slot=2 ship=Pyro-GL diff=Hotshot (alive)
+ *   Bot 1: 'Viper [BOT]' slot=3 ship=Phoenix diff=Ace (dead)
  *
  * Empty list: "No bots active"
  */

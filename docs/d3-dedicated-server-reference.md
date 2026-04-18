@@ -377,7 +377,7 @@ A vanilla D3 server will not recognize `$servercaps` and will produce no structu
 
 Adds a bot to the game. All parameters after name are optional.
 
-- **name** — Bot callsign (will be prefixed with `[BOT]` in player lists)
+- **name** — Bot callsign (will be suffixed with `[BOT]` in player lists)
 - **ship** — Ship alias: `pyro`, `phoenix`, `magnum`, `blackpyro` (default: pyro)
 - **difficulty** — `trainee`, `rookie`, `hotshot`, `ace`, `insane` (or 0-4)
 
@@ -503,7 +503,7 @@ PlayerName:          5      6 1 1 45
 ```
 
 - `*` prefix indicates observer/disconnected slot
-- `[BOT]` prefix in name indicates a bot player (Matcen fork)
+- `[BOT]` suffix in name indicates a bot player (Matcen fork)
 - Ping `---` means no network connection (bots, disconnected)
 - Column layout varies by game type (anarchy shown above)
 - Players are listed in slot order (pnum 1, 2, 3...)
@@ -516,7 +516,7 @@ The `$players` command returns:
 PNum Name
 00: -Server-
 01: PlayerOne
-02: [BOT] Viper
+02: Viper [BOT]
 03: PlayerTwo
 ```
 

@@ -191,7 +191,7 @@ These commands exist in the fork. The web admin sends them as plain text over Te
 
 **`$addbot <name> [ship] [difficulty]`**
 Add a bot. Ship and difficulty parameters optional. Ships: `pyro`, `phoenix`, `magnum`, `blackpyro`. Difficulty: `trainee`, `rookie`, `hotshot` (default), `ace`, `insane`.
-Output on success: `Bot '[BOT] <name>' added in slot <N> (ship=<ship>, diff=<difficulty>)`
+Output on success: `Bot '<name> [BOT]' added in slot <N> (ship=<ship>, diff=<difficulty>)`
 Output on failure: `Failed to add bot (server full or max bots reached)`
 
 **`$removebot <index>`**
@@ -206,8 +206,8 @@ Remove all bots. Output: `All bots removed`
 **`$botlist`**
 List active bots. Output format (timeout-based collection):
 ```
-  Bot 0: '[BOT] Phantom' slot=2 ship=Pyro-GL diff=Hotshot (alive)
-  Bot 1: '[BOT] Viper' slot=3 ship=Phoenix diff=Ace (dead)
+  Bot 0: 'Phantom [BOT]' slot=2 ship=Pyro-GL diff=Hotshot (alive)
+  Bot 1: 'Viper [BOT]' slot=3 ship=Phoenix diff=Ace (dead)
 ```
 No terminator — use timeout-based collection (~200ms silence). Empty list returns `No bots active`.
 Fields: bot index, callsign, player slot, ship name, difficulty name, alive/dead status.
@@ -223,8 +223,8 @@ Extra line when `all`: `Default difficulty set to <difficulty>`
 **`$botstat [index|all]`**
 Show bot status. Output format (timeout-based collection):
 ```
-  Bot 0 '[BOT] Phantom' slot=2 state=COMBAT speed=10.3 vel=(0.0,-7.2,7.3) shields=100 target=[BOT] Viper
-  Bot 1 '[BOT] Viper' slot=3 state=EXPLORE speed=51.6 vel=(36.3,-2.5,36.5) shields=43 target=(none)
+  Bot 0 'Phantom [BOT]' slot=2 state=COMBAT speed=10.3 vel=(0.0,-7.2,7.3) shields=100 target=Viper [BOT]
+  Bot 1 'Viper [BOT]' slot=3 state=EXPLORE speed=51.6 vel=(36.3,-2.5,36.5) shields=43 target=(none)
 ```
 Fields: `slot=` (player slot index), `state=` (EXPLORE/HUNT/COMBAT/FLEE/EVADE), `speed=`, `vel=`, `shields=`, `target=`.
 
@@ -244,13 +244,13 @@ These are vanilla D3 commands (present in all D3 builds) that the web admin call
 Player scoreboard. Output format (timeout-based collection):
 ```
 Pilot                Points K D S Ping
-[BOT] Viper:         5      6 1 1 0
-[BOT] Shadow:        4      6 2 2 0
-[BOT] Phantom:       0      0 8 0 0
-*[BOT] Reaper:       0      0 0 0 ---
+Viper [BOT]:         5      6 1 1 0
+Shadow [BOT]:        4      6 2 2 0
+Phantom [BOT]:       0      0 8 0 0
+*Reaper [BOT]:       0      0 0 0 ---
 ```
 - `*` prefix = observer/disconnected slot — exclude from active count
-- Bot players identified by `[BOT]` prefix in name
+- Bot players identified by `[BOT]` suffix in name
 - Ping `---` = no network connection (bots always show this)
 - First line is the header; skip for data parsing
 - Column layout varies by game type (anarchy shown above). Team anarchy, CTF, etc. have different columns. Parser should handle variable column counts gracefully.
@@ -402,7 +402,7 @@ Complete end-to-end loop: browser → server and back.
 **Players Panel** (requires `roster` feature flag)
 - Parse `$scores` output into a player table.
 - Show: name, points, kills, deaths, suicides, ping.
-- Bot rows visually distinguished (identified by `[BOT]` prefix, ping `---`).
+- Bot rows visually distinguished (identified by `[BOT]` suffix, ping `---`).
 - Refresh button; auto-refresh on a configurable interval (default 5s).
 - Action buttons per human player row: Kick, Ban.
 - Ban list viewer: `$banlist` → table with Remove button per entry.
@@ -513,6 +513,55 @@ Status endpoint: `GET /api/setup/status` returns provisioning state (which files
 - Upload endpoint with `.mn3` extension validation.
 - Future: parse MN3 headers to display mission name, author, player count (reference: roncli's `descent3-mn3-tools` npm module).
 
+### Server Playlists & Mission Voting
+
+**Key feature.** D3 dedicated servers can only run one `.mn3` mission file at a time. Pyrodeck implements mission rotation at the process level: it monitors server stdout for level-end signals, swaps the `MissionName=` CVar in the active profile's config file, and restarts the server.
+
+#### Playlist Modes
+- **Sequential** — cycle through entries in order, looping back to the first
+- **Shuffle** — Fisher-Yates shuffle; reshuffle on each full loop
+- **Weighted** — random draw by relative weight (e.g., `weight: 3` means 3× more likely to be drawn)
+
+Each entry specifies a display label, the `.mn3` mission filename, and an optional starting level within the mission.
+
+#### Level-End Detection
+D3 dedicated server prints `"Ending level."` to stdout at the end of every level. Pyrodeck buffers stdout in 4KB chunks and splits on newlines before matching, so the signal is never missed due to chunk boundaries. `"Mission over. Looping back to first level..."` is also detected (full `.mn3` cycle).
+
+#### Rotation Sequence
+1. `"Ending level."` fires → rotation triggered
+2. If a vote is in progress, immediately tally votes and use winner; otherwise advance the playlist index per mode
+3. Announce next mission in-game: `say Changing mission to: <label>`
+4. `processManager.stop()` — graceful quit → SIGTERM → SIGKILL fallback
+5. `ensureConfigReference("MissionName", missionName)` patches the active profile's `.cfg` file in place
+6. `processManager.start()` — new D3 process with updated config
+7. Pyrodeck auto-reconnects via telnet (same `registerAutoConnect()` flow as normal launch)
+
+#### Mission Voting
+Voting is chat-based — backwards-compatible with all D3 builds, no client mod required. Players vote by typing a single digit in all-chat; Pyrodeck parses `*PlayerName says: N` from stdout.
+
+**Conditions for voting:** Time-limited game (`Timelimit > 0`) with no kill goal (`Killgoal == 0`). Without a predictable end time, voting can't be scheduled.
+
+**Flow:**
+1. Server queries `$netgameinfo` on playlist activation; anchors `gameEndAt = now + timeLeft`; drift-corrects every 60 seconds
+2. At `timeLeft - preAnnounceSeconds` (default: 120s before end), Pyrodeck broadcasts options via `say`:
+   ```
+   Vote for next mission! Type a number in chat:
+    1 = Skybox
+    2 = Polaris
+    3 = Entropy
+   ```
+3. Players type `1`–`N` in chat during the `voteOpenSeconds` window (default: 60s). One vote per player; last vote wins ties
+4. If `"Ending level."` fires during voting, Pyrodeck immediately tallies and uses the winner
+5. Winner is announced: `say Next mission: <label>`. Rotation proceeds with winner as next entry
+
+**Vote parsing:** `/^\*(.+?) says: (\d)$/` — matches messages whose *entire content* is exactly one digit. `"I got 1 kill"` does not match; `"1"` does. "Mission" terminology used throughout (never "map").
+
+#### Timer Architecture
+- `gameEndAt` epoch milliseconds broadcast as `playlist_timer` WS message
+- Frontend countdown ticks every second in `PlaylistPanel`
+- `$settimelimit` commands intercepted and forwarded to PlaylistManager for live correction
+- Voting state (`voteOptions`, `voteDeadline`) broadcast as WS messages; sidebar shows live vote options
+
 ### Phase 4 — Polish + Advanced Features
 
 Depends on Phase 1. See `BOT_MANAGEMENT.md` in the fork for bot config format reference.
@@ -568,16 +617,39 @@ All commands flow through WebSocket for real-time streaming. The REST endpoint i
 { type: "command", payload: { command: string } }
 
 // Server → Client
-{ type: "output",           payload: { raw: string; parsed?: StructuredResponse } }
-{ type: "connection_state", payload: { state: ServerSession['state'] } }
-{ type: "capabilities",     payload: ServerCapabilities }
-{ type: "players",          payload: ParsedScores }
-{ type: "bots",             payload: ParsedBotList }
-{ type: "game_event",       payload: { kind: "kill" | "death" | "join" | "leave" | "chat" | "level", raw: string } }
-{ type: "process_state",    payload: { state: "running" | "stopped" | "crashed"; exitCode?: number; restarts?: number } }
+{ type: "output",                payload: { raw: string; parsed?: StructuredResponse } }
+{ type: "connection_state",      payload: { state: ServerSession['state'] } }
+{ type: "capabilities",          payload: ServerCapabilities }
+{ type: "players",               payload: ParsedScores }
+{ type: "bots",                  payload: ParsedBotList }
+{ type: "serverinfo",            payload: NetGameInfo }
+{ type: "process_state",         payload: { state: "running" | "stopped" | "crashed" | "starting" | "stopping" } }
+{ type: "process_output",        payload: { stream: "stdout" | "stderr"; data: string } }
+{ type: "playlist_status",       payload: PlaylistStatus }
+{ type: "playlist_timer",        payload: { gameEndAt: number | null } }
+{ type: "playlist_rotate",       payload: { entry: PlaylistEntry } }
+{ type: "playlist_vote_announce",payload: { options: VoteOption[]; timeoutMs: number; deadline: number } }
+{ type: "playlist_vote_result",  payload: { winner: PlaylistEntry; counts: number[] } }
 ```
 
-### 8.4 Config Files (Phase 1)
+### 8.4 Playlists
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/playlists` | List all playlists |
+| `POST` | `/api/playlists` | Create playlist (`name`, `mode`, `entries[]`) |
+| `GET` | `/api/playlists/:id` | Get playlist by ID |
+| `PUT` | `/api/playlists/:id` | Update playlist |
+| `DELETE` | `/api/playlists/:id` | Delete playlist |
+| `POST` | `/api/playlists/:id/activate` | Activate playlist (starts rotation on next level end) |
+| `POST` | `/api/playlists/deactivate` | Deactivate current playlist |
+| `GET` | `/api/playlists/status` | Current PlaylistManager status |
+
+`PlaylistEntry: { id, label, missionName, startingLevel?, weight? }`
+`PlaylistVoting: { enabled, preAnnounceSeconds, voteOpenSeconds, optionCount }`
+`Playlist: { id, name, mode ("sequential"|"shuffle"|"weighted"), entries[], voting, createdAt, updatedAt }`
+
+### 8.5 Config Files (Phase 1)
 
 Phase 1 uses a simplified config file API scoped to the config directory only. Phase 3 replaces this with the full file manager (Section 8.5) but this endpoint remains for backwards compatibility.
 

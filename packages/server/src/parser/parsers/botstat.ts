@@ -2,8 +2,8 @@
  * Parser for $botstat output.
  *
  * Example:
- *   Bot 0 '[BOT] Phantom' slot=2 state=COMBAT speed=10.3 vel=(0.0,-7.2,7.3) shields=100 target=[BOT] Viper
- *   Bot 1 '[BOT] Viper' slot=3 state=EXPLORE speed=51.6 vel=(36.3,-2.5,36.5) shields=43 target=(none)
+ *   Bot 0 'Phantom [BOT]' slot=2 state=COMBAT speed=10.3 vel=(0.0,-7.2,7.3) shields=100 target=Viper [BOT]
+ *   Bot 1 'Viper [BOT]' slot=3 state=EXPLORE speed=51.6 vel=(36.3,-2.5,36.5) shields=43 target=(none)
  */
 
 export interface BotStatus {

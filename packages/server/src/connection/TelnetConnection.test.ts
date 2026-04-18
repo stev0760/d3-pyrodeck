@@ -29,12 +29,12 @@ describe("TelnetConnection echo stripping", () => {
     const response = [
       "[192.168.1.50] $scores",
       "Pilot                Points K D S Ping",
-      "[BOT] Viper:         5      6 1 1 0",
+      "Viper [BOT]:         5      6 1 1 0",
     ].join("\n");
 
     const result = conn.testStripEcho("$scores", response);
     expect(result).toContain("Pilot");
-    expect(result).toContain("[BOT] Viper");
+    expect(result).toContain("Viper [BOT]");
     expect(result).not.toContain("[192.168.1.50]");
   });
 

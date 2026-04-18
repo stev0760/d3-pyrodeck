@@ -3,13 +3,13 @@
  *
  * Example output (Anarchy):
  *   Pilot                Points K D S Ping
- *   [BOT] Viper:         5      6 1 1 0
- *   [BOT] Shadow:        4      6 2 2 0
- *   *[BOT] Reaper:       0      0 0 0 ---
+ *   Viper [BOT]:         5      6 1 1 0
+ *   Shadow [BOT]:        4      6 2 2 0
+ *   *Reaper [BOT]:       0      0 0 0 ---
  *
  * - First line is header
  * - '*' prefix = observer/disconnected
- * - '[BOT]' prefix in name = bot player
+ * - '[BOT]' suffix in name = bot player
  * - Ping '---' = no network connection (bots)
  * - Column layout varies by game type
  * - D3 truncates name+colon at 19 chars — long names lose the colon
