@@ -28,7 +28,7 @@ import { Menu, Server as ServerIcon } from "lucide-react";
 
 type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists";
 
-function Dashboard({ onLogout }: { onLogout: () => void }) {
+function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout: boolean }) {
   const {
     connectionState,
     capabilities,
@@ -183,6 +183,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             <span className="sr-only">Open panel</span>
           </Button>
           <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.0</span>
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
@@ -210,9 +211,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               WS: {wsConnected ? "live" : "disconnected"}
             </Badge>
           )}
-          <Button variant="ghost" size="xs" onClick={onLogout}>
-            Logout
-          </Button>
+          {showLogout && (
+            <Button variant="ghost" size="xs" onClick={onLogout}>
+              Logout
+            </Button>
+          )}
         </div>
       </header>
 
@@ -381,7 +384,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 }
 
 function App() {
-  const { authenticated, checking, login, logout } = useAuth();
+  const { authenticated, checking, authRequired, login, logout } = useAuth();
 
   if (checking) {
     return (
@@ -397,7 +400,7 @@ function App() {
 
   return (
     <TooltipProvider>
-      <Dashboard onLogout={logout} />
+      <Dashboard onLogout={logout} showLogout={authRequired} />
     </TooltipProvider>
   );
 }

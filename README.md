@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**Phase 2 (Launch Mode) — complete. Phase 3 (Structured Config) — Steps 1–5 complete. Phase 3 Step 6 (Playlist system) — Layer 1 complete.**
+**v0.4.0** — Auth, responsive layout, playlist rotation (tested end-to-end), and server packaging.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -153,9 +153,16 @@ docs/
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
 - `CLAUDE.md` — project conventions and architecture notes
 
+## Releases
+
+Pre-built binaries are not yet published. Use `pnpm package:server` to build a self-contained Node SEA binary for the current platform. A Tauri app-mode wrapper (native window, sidecar server) scaffold lives in `src-tauri/` — see build instructions in `src-tauri/src/lib.rs`.
+
+## Security
+
+Set `PYRODECK_ADMIN_PASSWORD` before exposing the panel to a network. The server warns at startup if it binds to a non-loopback interface without a password. For internet-facing deployments, put Pyrodeck behind nginx with HTTPS.
+
 ## Known Limitations
 
-- Web admin auth is not yet implemented (D3 console password is the only auth layer)
 - Single server connection only (multi-server planned for Phase 5)
 - Quit button sends raw `quit` — Pyrodeck interprets this as a crash rather than intentional shutdown
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
