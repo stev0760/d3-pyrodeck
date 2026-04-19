@@ -36,12 +36,12 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate }: P
   const [now, setNow] = useState(Date.now());
   const [showSelect, setShowSelect] = useState(false);
 
-  // Update countdown every second
+  // Update countdown every second while vote is open
   useEffect(() => {
-    if (!status.gameEndAt) return;
+    if (!status.voteDeadline) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [status.gameEndAt]);
+  }, [status.voteDeadline]);
 
   const activePlaylist = playlists.find((p) => p.id === status.activePlaylistId);
 
@@ -135,16 +135,6 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate }: P
             <div className="text-[10px] text-muted-foreground">
               <span className="text-foreground/60">Now:</span>{" "}
               <span className="text-foreground/80">{status.currentEntry.label}</span>
-            </div>
-          )}
-
-          {/* Timer */}
-          {status.gameEndAt && status.status !== "restarting" && (
-            <div className="text-[10px] text-muted-foreground">
-              <span className="text-foreground/60">Time left:</span>{" "}
-              <span className="font-mono text-foreground/80">
-                {formatCountdown(status.gameEndAt - now)}
-              </span>
             </div>
           )}
 
