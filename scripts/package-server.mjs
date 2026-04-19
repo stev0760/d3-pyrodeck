@@ -130,7 +130,7 @@ if (targetWindows && !hostWin) {
 } else {
   // ── Native: use current platform's node binary ─────────────────────────
   fs.copyFileSync(process.execPath, outBin);
-  fs.chmodSync(outBin, 0o755);
+  if (!hostWin) fs.chmodSync(outBin, 0o755);
 
   if (hostMac) {
     run(`codesign --remove-signature "${outBin}"`);
@@ -138,6 +138,11 @@ if (targetWindows && !hostWin) {
       `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel} --macho-segment-name NODE_SEA`,
     );
     run(`codesign --sign - "${outBin}"`);
+  } else if (hostWin) {
+    // Windows: postject handles PE format injection
+    run(
+      `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel}`,
+    );
   } else {
     // Linux: objcopy is more reliable than postject for ELF injection
     run(

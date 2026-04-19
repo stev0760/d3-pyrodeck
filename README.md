@@ -148,6 +148,7 @@ docs/
 
 ## Documentation
 
+- [`BUILDING.md`](BUILDING.md) — building from source and running on all platforms (Windows, Ubuntu, Rocky Linux/RHEL, Arch)
 - `D3_PYRODECK_SPEC.md` — full project specification
 - `PLAN.md` — development roadmap and progress tracking
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
