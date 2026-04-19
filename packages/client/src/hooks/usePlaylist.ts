@@ -46,9 +46,10 @@ type OnPlaylistEvent = ReturnType<typeof useServerConnection>["onPlaylistEvent"]
 
 interface UsePlaylistOptions {
   onPlaylistEvent: OnPlaylistEvent;
+  notify?: (message: string, type?: "error" | "info") => void;
 }
 
-export function usePlaylist({ onPlaylistEvent }: UsePlaylistOptions) {
+export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [status, setStatus] = useState<PlaylistStatus>({
     status: "inactive",
@@ -71,6 +72,7 @@ export function usePlaylist({ onPlaylistEvent }: UsePlaylistOptions) {
       } else if (type === "playlist_rotate") {
         const { entry } = data as { entry: PlaylistEntry };
         setStatus((prev) => ({ ...prev, currentEntry: entry, status: "active" }));
+        notify?.(`Rotating to: ${entry.label}`, "info");
         // Re-fetch status after rotation
         fetchStatus();
       } else if (type === "playlist_status") {
@@ -78,12 +80,16 @@ export function usePlaylist({ onPlaylistEvent }: UsePlaylistOptions) {
       } else if (type === "playlist_vote_announce") {
         const { options, deadline } = data as { options: PlaylistEntry[]; deadline: number };
         setStatus((prev) => ({ ...prev, status: "voting", voteOptions: options, voteDeadline: deadline }));
+        notify?.(`Vote open: ${options.map((o, i) => `${i + 1}. ${o.label}`).join("  ")}`, "info");
       } else if (type === "playlist_vote_result") {
+        const { winner, counts } = data as { winner: PlaylistEntry; counts: number[] };
         setStatus((prev) => ({ ...prev, status: "active", voteOptions: [], voteDeadline: null }));
+        const total = counts?.reduce((a, b) => a + b, 0) ?? 0;
+        notify?.(`Vote winner: ${winner.label} (${total} vote${total === 1 ? "" : "s"})`, "info");
       }
     });
     return unsub;
-  }, [onPlaylistEvent]);
+  }, [onPlaylistEvent, notify]);
 
   const fetchPlaylists = useCallback(async () => {
     setLoading(true);

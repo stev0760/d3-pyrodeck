@@ -127,7 +127,7 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
                           variant="secondary"
                           size="xs"
                           onClick={() => sendCommand(`$kick ${p.pnum}`)}
-                          className="text-[10px] h-5 px-1.5 hover:bg-primary hover:text-primary-foreground"
+                          className="h-8 px-2 hover:bg-primary hover:text-primary-foreground"
                         >
                           Kick
                         </Button>
@@ -135,7 +135,7 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
                           variant="secondary"
                           size="xs"
                           onClick={() => sendCommand(`$ban ${p.pnum}`)}
-                          className="text-[10px] h-5 px-1.5 hover:bg-destructive hover:text-white"
+                          className="h-8 px-2 hover:bg-destructive hover:text-white"
                         >
                           Ban
                         </Button>

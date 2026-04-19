@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import type {
   Playlist,
@@ -45,6 +45,7 @@ function EntryRow({
   entry,
   index,
   total,
+  missionListId,
   onUpdate,
   onRemove,
   onMove,
@@ -52,6 +53,7 @@ function EntryRow({
   entry: PlaylistEntry;
   index: number;
   total: number;
+  missionListId: string;
   onUpdate: (updates: Partial<PlaylistEntry>) => void;
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -95,6 +97,7 @@ function EntryRow({
         value={entry.missionName}
         onChange={(e) => onUpdate({ missionName: e.target.value })}
         placeholder="mission.mn3"
+        list={missionListId}
         className="flex-1 min-w-0 px-2 py-1 bg-background border border-border rounded text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
       />
 
@@ -156,6 +159,28 @@ function PlaylistDetail({
   const [newLabel, setNewLabel] = useState("");
   const [newMission, setNewMission] = useState("");
   const [newLevel, setNewLevel] = useState("");
+
+  // Available mission files from gamePath/missions/
+  const [missions, setMissions] = useState<string[]>([]);
+  const [missionsError, setMissionsError] = useState<string | null>(null);
+  const missionListId = `playlist-missions-${playlist.id}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/game-files/missions", { credentials: "include" })
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (r.ok && Array.isArray(data.missions)) {
+          setMissions(data.missions);
+          setMissionsError(null);
+        } else {
+          setMissionsError(data.error ?? "Could not list missions");
+        }
+      })
+      .catch(() => { if (!cancelled) setMissionsError("Could not list missions"); });
+    return () => { cancelled = true; };
+  }, []);
 
   const mark = () => { setDirty(true); setSaved(false); };
 
@@ -279,12 +304,20 @@ function PlaylistDetail({
 
         {/* Mission list */}
         <div>
+          <datalist id={missionListId}>
+            {missions.map((m) => <option key={m} value={m} />)}
+          </datalist>
           <div className="flex items-center justify-between mb-2">
             <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
               Missions ({entries.length})
+              {missions.length > 0 && (
+                <span className="ml-2 normal-case font-normal text-muted-foreground">
+                  · {missions.length} available
+                </span>
+              )}
             </label>
             <div className="text-[10px] text-muted-foreground">
-              Label | Mission file (.mn3) | Start level
+              {missionsError ?? "Label | Mission file (.mn3) | Start level"}
             </div>
           </div>
 
@@ -300,6 +333,7 @@ function PlaylistDetail({
                   entry={entry}
                   index={i}
                   total={entries.length}
+                  missionListId={missionListId}
                   onUpdate={(updates) => updateEntry(i, updates)}
                   onRemove={() => removeEntry(i)}
                   onMove={(dir) => moveEntry(i, dir)}
@@ -324,6 +358,7 @@ function PlaylistDetail({
               value={newMission}
               onChange={(e) => setNewMission(e.target.value)}
               placeholder="mission.mn3"
+              list={missionListId}
               className="flex-1 min-w-0 px-2 py-1 bg-background border border-border rounded text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
               onKeyDown={(e) => { if (e.key === "Enter") addEntry(); }}
             />

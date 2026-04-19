@@ -23,6 +23,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Menu, Server as ServerIcon } from "lucide-react";
 
 type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists";
 
@@ -46,13 +48,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   } = useServerConnection();
 
   const launcher = useLauncher();
-  const playlistHook = usePlaylist({ onPlaylistEvent });
+  const { toasts, addToast, dismissToast } = useToast();
+  const playlistHook = usePlaylist({ onPlaylistEvent, notify: addToast });
   const serverInfoHook = useServerInfo({
     sendCommand,
     onServerInfo,
     connected: connectionState === "ready",
   });
-  const { toasts, addToast, dismissToast } = useToast();
   const prevErrorRef = useRef<string | null>(null);
 
   // Surface server errors as toasts
@@ -80,6 +82,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   );
   const [connectHost, setConnectHost] = useState("localhost");
   const [connectPort, setConnectPort] = useState(2092);
+  const [leftSheetOpen, setLeftSheetOpen] = useState(false);
+  const [serverSheetOpen, setServerSheetOpen] = useState(false);
 
   const handleModeChange = (newMode: AppMode) => {
     setMode(newMode);
@@ -89,6 +93,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   const isConnected = connectionState === "ready";
   const processState = launcher.processStatus?.state;
+
+  // Auto-close the left panel sheet when connected or server goes running
+  useEffect(() => {
+    if (connectionState === "ready" || processState === "running") {
+      setLeftSheetOpen(false);
+    }
+  }, [connectionState, processState]);
   const hasProcess = mode === "launch" && (
     processState === "starting" || processState === "running" ||
     processState === "stopping" || processState === "crashed"
@@ -116,21 +127,86 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     }
   }, [visibleTabs, activeTab]);
 
+  const serverSidebarProps = {
+    mode,
+    serverInfo: serverInfoHook.serverInfo,
+    actions: {
+      ...serverInfoHook,
+      // In Launch mode, route through launcher.stop() so ProcessManager
+      // knows the exit is intentional (state → "stopped" not "crashed").
+      // In Connect mode, send raw quit since we don't own the process.
+      quitServer: mode === "launch"
+        ? () => { launcher.stop(); }
+        : serverInfoHook.quitServer,
+    },
+    playlists: playlistHook.playlists,
+    playlistStatus: playlistHook.status,
+    onActivatePlaylist: playlistHook.activatePlaylist,
+    onDeactivatePlaylist: playlistHook.deactivatePlaylist,
+  };
+
+  const leftSidebarContent = (
+    <>
+      <ModeToggle mode={mode} onChange={handleModeChange} />
+      {mode === "connect" ? (
+        <>
+          <SavedServers onSelect={handleServerSelect} />
+          <ConnectionForm
+            connectionState={connectionState}
+            capabilities={capabilities}
+            error={error}
+            onConnect={connect}
+            onDisconnect={disconnect}
+            initialHost={connectHost}
+            initialPort={connectPort}
+          />
+        </>
+      ) : (
+        <LaunchPanel launcher={launcher} />
+      )}
+    </>
+  );
+
   return (
     <div className="h-screen bg-background text-foreground flex flex-col">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
+          {/* Hamburger — phone only (<md) */}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="md:hidden shrink-0"
+            onClick={() => setLeftSheetOpen(true)}
+          >
+            <Menu />
+            <span className="sr-only">Open panel</span>
+          </Button>
           <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
           {capabilities && capabilities.version > 0 && (
-            <Badge variant="secondary">
+            <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
             </Badge>
           )}
         </div>
         <div className="flex items-center gap-3">
+          {/* Server sheet trigger — phone only (<md) */}
           {isConnected && (
-            <Badge variant={wsConnected ? "outline" : "destructive"}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="md:hidden"
+              onClick={() => setServerSheetOpen(true)}
+            >
+              <ServerIcon />
+              <span className="sr-only">Server controls</span>
+            </Button>
+          )}
+          {isConnected && (
+            <Badge
+              variant={wsConnected ? "outline" : "destructive"}
+              className="hidden md:inline-flex"
+            >
               WS: {wsConnected ? "live" : "disconnected"}
             </Badge>
           )}
@@ -140,6 +216,30 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
       </header>
 
+      {/* Compact top bar — tablet only (md, not lg+) */}
+      <div className="hidden md:flex lg:hidden items-center gap-3 px-3 py-2 border-b border-border bg-sidebar shrink-0">
+        <ModeToggle mode={mode} onChange={handleModeChange} />
+        <div className="flex flex-1 items-center gap-2 min-w-0">
+          {mode === "connect" && isConnected && (
+            <Badge variant="outline" className="text-xs shrink-0">Connected</Badge>
+          )}
+          {mode === "connect" && !isConnected && (
+            <span className="text-xs text-muted-foreground">Not connected</span>
+          )}
+          {mode === "launch" && processState && (
+            <Badge
+              variant={processState === "running" ? "outline" : "secondary"}
+              className="text-xs capitalize shrink-0"
+            >
+              {processState}
+            </Badge>
+          )}
+        </div>
+        <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setLeftSheetOpen(true)}>
+          Panel
+        </Button>
+      </div>
+
       {/* Reconnection banner */}
       {wsReconnecting && (
         <div className="px-4 py-2 bg-primary/10 border-b border-primary/30 text-primary text-sm text-center shrink-0">
@@ -148,26 +248,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       )}
 
       <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <aside className="w-72 shrink-0 border-r border-border bg-sidebar p-3 overflow-y-auto flex flex-col">
-          <ModeToggle mode={mode} onChange={handleModeChange} />
-
-          {mode === "connect" ? (
-            <>
-              <SavedServers onSelect={handleServerSelect} />
-              <ConnectionForm
-                connectionState={connectionState}
-                capabilities={capabilities}
-                error={error}
-                onConnect={connect}
-                onDisconnect={disconnect}
-                initialHost={connectHost}
-                initialPort={connectPort}
-              />
-            </>
-          ) : (
-            <LaunchPanel launcher={launcher} />
-          )}
+        {/* Left sidebar — desktop only (lg+) */}
+        <aside className="hidden lg:flex w-72 shrink-0 border-r border-border bg-sidebar p-3 overflow-y-auto flex-col">
+          {leftSidebarContent}
         </aside>
 
         {/* Center content */}
@@ -176,9 +259,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           onValueChange={(v) => setActiveTab(v as Tab)}
           className="flex-1 min-w-0 gap-0"
         >
-          <TabsList variant="line" className="w-full justify-start px-2 border-b border-border rounded-none h-10">
+          <TabsList
+            variant="line"
+            className="w-full justify-start px-2 border-b border-border rounded-none h-10 overflow-x-auto flex-nowrap gap-0"
+          >
             {visibleTabs.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id}>
+              <TabsTrigger key={tab.id} value={tab.id} className="shrink-0">
                 {tab.label}
               </TabsTrigger>
             ))}
@@ -257,27 +343,37 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </TabsContent>
         </Tabs>
 
-        {/* Right sidebar — server dashboard */}
+        {/* Right sidebar — tablet+ inline (md and lg+) */}
         {isConnected && (
           <ServerSidebar
-            mode={mode}
-            serverInfo={serverInfoHook.serverInfo}
-            actions={{
-              ...serverInfoHook,
-              // In Launch mode, route through launcher.stop() so ProcessManager
-              // knows the exit is intentional (state → "stopped" not "crashed").
-              // In Connect mode, send raw quit since we don't own the process.
-              quitServer: mode === "launch"
-                ? () => { launcher.stop(); }
-                : serverInfoHook.quitServer,
-            }}
-            playlists={playlistHook.playlists}
-            playlistStatus={playlistHook.status}
-            onActivatePlaylist={playlistHook.activatePlaylist}
-            onDeactivatePlaylist={playlistHook.deactivatePlaylist}
+            {...serverSidebarProps}
+            className="hidden md:flex flex-col md:w-48 lg:w-64 shrink-0 border-l border-border bg-sidebar overflow-y-auto"
           />
         )}
       </div>
+
+      {/* Left panel Sheet — phone (<md) and tablet (md) both use this */}
+      <Sheet open={leftSheetOpen} onOpenChange={setLeftSheetOpen}>
+        <SheetContent side="left" className="w-72 p-0 bg-sidebar">
+          <SheetTitle className="sr-only">Navigation Panel</SheetTitle>
+          <div className="flex flex-col h-full overflow-y-auto p-3">
+            {leftSidebarContent}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Server sidebar Sheet — phone only (<md) */}
+      {isConnected && (
+        <Sheet open={serverSheetOpen} onOpenChange={setServerSheetOpen}>
+          <SheetContent side="right" className="w-80 p-0 bg-sidebar overflow-y-auto">
+            <SheetTitle className="sr-only">Server Controls</SheetTitle>
+            <ServerSidebar
+              {...serverSidebarProps}
+              className="w-full border-l-0 shrink-0 flex flex-col"
+            />
+          </SheetContent>
+        </Sheet>
+      )}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>

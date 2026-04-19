@@ -123,6 +123,10 @@ function registerAutoConnect(telnetPassword: string): void {
       // Wire playlist manager's command sender
       playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
 
+      // Transition out of "restarting" if this connect is the post-rotation
+      // resume; ensure subsequent "Ending level." events fire rotations again.
+      playlistManager.markRotationComplete();
+
       // Anchor playlist timer if a playlist is active
       if (playlistManager.isActive()) {
         playlistManager.anchorTimer().catch(() => {});
@@ -143,6 +147,9 @@ function registerAutoConnect(telnetPassword: string): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
       wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
+      // If this auto-connect was the post-rotation resume, unstick the playlist
+      // manager so future "Ending level." events can rotate again.
+      playlistManager.markRotationComplete();
     }
   });
 }
@@ -152,8 +159,11 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   const config = pyrodeckConfig.get();
   const gamePath = config.gamePath;
 
+  console.log(`[Playlist] Rotate triggered for entry: ${entry.label} (${entry.missionName})`);
+
   if (!gamePath) {
     wsBroadcast("error", { message: "Playlist rotation failed: game path not configured" });
+    playlistManager.markRotationComplete();
     return;
   }
 
@@ -164,6 +174,17 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
       await new Promise((r) => setTimeout(r, 1000));
     } catch { /* ignore */ }
   }
+
+  // Close our telnet session cleanly before killing D3 — this sends a FIN
+  // from our side so the TCP 4-tuple closes through FIN_WAIT rather than
+  // lingering in TIME_WAIT with D3's local port as the sockname, which can
+  // interfere with the next D3 binding the same port.
+  const existingSession = sessionManager.getActive();
+  if (existingSession) {
+    sessionManager.remove(existingSession.id);
+  }
+  processManager.sendQuitFn = null;
+  playlistManager.sendCommandFn = null;
 
   // Get the current profile's config file
   const launchStatus = processManager.getStatus();
@@ -229,12 +250,19 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Playlist] Restart failed: ${message}`);
         wsBroadcast("error", { message: `Playlist restart failed: ${message}` });
+        playlistManager.markRotationComplete();
       }
+    } else {
+      console.warn("[Playlist] No profiles found; cannot rotate");
+      playlistManager.markRotationComplete();
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Playlist] Rotation error: ${message}`);
     wsBroadcast("error", { message: `Playlist rotation error: ${message}` });
+    playlistManager.markRotationComplete();
   }
 });
 
@@ -339,6 +367,37 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
     // Log file: use profile-specific path if set, otherwise default to config dir
     const logPath = profileLogPath ?? path.join(CONFIG_DIR, "server.log");
+
+    // If a playlist is active and hasn't been synced to a server yet, override
+    // the profile's MissionName/SetLevel with the playlist's current entry
+    // BEFORE launch — otherwise the first level would be whatever the config
+    // has, and the playlist wouldn't kick in until the first "Ending level."
+    const initialEntry = playlistManager.consumeInitialSync();
+    if (initialEntry) {
+      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+      try {
+        await profileManager.ensureConfigReference(
+          configFile,
+          "MissionName",
+          initialEntry.missionName,
+        );
+        if (initialEntry.startingLevel !== undefined) {
+          await profileManager.ensureConfigReference(
+            configFile,
+            "SetLevel",
+            String(initialEntry.startingLevel),
+          );
+        }
+        console.log(
+          `[Playlist] Pre-launch: wrote MissionName=${initialEntry.missionName} to ${configFile}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return reply.status(500).send({
+          error: `Failed to apply playlist mission to config: ${message}`,
+        });
+      }
+    }
 
     // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
     registerAutoConnect(telnetPassword);

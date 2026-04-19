@@ -71,7 +71,7 @@ export class TelnetConnection implements ServerConnection {
         );
       });
 
-      socket.on("error", (err) => {
+      socket.on("error", (err: NodeJS.ErrnoException) => {
         clearTimeout(timeout);
         if (!settled) {
           settled = true;

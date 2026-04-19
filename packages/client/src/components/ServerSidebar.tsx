@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PlaylistPanel } from "./PlaylistPanel.tsx";
 import type { Playlist, PlaylistStatus } from "../hooks/usePlaylist.ts";
+import { cn } from "@/lib/utils";
 
 type ServerInfoActions = ReturnType<typeof useServerInfo>;
 
@@ -15,6 +16,7 @@ interface ServerSidebarProps {
   playlistStatus?: PlaylistStatus;
   onActivatePlaylist?: (id: string) => void;
   onDeactivatePlaylist?: () => void;
+  className?: string;
 }
 
 function Stepper({
@@ -90,6 +92,7 @@ export function ServerSidebar({
   playlistStatus,
   onActivatePlaylist,
   onDeactivatePlaylist,
+  className,
 }: ServerSidebarProps) {
   const [warpLevel, setWarpLevel] = useState("1");
   const [confirmQuit, setConfirmQuit] = useState(false);
@@ -102,7 +105,7 @@ export function ServerSidebar({
   }, [warpLevel, actions]);
 
   return (
-    <aside className="w-64 shrink-0 border-l border-border bg-sidebar flex flex-col overflow-y-auto">
+    <aside className={cn("w-64 shrink-0 border-l border-border bg-sidebar flex flex-col overflow-y-auto", className)}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">

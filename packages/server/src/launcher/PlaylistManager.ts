@@ -94,6 +94,13 @@ export class PlaylistManager extends EventEmitter {
   private currentIndex = 0;
   private shuffleOrder: number[] | null = null;
 
+  /**
+   * True after activate() until the playlist's current entry has been applied
+   * to a server (either via pre-launch config write or first rotation).
+   * Prevents the first "Ending level." from skipping entry[0].
+   */
+  private needsInitialSync = false;
+
   // Timer tracking
   private gameEndAt: number | null = null; // epoch ms
   private timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -228,6 +235,7 @@ export class PlaylistManager extends EventEmitter {
     this.currentIndex = 0;
     this.status = "active";
     this.shuffleOrder = null;
+    this.needsInitialSync = true;
 
     if (playlist.mode === "shuffle") {
       this.buildShuffleOrder();
@@ -249,6 +257,7 @@ export class PlaylistManager extends EventEmitter {
   deactivate(): void {
     this.activePlaylist = null;
     this.status = "inactive";
+    this.needsInitialSync = false;
     this.clearTimers();
     this.gameEndAt = null;
     this.emitTimerUpdate();
@@ -257,6 +266,18 @@ export class PlaylistManager extends EventEmitter {
 
   isActive(): boolean {
     return this.status !== "inactive";
+  }
+
+  /**
+   * Called by the launcher after the server has successfully restarted post-rotation
+   * and telnet is reconnected. Transitions status from "restarting" back to "active"
+   * so the next "Ending level." signal isn't dropped.
+   */
+  markRotationComplete(): void {
+    if (this.status === "restarting") {
+      this.status = "active";
+      this.emitTimerUpdate();
+    }
   }
 
   getStatus(): {
@@ -418,8 +439,29 @@ export class PlaylistManager extends EventEmitter {
     this.status = "restarting";
     this.clearTimers();
 
-    const next = entry ?? this.advanceAndGetEntry();
+    let next: PlaylistEntry;
+    if (entry) {
+      next = entry;
+    } else if (this.needsInitialSync) {
+      // First rotation after activate-while-running: load entry[0] instead of
+      // advancing past it.
+      next = this.activePlaylist.entries[this.currentIndex];
+    } else {
+      next = this.advanceAndGetEntry();
+    }
+    this.needsInitialSync = false;
     this.emit("rotate", next);
+  }
+
+  /**
+   * Returns the playlist's current entry IF an initial sync is still pending,
+   * and clears the pending flag. Called by the launcher's start handler so the
+   * first level loaded matches the playlist instead of whatever's in the cfg.
+   */
+  consumeInitialSync(): PlaylistEntry | null {
+    if (!this.needsInitialSync || !this.activePlaylist) return null;
+    this.needsInitialSync = false;
+    return this.activePlaylist.entries[this.currentIndex] ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -463,22 +505,25 @@ export class PlaylistManager extends EventEmitter {
   private tallyVotes(): void {
     if (!this.activePlaylist) return;
 
+    // Snapshot before clearVoteTimers wipes voteOptions/votes
+    const options = this.voteOptions.slice();
+    const voteEntries = Array.from(this.votes.values());
+
     this.clearVoteTimers();
 
-    if (this.voteOptions.length === 0) {
+    if (options.length === 0) {
       this.triggerRotate();
       return;
     }
 
-    // Count votes per option index
-    const counts = new Array<number>(this.voteOptions.length).fill(0);
-    for (const vote of this.votes.values()) {
+    const counts = new Array<number>(options.length).fill(0);
+    for (const vote of voteEntries) {
       if (vote.optionIndex < counts.length) {
         counts[vote.optionIndex]++;
       }
     }
 
-    // Find winner (most votes; ties go to lowest index = "first option wins")
+    // Winner: most votes; ties go to lowest index ("first option wins")
     let maxVotes = -1;
     let winnerIdx = 0;
     for (let i = 0; i < counts.length; i++) {
@@ -488,15 +533,12 @@ export class PlaylistManager extends EventEmitter {
       }
     }
 
-    const winner = this.voteOptions[winnerIdx];
+    const winner = options[winnerIdx];
     this.emit("voteResult", winner, counts);
 
-    // Update current index to match winner position in the full playlist
+    // Set currentIndex to the winner so the next natural advance moves past it.
     const entryIdx = this.activePlaylist.entries.findIndex((e) => e.id === winner.id);
     if (entryIdx !== -1) {
-      // Set currentIndex to the one AFTER winner, so advance() picks the next one
-      // after the winner when the next level ends naturally.
-      // Actually, we want the winner to be the NEXT mission, so set currentIndex to it.
       this.currentIndex = entryIdx;
     }
 

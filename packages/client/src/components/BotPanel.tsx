@@ -201,7 +201,7 @@ export function BotPanel({
                         sendCommand(`$removebot ${bot.index}`);
                         setTimeout(refresh, 500);
                       }}
-                      className="text-[10px] h-5 px-1.5 hover:bg-destructive hover:text-white"
+                      className="h-8 px-2 hover:bg-destructive hover:text-white"
                     >
                       Remove
                     </Button>

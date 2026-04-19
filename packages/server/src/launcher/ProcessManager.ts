@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
-import path from "node:path";
 import fs from "node:fs";
 import { EventEmitter } from "node:events";
 
@@ -39,6 +38,13 @@ const TELNET_PROBE_INTERVAL_MS = 500;
 const TELNET_PROBE_TIMEOUT_MS = 15000;
 const GRACEFUL_QUIT_TIMEOUT_MS = 5000;
 const SIGTERM_TIMEOUT_MS = 3000;
+// How long to wait for a port to be released by the kernel after the previous
+// D3 process exited. D3 doesn't use SO_REUSEADDR, so a restart that's too fast
+// causes InitDedicatedSocket to fail and the new server silently won't accept
+// connections.
+// Linux TIME_WAIT is 2*MSL (typically 60s). Give ourselves headroom.
+const PORT_RELEASE_WAIT_MS = 90000;
+const PORT_RELEASE_POLL_INTERVAL_MS = 500;
 
 /**
  * Manages the D3 dedicated server process lifecycle.
@@ -84,6 +90,12 @@ export class ProcessManager extends EventEmitter {
     this.launchConfig = config;
     this.telnetReady = false;
     this.setState("starting");
+
+    // Wait for the previous D3's network port to be fully released by the
+    // kernel. Matcen-fork D3 binds without SO_REUSEADDR — spawning too quickly
+    // causes InitDedicatedSocket to fail and the new server runs without
+    // network (bots simulate but nothing connects).
+    await this.waitForPortFree(config.telnetPort);
 
     // Config files live in gamePath alongside game data — the traditional D3 layout.
     // Use ./ prefix so cfopen() resolves relative to cwd (gamePath).
@@ -212,6 +224,87 @@ export class ProcessManager extends EventEmitter {
   private setState(state: ProcessState): void {
     this.status.state = state;
     this.emit("stateChange", state);
+  }
+
+  /**
+   * Wait until the target port has no sockets in TIME_WAIT or other non-LISTEN
+   * states that would prevent D3 from binding.
+   *
+   * Why we can't use node's bind() as a probe: node's net.Server.listen() sets
+   * SO_REUSEADDR=1 by default via libuv, which lets it bind right through
+   * TIME_WAIT sockets. D3 does not set SO_REUSEADDR, so a node bind success
+   * is a false positive — observed empirically as 8ms stop→start gap followed
+   * by D3 logging "Unable to bind listen socket for dedicated server!".
+   *
+   * Authoritative check on Linux: read /proc/net/tcp{,6} and /proc/net/udp{,6}
+   * for any socket holding the port. Only LISTEN is safe to ignore (that's
+   * what D3 is about to create). TIME_WAIT, CLOSE_WAIT, ESTABLISHED, etc.
+   * would all make D3's bind fail.
+   *
+   * On non-Linux platforms (not our dev target, but don't crash), fall back
+   * to a simple setTimeout for TIME_WAIT's typical duration.
+   */
+  private async waitForPortFree(port: number): Promise<void> {
+    const deadline = Date.now() + PORT_RELEASE_WAIT_MS;
+    const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+    const procFiles = [
+      "/proc/net/tcp",
+      "/proc/net/tcp6",
+      "/proc/net/udp",
+      "/proc/net/udp6",
+    ];
+    // Linux TCP state code 0A = LISTEN; any other non-zero code on a port we
+    // just vacated means a socket is lingering (TIME_WAIT is 06).
+    const LISTEN = "0A";
+
+    const portHeld = async (): Promise<boolean> => {
+      for (const file of procFiles) {
+        let contents: string;
+        try {
+          contents = await fs.promises.readFile(file, "utf-8");
+        } catch {
+          continue; // file missing (e.g. no ipv6) or permission denied
+        }
+        const lines = contents.split("\n").slice(1); // skip header
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length < 4) continue;
+          // local_address is parts[1] = "IP:PORT" in hex
+          const local = parts[1];
+          const colonIdx = local.lastIndexOf(":");
+          if (colonIdx < 0) continue;
+          const localPort = local.slice(colonIdx + 1);
+          if (localPort !== portHex) continue;
+          const state = parts[3];
+          // UDP sockets in /proc/net/udp always have state 07 (UDP_ESTABLISHED,
+          // effectively "in use") — anything non-LISTEN on our port blocks bind.
+          if (state !== LISTEN) return true;
+        }
+      }
+      return false;
+    };
+
+    // On non-Linux, /proc doesn't exist; portHeld always returns false.
+    // Detect and fall back to a simple delay so we still wait for TIME_WAIT.
+    let procAvailable = false;
+    try {
+      await fs.promises.access("/proc/net/tcp");
+      procAvailable = true;
+    } catch { /* not Linux */ }
+
+    if (!procAvailable) {
+      await new Promise((r) => setTimeout(r, 65000));
+      return;
+    }
+
+    while (Date.now() < deadline) {
+      if (!(await portHeld())) return;
+      await new Promise((r) => setTimeout(r, PORT_RELEASE_POLL_INTERVAL_MS));
+    }
+    this.emit(
+      "stderr",
+      `Warning: port ${port} still held after ${PORT_RELEASE_WAIT_MS}ms; starting anyway.\n`,
+    );
   }
 
   private cleanup(): void {
