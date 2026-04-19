@@ -166,3 +166,18 @@ Set `PYRODECK_ADMIN_PASSWORD` before exposing the panel to a network. The server
 - Single server connection only (multi-server planned for Phase 5)
 - Quit button sends raw `quit` — Pyrodeck interprets this as a crash rather than intentional shutdown
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
+- Windows binaries are unsigned; SmartScreen will warn on first run — click **More info → Run anyway**
+
+## Development
+
+Pyrodeck was written by Steve V with significant AI assistance from Claude (Anthropic).
+All architecture, design decisions, and testing direction are the author's. The author takes
+full responsibility for every line of code. AI assistance was used as a development accelerator,
+not a replacement for engineering discipline — auth, responsive layout, packaging, licensing,
+and documentation are all implemented properly as a result.
+
+Source code is available under the [MIT License](LICENSE).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
