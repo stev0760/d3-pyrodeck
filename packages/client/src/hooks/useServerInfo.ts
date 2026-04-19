@@ -21,12 +21,28 @@ interface UseServerInfoOptions {
   connected: boolean;
 }
 
+function parseTimeLeftToSeconds(str: string): number {
+  const parts = str.split(":").map((s) => parseInt(s, 10));
+  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+    return parts[0] * 60 + parts[1];
+  }
+  return 0;
+}
+
+function formatSeconds(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
 export function useServerInfo({
   sendCommand,
   onServerInfo,
   connected,
 }: UseServerInfoOptions) {
   const [serverInfo, setServerInfo] = useState<NetGameInfo | null>(null);
+  const [localTimeLeft, setLocalTimeLeft] = useState<string | null>(null);
+  const anchorRef = useRef<{ seconds: number; at: number } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to serverinfo WS messages
@@ -35,6 +51,34 @@ export function useServerInfo({
       setServerInfo(data as NetGameInfo);
     });
   }, [onServerInfo]);
+
+  // Re-anchor countdown whenever serverInfo.timeLeft changes
+  useEffect(() => {
+    if (!serverInfo?.timeLeft) {
+      anchorRef.current = null;
+      setLocalTimeLeft(null);
+      return;
+    }
+    const seconds = parseTimeLeftToSeconds(serverInfo.timeLeft);
+    if (seconds <= 0) {
+      anchorRef.current = null;
+      setLocalTimeLeft(serverInfo.timeLeft);
+      return;
+    }
+    anchorRef.current = { seconds, at: Date.now() };
+    setLocalTimeLeft(serverInfo.timeLeft);
+  }, [serverInfo?.timeLeft]);
+
+  // Tick every second to count down locally
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!anchorRef.current) return;
+      const elapsed = Math.floor((Date.now() - anchorRef.current.at) / 1000);
+      const remaining = Math.max(0, anchorRef.current.seconds - elapsed);
+      setLocalTimeLeft(formatSeconds(remaining));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Query on connect
   useEffect(() => {
@@ -131,8 +175,12 @@ export function useServerInfo({
     sendCommand("quit");
   }, [sendCommand]);
 
+  const displayInfo = serverInfo
+    ? { ...serverInfo, timeLeft: localTimeLeft }
+    : null;
+
   return {
-    serverInfo,
+    serverInfo: displayInfo,
     refresh,
     setMaxPlayers,
     setPps,

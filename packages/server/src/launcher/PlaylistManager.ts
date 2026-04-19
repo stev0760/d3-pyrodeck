@@ -113,6 +113,10 @@ export class PlaylistManager extends EventEmitter {
   private voteTimer: ReturnType<typeof setTimeout> | null = null;
   private preAnnounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Countdown announces (fire regardless of playlist state)
+  private announceTimers: ReturnType<typeof setTimeout>[] = [];
+  private static readonly ANNOUNCE_THRESHOLDS_S = [300, 120, 60, 30, 10];
+
   // Stdout line buffering
   private stdoutLineBuffer = "";
 
@@ -365,11 +369,10 @@ export class PlaylistManager extends EventEmitter {
 
   /**
    * Parse $netgameinfo output and update the gameEndAt timestamp.
+   * Schedules end-of-game countdown announces unconditionally (no active playlist needed).
    * Also gates voting: only enabled when timeLimit > 0 and killGoal == 0.
    */
   parseAndAnchorFromNetgameinfo(raw: string): void {
-    if (!this.activePlaylist) return;
-
     const lines = raw.split("\n").map((l) => l.trim());
     const get = (prefix: string): string | undefined =>
       lines.find((l) => l.startsWith(prefix))?.slice(prefix.length).trim();
@@ -383,10 +386,20 @@ export class PlaylistManager extends EventEmitter {
       ? (parseInt(goalStr.match(/^(\d+)/)?.[1] ?? "0", 10) || 0)
       : 0;
 
-    if (timeLeftStr && timeLimit > 0) {
-      const secondsLeft = this.parseTimeLeft(timeLeftStr);
-      this.gameEndAt = Date.now() + secondsLeft * 1000;
+    const hasTimeLimit = !!(timeLeftStr && timeLimit > 0);
+    const secondsLeft = hasTimeLimit ? this.parseTimeLeft(timeLeftStr!) : 0;
 
+    // Always schedule end-of-game announces regardless of playlist state
+    if (hasTimeLimit) {
+      this.scheduleAnnounces(secondsLeft);
+    } else {
+      this.clearAnnounceTimers();
+    }
+
+    if (!this.activePlaylist) return;
+
+    if (hasTimeLimit) {
+      this.gameEndAt = Date.now() + secondsLeft * 1000;
       // Schedule voting pre-announce if voting enabled and game has a time limit but no kill goal
       if (this.activePlaylist.voting.enabled && killGoal === 0 && this.status === "active") {
         this.scheduleVoting(secondsLeft);
@@ -423,6 +436,7 @@ export class PlaylistManager extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private onLevelEnd(): void {
+    this.clearAnnounceTimers();
     if (!this.activePlaylist || this.status === "restarting") return;
 
     // If voting is open, tally immediately; otherwise rotate
@@ -650,8 +664,29 @@ export class PlaylistManager extends EventEmitter {
     }, DRIFT_CORRECTION_INTERVAL_MS);
   }
 
+  private clearAnnounceTimers(): void {
+    for (const t of this.announceTimers) clearTimeout(t);
+    this.announceTimers = [];
+  }
+
+  private scheduleAnnounces(secondsLeft: number): void {
+    this.clearAnnounceTimers();
+    for (const threshold of PlaylistManager.ANNOUNCE_THRESHOLDS_S) {
+      const fireIn = (secondsLeft - threshold) * 1000;
+      if (fireIn <= 0) continue;
+      const label = threshold >= 60
+        ? `${threshold / 60} minute${threshold === 60 ? "" : "s"}`
+        : `${threshold} seconds`;
+      const t = setTimeout(() => {
+        this.sendCommandFn?.(`say Game ending in ${label}!`).catch(() => {});
+      }, fireIn);
+      this.announceTimers.push(t);
+    }
+  }
+
   private clearTimers(): void {
     this.clearVoteTimers();
+    this.clearAnnounceTimers();
     if (this.driftCorrectionInterval) {
       clearInterval(this.driftCorrectionInterval);
       this.driftCorrectionInterval = null;
