@@ -18,186 +18,342 @@ const STATUS_COLORS: Record<string, string> = {
   crashed: "bg-destructive",
 };
 
+type PanelMode = "listing" | "creating" | "editing" | "confirming-delete";
+
+interface PathFormState {
+  name: string;
+  gamePath: string;
+  executablePath: string;
+}
+
+function PathFormFields({
+  values,
+  onChange,
+}: {
+  values: PathFormState;
+  onChange: (f: Partial<PathFormState>) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div>
+        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+          Profile Name
+        </label>
+        <input
+          type="text"
+          value={values.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="e.g. Matcen Anarchy"
+          className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+          Game Path
+        </label>
+        <input
+          type="text"
+          value={values.gamePath}
+          onChange={(e) => onChange({ gamePath: e.target.value })}
+          placeholder="C:\Games\Descent3"
+          className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+        />
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          Directory containing d3.hog and the game data
+        </p>
+      </div>
+      <div>
+        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+          Executable
+        </label>
+        <input
+          type="text"
+          value={values.executablePath}
+          onChange={(e) => onChange({ executablePath: e.target.value })}
+          placeholder="Descent3.exe or full path"
+          className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+        />
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          Filename (resolved in Game Path) or full absolute path
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function LaunchPanel({ launcher }: LaunchPanelProps) {
   const {
     config,
     processStatus,
     profiles,
+    selectedProfileId,
+    setSelectedProfileId,
     error,
     loading,
-    updateConfig,
     validatePath,
     fetchProfiles,
     createProfile,
+    updateProfile,
+    deleteProfile,
     launch,
     stop,
   } = launcher;
 
-  // Setup form state
-  const [gamePath, setGamePath] = useState("");
-  const [executablePath, setExecutablePath] = useState("Descent3");
-  const [validating, setValidating] = useState(false);
+  const [mode, setMode] = useState<PanelMode>("listing");
+  const [form, setForm] = useState<PathFormState>({ name: "", gamePath: "", executablePath: "" });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-
-  // Profile state
-  const [selectedProfile, setSelectedProfile] = useState<string>("");
-  const [newProfileName, setNewProfileName] = useState("");
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [launching, setLaunching] = useState(false);
 
-  // Sync from saved config
+  // Fetch profiles on mount (auto-select is handled inside useLauncher)
   useEffect(() => {
-    if (config) {
-      if (config.gamePath) setGamePath(config.gamePath);
-      if (config.executablePath) setExecutablePath(config.executablePath);
-    }
-  }, [config]);
-
-  // Fetch profiles when path is configured
-  useEffect(() => {
-    if (config?.gamePath) {
-      fetchProfiles().then((result) => {
-        if (result.length > 0 && !selectedProfile) {
-          setSelectedProfile(result[0].id);
-        }
-      });
-    }
-  }, [config?.gamePath, fetchProfiles, selectedProfile]);
+    fetchProfiles();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
 
-  const needsSetup = !config?.gamePath;
   const state = processStatus?.state ?? "stopped";
-  const isActive =
-    state === "running" ||
-    state === "starting" ||
-    state === "stopping";
+  const isActive = state === "running" || state === "starting" || state === "stopping";
 
-  const handleValidate = async () => {
-    setValidating(true);
-    setValidationErrors([]);
+  const selectedProfile: ServerProfile | undefined = profiles.find(
+    (p: ServerProfile) => p.id === selectedProfileId,
+  );
 
-    const gameResult = await validatePath("game", gamePath);
-    if (!gameResult || !gameResult.valid) {
-      setValidationErrors(gameResult?.errors ?? ["Validation failed"]);
-      setValidating(false);
-      return;
-    }
+  // Effective paths: profile-specific fields, fall back to global config for old profiles
+  const effectiveGamePath = selectedProfile?.gamePath ?? config?.gamePath ?? null;
+  const effectiveExePath = selectedProfile?.executablePath ?? config?.executablePath ?? null;
+  const profileHasPaths = !!(effectiveGamePath && effectiveExePath);
 
-    const exeResult = await validatePath("executable", executablePath, gamePath);
-    if (!exeResult || !exeResult.valid) {
-      setValidationErrors(exeResult?.errors ?? ["Executable validation failed"]);
-      setValidating(false);
-      return;
-    }
-
-    await updateConfig({
-      gamePath,
-      executablePath,
+  const startEditing = () => {
+    if (!selectedProfile) return;
+    setForm({
+      name: selectedProfile.name,
+      gamePath: selectedProfile.gamePath ?? config?.gamePath ?? "",
+      executablePath: selectedProfile.executablePath ?? config?.executablePath ?? "",
     });
     setValidationErrors([]);
-    setValidating(false);
+    setMode("editing");
   };
 
-  const handleCreateProfile = async () => {
-    if (!newProfileName.trim()) return;
-    const profile = await createProfile(newProfileName.trim());
-    if (profile) {
-      setSelectedProfile(profile.id);
-      setNewProfileName("");
-      setShowCreateForm(false);
+  const startCreating = () => {
+    setForm({ name: "", gamePath: "", executablePath: "" });
+    setValidationErrors([]);
+    setMode("creating");
+  };
+
+  const cancel = () => {
+    setMode("listing");
+    setValidationErrors([]);
+  };
+
+  const validateForm = async (): Promise<boolean> => {
+    setValidationErrors([]);
+    setValidating(true);
+    const errors: string[] = [];
+
+    if (!form.name.trim()) errors.push("Profile name is required.");
+    if (!form.gamePath.trim()) errors.push("Game path is required.");
+    if (!form.executablePath.trim()) errors.push("Executable is required.");
+
+    if (errors.length === 0) {
+      const gameResult = await validatePath("game", form.gamePath.trim());
+      if (!gameResult?.valid) {
+        errors.push(...(gameResult?.errors ?? ["Game path validation failed"]));
+      } else {
+        const exeResult = await validatePath("executable", form.executablePath.trim(), form.gamePath.trim());
+        if (!exeResult?.valid) {
+          errors.push(...(exeResult?.errors ?? ["Executable validation failed"]));
+        }
+      }
     }
+
+    setValidationErrors(errors);
+    setValidating(false);
+    return errors.length === 0;
+  };
+
+  const handleCreate = async () => {
+    if (!(await validateForm())) return;
+    setSaving(true);
+    const profile = await createProfile(form.name.trim(), {
+      gamePath: form.gamePath.trim(),
+      executablePath: form.executablePath.trim(),
+    });
+    setSaving(false);
+    if (profile) {
+      setSelectedProfileId(profile.id);
+      setMode("listing");
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedProfile) return;
+    if (!(await validateForm())) return;
+    setSaving(true);
+    const updated = await updateProfile(selectedProfile.id, {
+      name: form.name.trim(),
+      gamePath: form.gamePath.trim() || null,
+      executablePath: form.executablePath.trim() || null,
+    });
+    setSaving(false);
+    if (updated) setMode("listing");
   };
 
   const handleLaunch = async () => {
     setLaunching(true);
-    await launch(selectedProfile || undefined);
+    await launch(selectedProfileId || undefined);
     setLaunching(false);
   };
 
-  const handleStop = async () => {
-    await stop();
+  const handleDelete = async () => {
+    if (!selectedProfile) return;
+    const ok = await deleteProfile(selectedProfile.id);
+    if (ok) setMode("listing");
   };
 
-  const handleReset = async () => {
-    await updateConfig({
-      gamePath: null,
-      executablePath: null,
-    });
-  };
+  // ── Delete confirmation ────────────────────────────────────────────────────
+  if (mode === "confirming-delete") {
+    return (
+      <div className="space-y-3">
+        <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+          Delete Profile
+        </h3>
+        <p className="text-sm text-foreground/80">
+          Delete <span className="font-medium">{selectedProfile?.name}</span>? The config files on disk are not removed.
+        </p>
+        <div className="flex gap-1.5">
+          <Button variant="destructive" onClick={handleDelete} className="flex-1">
+            Delete
+          </Button>
+          <Button variant="ghost" onClick={cancel} className="flex-1">
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
+  // ── Create / Edit form ─────────────────────────────────────────────────────
+  if (mode === "creating" || mode === "editing") {
+    const isCreate = mode === "creating";
+    return (
+      <div className="space-y-3">
+        <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+          {isCreate ? "New Profile" : `Edit: ${selectedProfile?.name}`}
+        </h3>
+
+        <PathFormFields
+          values={form}
+          onChange={(f) => setForm((prev) => ({ ...prev, ...f }))}
+        />
+
+        {validationErrors.length > 0 && (
+          <div className="text-xs text-destructive space-y-0.5">
+            {validationErrors.map((e, i) => <p key={i}>{e}</p>)}
+          </div>
+        )}
+
+        <div className="flex gap-1.5">
+          <Button
+            onClick={isCreate ? handleCreate : handleSave}
+            disabled={validating || saving || !form.name.trim()}
+            className="flex-1"
+          >
+            {validating ? "Validating..." : saving ? "Saving..." : isCreate ? "Create" : "Save Changes"}
+          </Button>
+          <Button variant="ghost" onClick={cancel} className="flex-1">
+            Cancel
+          </Button>
+        </div>
+
+        {!isCreate && (
+          <Button
+            variant="link"
+            size="xs"
+            onClick={() => setMode("confirming-delete")}
+            className="w-full px-0 text-destructive/60 hover:text-destructive"
+          >
+            Delete this profile
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Listing / main view ────────────────────────────────────────────────────
   return (
     <div className="space-y-3">
       <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-        Pyrodeck Settings
+        D3 Server Profiles
       </h3>
 
-      {needsSetup ? (
+      {profiles.length === 0 ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            Point Pyrodeck to your Descent 3 installation to get started.
+            No profiles yet. Create one to get started — each profile links to a specific D3 install and config.
           </p>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Game Data Path
-            </label>
-            <input
-              type="text"
-              value={gamePath}
-              onChange={(e) => setGamePath(e.target.value)}
-              placeholder="/path/to/descent3"
-              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Executable
-            </label>
-            <input
-              type="text"
-              value={executablePath}
-              onChange={(e) => setExecutablePath(e.target.value)}
-              placeholder="Descent3 or /path/to/Descent3"
-              className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              Filename (looked up in game path) or full path
-            </p>
-          </div>
-          {validationErrors.length > 0 && (
-            <div className="text-xs text-destructive space-y-0.5">
-              {validationErrors.map((e, i) => (
-                <p key={i}>{e}</p>
-              ))}
-            </div>
-          )}
-          <Button
-            onClick={handleValidate}
-            disabled={!gamePath || !executablePath || validating}
-            className="w-full"
-          >
-            {validating ? "Validating..." : "Validate & Save"}
+          <Button onClick={startCreating} className="w-full">
+            + New Profile
           </Button>
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-[11px] text-muted-foreground">
-            D3 game directory and executable for this Pyrodeck instance.
-          </p>
-          <div className="bg-muted rounded-md px-2 py-1.5 text-xs">
-            <span className="text-muted-foreground">Game: </span>
-            <span className="text-foreground/80 break-all font-mono text-[11px]">
-              {config?.gamePath}
-            </span>
-          </div>
-          <div className="bg-muted rounded-md px-2 py-1.5 text-xs">
-            <span className="text-muted-foreground">Exe: </span>
-            <span className="text-foreground/80 break-all font-mono text-[11px]">
-              {config?.executablePath}
-            </span>
-          </div>
+          {/* Profile selector */}
+          {!isActive && (
+            <div className="flex gap-1">
+              <select
+                value={selectedProfileId}
+                onChange={(e) => setSelectedProfileId(e.target.value)}
+                className="flex-1 bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {profiles.map((p: ServerProfile) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {selectedProfile && (
+                <Button variant="outline" size="xs" onClick={startEditing} className="shrink-0 px-2">
+                  Edit
+                </Button>
+              )}
+            </div>
+          )}
+
+          {isActive && selectedProfile && (
+            <p className="text-xs text-foreground/70 font-medium">{selectedProfile.name}</p>
+          )}
+
+          {/* Selected profile paths */}
+          {selectedProfile && (
+            <div className="space-y-0.5">
+              {effectiveGamePath ? (
+                <div className="bg-muted rounded-md px-2 py-1 text-xs">
+                  <span className="text-muted-foreground">Game: </span>
+                  <span className="text-foreground/80 break-all font-mono text-[11px]">
+                    {effectiveGamePath}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-destructive">No game path — click Edit to configure.</p>
+              )}
+              {effectiveExePath ? (
+                <div className="bg-muted rounded-md px-2 py-1 text-xs">
+                  <span className="text-muted-foreground">Exe: </span>
+                  <span className="text-foreground/80 break-all font-mono text-[11px]">
+                    {effectiveExePath}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-destructive">No executable — click Edit to configure.</p>
+              )}
+            </div>
+          )}
 
           <Separator />
 
@@ -212,80 +368,18 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                 PID {processStatus.pid}
               </Badge>
             )}
-            {state === "crashed" && processStatus && processStatus.exitCode !== null && (
+            {state === "crashed" && processStatus?.exitCode !== null && processStatus?.exitCode !== undefined && (
               <Badge variant="destructive" className="text-[10px] py-0 px-1.5">
                 exit {processStatus.exitCode}
               </Badge>
             )}
           </div>
 
-          {/* Profile selector */}
-          {!isActive && (
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">
-                D3 Server Profile
-              </label>
-              {profiles.length > 0 ? (
-                <select
-                  value={selectedProfile}
-                  onChange={(e) => setSelectedProfile(e.target.value)}
-                  className="w-full bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  {profiles.map((p: ServerProfile) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">
-                  No profiles yet. Create one to get started.
-                </p>
-              )}
-
-              {showCreateForm ? (
-                <div className="flex flex-col gap-1 mt-1">
-                  <input
-                    type="text"
-                    value={newProfileName}
-                    onChange={(e) => setNewProfileName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleCreateProfile()}
-                    placeholder="Profile name"
-                    className="w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    autoFocus
-                  />
-                  <div className="flex gap-1">
-                    <Button size="xs" onClick={handleCreateProfile} disabled={!newProfileName.trim()} className="flex-1">
-                      Create
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => { setShowCreateForm(false); setNewProfileName(""); }}
-                      className="flex-1"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="link"
-                  size="xs"
-                  onClick={() => setShowCreateForm(true)}
-                  className="mt-1 px-0 text-primary"
-                >
-                  + New Profile
-                </Button>
-              )}
-            </div>
-          )}
-
-          {/* Launch / Stop button */}
+          {/* Launch / Stop */}
           {isActive ? (
             <Button
               variant="destructive"
-              onClick={handleStop}
+              onClick={stop}
               disabled={state === "stopping"}
               className="w-full"
             >
@@ -294,28 +388,26 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           ) : (
             <Button
               onClick={handleLaunch}
-              disabled={!selectedProfile || launching}
+              disabled={!selectedProfileId || !profileHasPaths || launching}
               className="w-full"
             >
               {launching ? "Starting..." : "Launch Server"}
             </Button>
           )}
 
-          {/* Reset path */}
           {!isActive && (
             <Button
-              variant="ghost"
+              variant="link"
               size="xs"
-              onClick={handleReset}
-              className="w-full text-muted-foreground"
+              onClick={startCreating}
+              className="w-full px-0 text-muted-foreground"
             >
-              Change D3 path
+              + New Profile
             </Button>
           )}
         </div>
       )}
 
-      {/* Error display */}
       {error && (
         <p className="text-xs text-destructive bg-destructive/10 rounded-md px-2 py-1.5">
           {error}

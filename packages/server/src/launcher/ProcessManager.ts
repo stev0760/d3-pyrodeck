@@ -35,7 +35,8 @@ export interface LaunchConfig {
 }
 
 const TELNET_PROBE_INTERVAL_MS = 500;
-const TELNET_PROBE_TIMEOUT_MS = 15000;
+// 60s gives D3 plenty of time to initialize its telnet port on slow/Windows hosts.
+const TELNET_PROBE_TIMEOUT_MS = 60000;
 const GRACEFUL_QUIT_TIMEOUT_MS = 5000;
 const SIGTERM_TIMEOUT_MS = 3000;
 // How long to wait for a port to be released by the kernel after the previous
@@ -45,6 +46,11 @@ const SIGTERM_TIMEOUT_MS = 3000;
 // Linux TIME_WAIT is 2*MSL (typically 60s). Give ourselves headroom.
 const PORT_RELEASE_WAIT_MS = 90000;
 const PORT_RELEASE_POLL_INTERVAL_MS = 500;
+// Windows TIME_WAIT upper bound. Windows default TcpTimedWaitDelay is 240s but
+// in practice connections from a local loopback client tend to expire sooner.
+// We wait up to this long after a managed D3 exit before re-launching on the
+// same port.  First-launch never waits (no prior exit to worry about).
+const WINDOWS_TIME_WAIT_MS = 120_000;
 
 /**
  * Manages the D3 dedicated server process lifecycle.
@@ -70,6 +76,9 @@ export class ProcessManager extends EventEmitter {
   private telnetReady = false;
   private launchConfig: LaunchConfig | null = null;
   private logStream: fs.WriteStream | null = null;
+  // Track the last D3 exit so we only apply port-release waits when needed.
+  private lastExitedPort: number | null = null;
+  private lastExitedAt: number = 0;
 
   /** Send a quit command over telnet for graceful shutdown. Set externally. */
   sendQuitFn: (() => Promise<void>) | null = null;
@@ -293,7 +302,21 @@ export class ProcessManager extends EventEmitter {
     } catch { /* not Linux */ }
 
     if (!procAvailable) {
-      await new Promise((r) => setTimeout(r, 65000));
+      // On non-Linux (Windows) we can't read /proc/net/tcp, so we fall back to
+      // a timer-based heuristic.  Only wait if we recently managed a D3 process
+      // on this exact port — a first-ever launch has nothing in TIME_WAIT and
+      // should start immediately.
+      if (this.lastExitedPort === port) {
+        const elapsed = Date.now() - this.lastExitedAt;
+        if (elapsed < WINDOWS_TIME_WAIT_MS) {
+          const waitMs = WINDOWS_TIME_WAIT_MS - elapsed;
+          this.emit(
+            "stderr",
+            `Waiting ${Math.ceil(waitMs / 1000)}s for port ${port} to be released by the OS (Windows TIME_WAIT)...\n`,
+          );
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+      }
       return;
     }
 
@@ -309,6 +332,11 @@ export class ProcessManager extends EventEmitter {
 
   private cleanup(): void {
     this.stopTelnetProbe();
+    // Record exit so waitForPortFree() can skip the delay on first-ever launch.
+    if (this.launchConfig) {
+      this.lastExitedPort = this.launchConfig.telnetPort;
+      this.lastExitedAt = Date.now();
+    }
     if (this.logStream) {
       const timestamp = new Date().toISOString();
       this.logStream.write(`\n--- D3 Server stopped at ${timestamp} ---\n`);
@@ -354,7 +382,7 @@ export class ProcessManager extends EventEmitter {
         this.stopTelnetProbe();
         this.emit(
           "stderr",
-          "Telnet readiness probe timed out after 15s. Server may not have remote console enabled.\n",
+          `Telnet readiness probe timed out after ${TELNET_PROBE_TIMEOUT_MS / 1000}s. Server may not have remote console enabled.\n`,
         );
         return;
       }
@@ -363,7 +391,10 @@ export class ProcessManager extends EventEmitter {
       socket.setTimeout(400);
 
       socket.connect(port, "127.0.0.1", () => {
-        socket.destroy();
+        // Graceful half-close so D3 sees a FIN rather than an RST.
+        // An abrupt RST can leave D3's accept queue in an odd state and
+        // cause the immediately-following auto-connect attempt to be refused.
+        socket.end();
         if (!this.telnetReady) {
           this.onTelnetReady();
         }
@@ -391,7 +422,12 @@ export class ProcessManager extends EventEmitter {
     this.telnetReady = true;
     this.stopTelnetProbe();
     this.setState("running");
-    this.emit("telnetReady", this.launchConfig?.telnetPort ?? 2092);
+    const port = this.launchConfig?.telnetPort ?? 2092;
+    // Brief pause so D3 can finish processing the probe socket close before
+    // the auto-connect handler opens its own connection to the same port.
+    setTimeout(() => {
+      this.emit("telnetReady", port);
+    }, 300);
   }
 
   private waitForExit(timeoutMs: number): Promise<boolean> {

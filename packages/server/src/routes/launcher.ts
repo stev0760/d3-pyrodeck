@@ -293,27 +293,34 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     };
 
     const config = pyrodeckConfig.get();
-    if (!config.gamePath || !config.executablePath) {
-      return reply.status(400).send({
-        error: "Game path and executable not configured",
-      });
-    }
 
-    const gamePath = config.gamePath;
-
-    // Resolve config file from profile or default
+    // Resolve config file and effective paths from profile (if specified)
     let configFile = "dedicated.cfg";
     let profileLogPath: string | undefined;
+    // Start with global config; profile may override these
+    let gamePath = config.gamePath;
+    let executablePath = config.executablePath;
+
     if (body.profileId) {
-      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+      // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
+      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath ?? "");
       try {
         const profile = await profileManager.read(body.profileId);
         configFile = profile.configFile;
         profileLogPath = profile.logPath;
+        // Per-profile path overrides take precedence over global config
+        if (profile.gamePath) gamePath = profile.gamePath;
+        if (profile.executablePath) executablePath = profile.executablePath;
         await profileManager.markLaunched(body.profileId);
       } catch {
         return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
       }
+    }
+
+    if (!gamePath || !executablePath) {
+      return reply.status(400).send({
+        error: "Game path and executable not configured (set in Pyrodeck Settings or add overrides to the profile)",
+      });
     }
 
     const cfgPath = path.join(gamePath, configFile);
@@ -360,7 +367,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Resolve executable path (if relative, join with gamePath)
-    let executablePath = config.executablePath;
+    // executablePath is already set from profile override or global config above
     if (!path.isAbsolute(executablePath)) {
       executablePath = path.join(gamePath, executablePath);
     }

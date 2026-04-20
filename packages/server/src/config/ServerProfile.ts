@@ -18,6 +18,19 @@ export interface ServerProfile {
   configFile: string;
   /** Optional absolute path for the server log file. Defaults to server.log in Pyrodeck config dir. */
   logPath?: string;
+  /**
+   * Override the global game data directory for this profile.
+   * Use this when a profile belongs to a different D3 install
+   * (e.g. Matcen at one path, PiccuEngine at another).
+   * If omitted, inherits the global gamePath from pyrodeck.json.
+   */
+  gamePath?: string;
+  /**
+   * Override the global D3 executable for this profile.
+   * May be an absolute path or a filename relative to the profile's effective gamePath.
+   * If omitted, inherits executablePath from pyrodeck.json.
+   */
+  executablePath?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -167,21 +180,26 @@ export class ServerProfileManager {
   async create(
     name: string,
     cfgDefaults?: DedicatedCfgDefaults,
+    overrides?: { gamePath?: string; executablePath?: string },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
 
-    // Generate a unique config filename in gamePath
+    // Use the profile-specific gamePath if provided, otherwise fall back to
+    // this manager's gamePath (which comes from the global Pyrodeck config).
+    const effectiveGamePath = overrides?.gamePath ?? this.gamePath;
+
+    // Generate a unique config filename in the effective gamePath
     let existingFiles: string[] = [];
     try {
-      existingFiles = await fs.readdir(this.gamePath);
+      existingFiles = await fs.readdir(effectiveGamePath);
     } catch {
       // gamePath may not exist yet
     }
     const cfgFile = configFilename(name, existingFiles);
 
-    // Write the config file to gamePath
+    // Write the config file to the effective gamePath
     const cfgContent = generateDedicatedCfg(cfgDefaults);
-    await fs.writeFile(path.join(this.gamePath, cfgFile), cfgContent);
+    await fs.writeFile(path.join(effectiveGamePath, cfgFile), cfgContent);
 
     const profile: ServerProfile = {
       id: crypto.randomUUID(),
@@ -189,6 +207,8 @@ export class ServerProfileManager {
       configFile: cfgFile,
       createdAt: new Date().toISOString(),
     };
+    if (overrides?.gamePath) profile.gamePath = overrides.gamePath;
+    if (overrides?.executablePath) profile.executablePath = overrides.executablePath;
 
     profiles.push(profile);
     await this.saveProfiles(profiles);
@@ -217,10 +237,16 @@ export class ServerProfileManager {
     return profile;
   }
 
-  /** Update profile metadata (name, description, logPath). */
+  /** Update profile metadata (name, description, logPath, gamePath, executablePath). */
   async update(
     id: string,
-    updates: { name?: string; description?: string; logPath?: string | null },
+    updates: {
+      name?: string;
+      description?: string;
+      logPath?: string | null;
+      gamePath?: string | null;
+      executablePath?: string | null;
+    },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
     const profile = profiles.find((p) => p.id === id);
@@ -233,6 +259,20 @@ export class ServerProfileManager {
         delete profile.logPath;
       } else {
         profile.logPath = updates.logPath;
+      }
+    }
+    if (updates.gamePath !== undefined) {
+      if (updates.gamePath === null || updates.gamePath === "") {
+        delete profile.gamePath;
+      } else {
+        profile.gamePath = updates.gamePath;
+      }
+    }
+    if (updates.executablePath !== undefined) {
+      if (updates.executablePath === null || updates.executablePath === "") {
+        delete profile.executablePath;
+      } else {
+        profile.executablePath = updates.executablePath;
       }
     }
 
@@ -264,10 +304,13 @@ export class ServerProfileManager {
     const source = await this.read(id);
     const name = newName ?? `${source.name} (copy)`;
 
+    // The duplicate lives in the same effective gamePath as the source
+    const effectiveGamePath = source.gamePath ?? this.gamePath;
+
     // Copy the config file to a new unique filename
     let existingFiles: string[] = [];
     try {
-      existingFiles = await fs.readdir(this.gamePath);
+      existingFiles = await fs.readdir(effectiveGamePath);
     } catch {
       // gamePath may not exist
     }
@@ -275,8 +318,8 @@ export class ServerProfileManager {
 
     try {
       await fs.copyFile(
-        path.join(this.gamePath, source.configFile),
-        path.join(this.gamePath, newCfgFile),
+        path.join(effectiveGamePath, source.configFile),
+        path.join(effectiveGamePath, newCfgFile),
       );
     } catch {
       throw new Error(`Cannot copy config file: ${source.configFile}`);
@@ -289,6 +332,10 @@ export class ServerProfileManager {
       configFile: newCfgFile,
       createdAt: new Date().toISOString(),
     };
+    // Inherit the source profile's path overrides
+    if (source.gamePath) profile.gamePath = source.gamePath;
+    if (source.executablePath) profile.executablePath = source.executablePath;
+
     profiles.push(profile);
     await this.saveProfiles(profiles);
     return profile;

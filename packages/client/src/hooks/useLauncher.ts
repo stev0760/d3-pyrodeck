@@ -23,6 +23,10 @@ export interface ServerProfile {
   description?: string;
   configFile: string;
   logPath?: string;
+  /** Per-profile game data directory override (inherits global if omitted). */
+  gamePath?: string;
+  /** Per-profile D3 executable override (inherits global if omitted). */
+  executablePath?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -45,6 +49,7 @@ export function useLauncher() {
     null,
   );
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [detectResult, setDetectResult] = useState<DetectResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +66,14 @@ export function useLauncher() {
         setLoading(false);
       });
   }, []);
+
+  // Auto-select the first profile when the list is first populated.
+  // Keep the selection if the previously-selected profile is still present.
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    if (selectedProfileId && profiles.some((p) => p.id === selectedProfileId)) return;
+    setSelectedProfileId(profiles[0].id);
+  }, [profiles, selectedProfileId]);
 
   // Poll process status when running/starting
   useEffect(() => {
@@ -185,6 +198,34 @@ export function useLauncher() {
     [fetchProfiles],
   );
 
+  const updateProfile = useCallback(
+    async (
+      id: string,
+      updates: { name?: string; gamePath?: string | null; executablePath?: string | null; description?: string | null },
+    ): Promise<ServerProfile | null> => {
+      setError(null);
+      try {
+        const res = await fetch(`/api/profiles/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(updates),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Failed to update profile");
+          return null;
+        }
+        await fetchProfiles();
+        return data as ServerProfile;
+      } catch {
+        setError("Failed to update profile");
+        return null;
+      }
+    },
+    [fetchProfiles],
+  );
+
   const deleteProfile = useCallback(
     async (id: string): Promise<boolean> => {
       setError(null);
@@ -290,6 +331,8 @@ export function useLauncher() {
     config,
     processStatus,
     profiles,
+    selectedProfileId,
+    setSelectedProfileId,
     detectResult,
     loading,
     error,
@@ -298,6 +341,7 @@ export function useLauncher() {
     detect,
     fetchProfiles,
     createProfile,
+    updateProfile,
     deleteProfile,
     duplicateProfile,
     launch,

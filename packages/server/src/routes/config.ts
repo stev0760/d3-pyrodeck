@@ -18,12 +18,44 @@ import { pyrodeckConfig } from "./pyrodeck-config.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
+/**
+ * Manager for profile *metadata* operations (list, read, delete, update fields).
+ * Profile records live in CONFIG_DIR/profiles.json — gamePath is irrelevant here.
+ * Only file operations (readFile, writeFile, etc.) need the right gamePath.
+ */
+function getMetadataManager(): ServerProfileManager {
+  return new ServerProfileManager(CONFIG_DIR, "");
+}
+
+/** @deprecated Use getMetadataManager() or getProfileManagerForId() instead. */
 function getProfileManager(): ServerProfileManager {
   const config = pyrodeckConfig.get();
-  if (!config.gamePath) {
-    throw new Error("Game path not configured");
+  return new ServerProfileManager(CONFIG_DIR, config.gamePath ?? "");
+}
+
+/**
+ * Load a profile and return a ServerProfileManager bound to that profile's
+ * effective gamePath (profile.gamePath ?? global gamePath).
+ *
+ * All profile-scoped file operations (read/write config, bot roster, etc.)
+ * should go through this helper so that profiles with a custom gamePath
+ * (e.g. a PiccuEngine install in a different directory) work correctly.
+ */
+async function getProfileManagerForId(id: string): Promise<{ manager: ServerProfileManager; profile: import("../config/ServerProfile.js").ServerProfile }> {
+  const globalConfig = pyrodeckConfig.get();
+  // profiles.json lives in CONFIG_DIR — we can read it with any gamePath
+  const baseManager = new ServerProfileManager(CONFIG_DIR, globalConfig.gamePath ?? "");
+  const profile = await baseManager.read(id);
+
+  const effectiveGamePath = profile.gamePath ?? globalConfig.gamePath;
+  if (!effectiveGamePath) {
+    throw new Error(`Profile "${profile.name}" has no game path configured. Edit the profile and set a Game Path.`);
   }
-  return new ServerProfileManager(CONFIG_DIR, config.gamePath);
+
+  return {
+    manager: new ServerProfileManager(CONFIG_DIR, effectiveGamePath),
+    profile,
+  };
 }
 
 export async function configRoutes(app: FastifyInstance): Promise<void> {
@@ -32,7 +64,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   /** List all server profiles. */
   app.get("/api/profiles", async (_request, reply) => {
     try {
-      const profiles = await getProfileManager().list();
+      const profiles = await getMetadataManager().list();
       return { profiles };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to list profiles";
@@ -44,7 +76,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      const profile = await getProfileManager().read(id);
+      const profile = await getMetadataManager().read(id);
       return profile;
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
@@ -62,22 +94,47 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       maxPlayers?: number;
       pps?: number;
       consolePassword?: string;
+      /** Override the global game data directory for this profile. */
+      gamePath?: string;
+      /** Override the global D3 executable for this profile. */
+      executablePath?: string;
     };
 
     try {
-      const manager = getProfileManager();
+      // Use a profile-specific gamePath if provided; otherwise fall back to global.
+      const globalConfig = pyrodeckConfig.get();
+      const effectiveGamePath = body.gamePath ?? globalConfig.gamePath;
+      if (!effectiveGamePath) {
+        return reply.status(400).send({ error: "Game path not configured" });
+      }
+      const manager = new ServerProfileManager(CONFIG_DIR, effectiveGamePath);
+
       let profile;
       if (body.existingConfigFile) {
         profile = await manager.importExisting(body.name, body.existingConfigFile);
+        // Store overrides on the imported profile
+        if (body.gamePath || body.executablePath) {
+          profile = await manager.update(profile.id, {
+            gamePath: body.gamePath ?? null,
+            executablePath: body.executablePath ?? null,
+          });
+        }
       } else {
-        profile = await manager.create(body.name, {
-          gameName: body.gameName,
-          missionName: body.missionName,
-          scriptName: body.scriptName,
-          maxPlayers: body.maxPlayers,
-          pps: body.pps,
-          consolePassword: body.consolePassword,
-        });
+        profile = await manager.create(
+          body.name,
+          {
+            gameName: body.gameName,
+            missionName: body.missionName,
+            scriptName: body.scriptName,
+            maxPlayers: body.maxPlayers,
+            pps: body.pps,
+            consolePassword: body.consolePassword,
+          },
+          {
+            gamePath: body.gamePath,
+            executablePath: body.executablePath,
+          },
+        );
       }
       return profile;
     } catch (err) {
@@ -89,10 +146,16 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   /** Update profile metadata. */
   app.patch("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const updates = request.body as { name?: string; description?: string; logPath?: string | null };
+    const updates = request.body as {
+      name?: string;
+      description?: string;
+      logPath?: string | null;
+      gamePath?: string | null;
+      executablePath?: string | null;
+    };
 
     try {
-      const profile = await getProfileManager().update(id, updates);
+      const profile = await getMetadataManager().update(id, updates);
       return profile;
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
@@ -103,7 +166,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.delete("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      await getProfileManager().delete(id);
+      await getMetadataManager().delete(id);
       return { ok: true };
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
@@ -116,10 +179,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const body = request.body as { name?: string } | undefined;
 
     try {
-      const profile = await getProfileManager().duplicate(id, body?.name);
+      // duplicate() uses the source profile's effective gamePath internally
+      const { manager } = await getProfileManagerForId(id);
+      const profile = await manager.duplicate(id, body?.name);
       return profile;
-    } catch {
-      return reply.status(404).send({ error: "Profile not found" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Profile not found";
+      return reply.status(404).send({ error: message });
     }
   });
 
@@ -132,8 +198,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/profiles/:id/companions", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      const manager = getProfileManager();
-      const profile = await manager.read(id);
+      const { manager, profile } = await getProfileManagerForId(id);
 
       // Parse the server config
       let cfgContent: string;
@@ -226,12 +291,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** Read a file from gamePath (profile-scoped, same underlying operation). */
+  /** Read a file from the profile's gamePath. */
   app.get("/api/profiles/:id/files/:filename", async (request, reply) => {
-    const { filename } = request.params as { id: string; filename: string };
+    const { id, filename } = request.params as { id: string; filename: string };
 
     try {
-      const content = await getProfileManager().readFile(filename);
+      const { manager } = await getProfileManagerForId(id);
+      const content = await manager.readFile(filename);
       return { filename, content };
     } catch (err) {
       const message = err instanceof Error ? err.message : "File not found";
@@ -253,13 +319,12 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const manager = getProfileManager();
+      const { manager, profile } = await getProfileManagerForId(id);
       await manager.writeFile(filename, content);
 
       // Auto-add CVar reference if specified
       if (cvar) {
         try {
-          const profile = await manager.read(id);
           await manager.ensureConfigReference(profile.configFile, cvar, filename);
         } catch {
           // Non-fatal: companion file was saved, config ref is advisory
@@ -283,8 +348,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/profiles/:id/structured-config", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      const manager = getProfileManager();
-      const profile = await manager.read(id);
+      const { manager, profile } = await getProfileManagerForId(id);
 
       let cfgContent: string;
       try {
@@ -328,8 +392,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const manager = getProfileManager();
-      const profile = await manager.read(id);
+      const { manager, profile } = await getProfileManagerForId(id);
 
       // Handle .mps file for ship bans
       if (data.bannedShips && data.bannedShips.length > 0) {
@@ -364,8 +427,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/profiles/:id/bot-roster", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      const manager = getProfileManager();
-      const profile = await manager.read(id);
+      const { manager, profile } = await getProfileManagerForId(id);
 
       const cfgContent = await manager.readFile(profile.configFile);
       const entries = parseDedicatedCfg(cfgContent);
@@ -402,8 +464,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const manager = getProfileManager();
-      const profile = await manager.read(id);
+      const { manager, profile } = await getProfileManagerForId(id);
 
       const cfgContent = await manager.readFile(profile.configFile);
       const entries = parseDedicatedCfg(cfgContent);
@@ -480,13 +541,12 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const { cvar } = request.query as { cvar?: string };
 
     try {
-      const manager = getProfileManager();
+      const { manager, profile } = await getProfileManagerForId(id);
       await manager.deleteFile(filename);
 
       // Auto-remove CVar reference if specified
       if (cvar) {
         try {
-          const profile = await manager.read(id);
           await manager.removeConfigReference(profile.configFile, cvar);
         } catch {
           // Non-fatal

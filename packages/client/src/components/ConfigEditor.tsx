@@ -5,6 +5,8 @@ import { BotRosterForm } from "./BotRosterForm.tsx";
 
 interface ConfigEditorProps {
   profiles: ServerProfile[];
+  /** The profile currently selected in the Launch panel — drives what's shown here. */
+  selectedProfileId: string;
   onRefreshProfiles: () => void;
 }
 
@@ -86,6 +88,7 @@ type ConfigView = "profiles" | "game-files";
 
 export function ConfigEditor({
   profiles,
+  selectedProfileId,
   onRefreshProfiles,
 }: ConfigEditorProps) {
   const [view, setView] = useState<ConfigView>("profiles");
@@ -100,7 +103,7 @@ export function ConfigEditor({
               D3 Server Configuration
             </h2>
             <p className="text-xs text-muted-foreground">
-              Manage server profiles and config files
+              Editing profile selected in the Launch panel
             </p>
           </div>
           {/* View toggle */}
@@ -113,7 +116,7 @@ export function ConfigEditor({
                   : "text-muted-foreground hover:text-foreground/80"
               }`}
             >
-              Profiles
+              Profile
             </button>
             <button
               onClick={() => setView("game-files")}
@@ -139,6 +142,7 @@ export function ConfigEditor({
         {view === "profiles" ? (
           <ProfileEditor
             profiles={profiles}
+            selectedProfileId={selectedProfileId}
             onRefreshProfiles={onRefreshProfiles}
           />
         ) : (
@@ -158,12 +162,13 @@ export function ConfigEditor({
 
 function ProfileEditor({
   profiles,
+  selectedProfileId,
   onRefreshProfiles,
 }: {
   profiles: ServerProfile[];
+  selectedProfileId: string;
   onRefreshProfiles: () => void;
 }) {
-  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [configViewMode, setConfigViewMode] = useState<"structured" | "raw">("structured");
   const [botViewMode, setBotViewMode] = useState<"structured" | "raw">("structured");
@@ -182,13 +187,6 @@ function ProfileEditor({
   // For linking existing bot roster
   const [showBotLink, setShowBotLink] = useState(false);
   const [availableBotFiles, setAvailableBotFiles] = useState<ClassifiedGameFile[]>([]);
-
-  // Auto-select first profile
-  useEffect(() => {
-    if (profiles.length > 0 && !selectedProfileId) {
-      setSelectedProfileId(profiles[0].id);
-    }
-  }, [profiles, selectedProfileId]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
 
@@ -230,11 +228,12 @@ function ProfileEditor({
     }
   }, [selectedProfileId, selectedProfile]);
 
-  // Load file content when editingFile changes
-  const loadFile = useCallback(async (filename: string) => {
+  // Load file content when editingFile changes (always use profile-scoped endpoint
+  // so profiles with a custom gamePath read from the right directory)
+  const loadFile = useCallback(async (filename: string, profileId: string) => {
     try {
       const res = await fetch(
-        `/api/game-files/${encodeURIComponent(filename)}`,
+        `/api/profiles/${encodeURIComponent(profileId)}/files/${encodeURIComponent(filename)}`,
         { credentials: "include" },
       );
       if (res.ok) {
@@ -253,8 +252,8 @@ function ProfileEditor({
   }, []);
 
   useEffect(() => {
-    if (editingFile) loadFile(editingFile);
-  }, [editingFile, loadFile]);
+    if (editingFile && selectedProfile) loadFile(editingFile, selectedProfile.id);
+  }, [editingFile, selectedProfile, loadFile]);
 
   const saveFile = async () => {
     if (!selectedProfile || !editingFile) return;
@@ -397,30 +396,34 @@ function ProfileEditor({
     );
   }
 
+  if (!selectedProfile) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">
+          Select a profile in the Launch panel to edit its configuration.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex gap-3">
-      {/* Left nav: profile selector + file navigation */}
+      {/* Left nav: file navigation */}
       <div className="w-60 shrink-0 flex flex-col overflow-y-auto">
-        {/* Profile selector */}
-        <label className="text-xs text-muted-foreground mb-1">Profile</label>
-        <select
-          value={selectedProfileId}
-          onChange={(e) => setSelectedProfileId(e.target.value)}
-          className="px-2 py-1.5 bg-muted border border-border rounded text-sm text-foreground mb-3"
-        >
-          <option value="">Select profile...</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {/* Profile name heading */}
+        <div className="mb-3">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+            Profile
+          </p>
+          <p className="text-sm font-medium text-foreground/90 mt-0.5">
+            {selectedProfile.name}
+          </p>
+        </div>
 
-        {selectedProfile && (
-          <div className="mb-3">
-            <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-1">
-              Log File
-            </label>
+        <div className="mb-3">
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-1">
+            Log File
+          </label>
             <div className="flex gap-1">
               <input
                 type="text"
@@ -465,9 +468,8 @@ function ProfileEditor({
               </button>
             </div>
           </div>
-        )}
 
-        {selectedProfile && companions && (
+        {companions && (
           <>
             {/* Server config (primary) */}
             <NavButton

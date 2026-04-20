@@ -183,7 +183,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             <span className="sr-only">Open panel</span>
           </Button>
           <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
-          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.0</span>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.1</span>
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
@@ -327,6 +327,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           <TabsContent value="config" className="p-3 min-h-0">
             <ConfigEditor
               profiles={launcher.profiles}
+              selectedProfileId={launcher.selectedProfileId}
               onRefreshProfiles={launcher.fetchProfiles}
             />
           </TabsContent>
