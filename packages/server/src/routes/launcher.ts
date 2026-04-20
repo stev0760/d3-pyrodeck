@@ -33,6 +33,15 @@ playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
   wsBroadcast("playlist_timer", { gameEndAt });
 });
 
+/**
+ * Build a single-line vote prompt sized for D3's 2-line chat window.
+ * Example: "Vote next map (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
+ */
+function buildVotePromptLine(options: PlaylistEntry[]): string {
+  const parts = options.map((o, i) => `${i + 1}=${o.label}`).join("  ");
+  return `say Vote next map (type 1-${options.length}): ${parts}`;
+}
+
 playlistManager.on("voteAnnounce", (options: PlaylistEntry[], timeoutMs: number) => {
   wsBroadcast("playlist_vote_announce", {
     options: options.map((o, i) => ({ index: i + 1, id: o.id, label: o.label, missionName: o.missionName })),
@@ -40,23 +49,31 @@ playlistManager.on("voteAnnounce", (options: PlaylistEntry[], timeoutMs: number)
     deadline: Date.now() + timeoutMs,
   });
 
-  // Broadcast voting announcement to players in-game
   if (options.length > 0 && playlistManager.sendCommandFn) {
-    const lines: string[] = [
-      "say Vote for next mission! Type a number in chat:",
-    ];
-    options.forEach((o, i) => {
-      lines.push(`say  ${i + 1} = ${o.label}`);
-    });
-    const send = playlistManager.sendCommandFn;
-    (async () => {
-      for (const line of lines) {
-        try { await send(line); } catch { /* ignore */ }
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    })().catch(() => {});
+    playlistManager.sendCommandFn(buildVotePromptLine(options)).catch(() => {});
   }
 });
+
+// Periodic reminder — D3 chat clips to the last ~2 lines, so we re-send the
+// prompt every 10s while the vote is open so late joiners and busy players
+// still see it.
+playlistManager.on("voteReminder", (options: PlaylistEntry[]) => {
+  if (options.length > 0 && playlistManager.sendCommandFn) {
+    playlistManager.sendCommandFn(buildVotePromptLine(options)).catch(() => {});
+  }
+});
+
+// Acknowledge votes in chat so players know their vote registered.
+playlistManager.on(
+  "voteReceived",
+  (payload: { playerName: string; option: PlaylistEntry; changed: boolean; voterCount: number }) => {
+    if (!playlistManager.sendCommandFn) return;
+    const verb = payload.changed ? "changed vote to" : "voted for";
+    playlistManager.sendCommandFn(
+      `say [Vote ${payload.voterCount}] ${payload.playerName} ${verb}: ${payload.option.label}`,
+    ).catch(() => {});
+  },
+);
 
 playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
   wsBroadcast("playlist_vote_result", {
@@ -66,7 +83,7 @@ playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
 
   // Announce winner in-game
   if (playlistManager.sendCommandFn) {
-    playlistManager.sendCommandFn(`say Next mission: ${winner.label}`)
+    playlistManager.sendCommandFn(`say Vote closed — next map: ${winner.label}`)
       .catch(() => {});
   }
 });
@@ -157,15 +174,9 @@ function registerAutoConnect(telnetPassword: string): void {
 // Rotate: stop server, swap mission CVar, restart
 playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   const config = pyrodeckConfig.get();
-  const gamePath = config.gamePath;
+  const globalGamePath = config.gamePath;
 
   console.log(`[Playlist] Rotate triggered for entry: ${entry.label} (${entry.missionName})`);
-
-  if (!gamePath) {
-    wsBroadcast("error", { message: "Playlist rotation failed: game path not configured" });
-    playlistManager.markRotationComplete();
-    return;
-  }
 
   // Announce rotation if server is running
   if (playlistManager.sendCommandFn && processManager.isRunning()) {
@@ -186,76 +197,97 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   processManager.sendQuitFn = null;
   playlistManager.sendCommandFn = null;
 
-  // Get the current profile's config file
   const launchStatus = processManager.getStatus();
   if (launchStatus.state === "running" || launchStatus.state === "starting") {
     await processManager.stop();
   }
 
-  // Swap MissionName in the active profile's config file
-  const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+  // Resolve the active profile via profiles.json (profile records live in
+  // CONFIG_DIR; we only need a valid gamePath for the ServerProfileManager's
+  // file ops AFTER we pick the profile, so pass an empty string initially).
+  const metadataManager = new ServerProfileManager(CONFIG_DIR, "");
   try {
-    const profiles = await profileManager.list();
-    if (profiles.length > 0) {
-      // Use the most recently launched profile
-      const sorted = profiles
-        .filter((p) => p.lastLaunchedAt)
-        .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""));
-      const activeProfile = sorted[0] ?? profiles[0];
+    const profiles = await metadataManager.list();
+    if (profiles.length === 0) {
+      console.warn("[Playlist] No profiles found; cannot rotate");
+      playlistManager.markRotationComplete();
+      return;
+    }
 
+    // Pick the most recently launched profile (this is the one that was
+    // running when the rotation fired).
+    const sorted = profiles
+      .filter((p) => p.lastLaunchedAt)
+      .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""));
+    const activeProfile = sorted[0] ?? profiles[0];
+
+    // Profile overrides take precedence over global config — profiles with a
+    // custom gamePath / executablePath (e.g. a PiccuEngine install) rely on
+    // these to resolve correctly across a mission rotation.
+    const gamePath = activeProfile.gamePath ?? globalGamePath;
+    const executablePathRaw = activeProfile.executablePath ?? config.executablePath;
+
+    if (!gamePath || !executablePathRaw) {
+      wsBroadcast("error", {
+        message:
+          "Playlist rotation failed: game path or executable not configured for the active profile",
+      });
+      playlistManager.markRotationComplete();
+      return;
+    }
+
+    // Re-bind the profile manager to the effective gamePath for file ops.
+    const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+
+    await profileManager.ensureConfigReference(
+      activeProfile.configFile,
+      "MissionName",
+      entry.missionName,
+    );
+
+    if (entry.startingLevel !== undefined) {
       await profileManager.ensureConfigReference(
         activeProfile.configFile,
-        "MissionName",
-        entry.missionName,
+        "SetLevel",
+        String(entry.startingLevel),
       );
+    }
 
-      if (entry.startingLevel !== undefined) {
-        await profileManager.ensureConfigReference(
-          activeProfile.configFile,
-          "SetLevel",
-          String(entry.startingLevel),
-        );
-      }
+    // Restart the server with the updated config
+    const cfgPath = path.join(gamePath, activeProfile.configFile);
+    try {
+      const cfgContent = await fs.readFile(cfgPath, "utf-8");
+      const entries = parseDedicatedCfg(cfgContent);
+      const telnetCfg = extractTelnetConfig(entries);
 
-      // Restart the server with the updated config
-      const cfgPath = path.join(gamePath, activeProfile.configFile);
-      try {
-        const cfgContent = await fs.readFile(cfgPath, "utf-8");
-        const entries = parseDedicatedCfg(cfgContent);
-        const telnetCfg = extractTelnetConfig(entries);
-
-        if (telnetCfg.enabled && telnetCfg.password) {
-          let executablePath = config.executablePath ?? "";
-          if (!path.isAbsolute(executablePath)) {
-            executablePath = path.join(gamePath, executablePath);
-          }
-          const logPath = activeProfile.logPath ?? path.join(CONFIG_DIR, "server.log");
-
-          // Register auto-connect handler BEFORE calling start()
-          registerAutoConnect(telnetCfg.password);
-
-          await profileManager.markLaunched(activeProfile.id);
-          await processManager.start({
-            executablePath,
-            gamePath,
-            configFile: activeProfile.configFile,
-            logPath,
-            telnetPort: telnetCfg.port,
-            telnetPassword: telnetCfg.password,
-          });
-
-          wsBroadcast("playlist_rotate", {
-            entry: { id: entry.id, label: entry.label, missionName: entry.missionName },
-          });
+      if (telnetCfg.enabled && telnetCfg.password) {
+        let executablePath = executablePathRaw;
+        if (!path.isAbsolute(executablePath)) {
+          executablePath = path.join(gamePath, executablePath);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Playlist] Restart failed: ${message}`);
-        wsBroadcast("error", { message: `Playlist restart failed: ${message}` });
-        playlistManager.markRotationComplete();
+        const logPath = activeProfile.logPath ?? path.join(CONFIG_DIR, "server.log");
+
+        // Register auto-connect handler BEFORE calling start()
+        registerAutoConnect(telnetCfg.password);
+
+        await profileManager.markLaunched(activeProfile.id);
+        await processManager.start({
+          executablePath,
+          gamePath,
+          configFile: activeProfile.configFile,
+          logPath,
+          telnetPort: telnetCfg.port,
+          telnetPassword: telnetCfg.password,
+        });
+
+        wsBroadcast("playlist_rotate", {
+          entry: { id: entry.id, label: entry.label, missionName: entry.missionName },
+        });
       }
-    } else {
-      console.warn("[Playlist] No profiles found; cannot rotate");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Playlist] Restart failed: ${message}`);
+      wsBroadcast("error", { message: `Playlist restart failed: ${message}` });
       playlistManager.markRotationComplete();
     }
   } catch (err) {

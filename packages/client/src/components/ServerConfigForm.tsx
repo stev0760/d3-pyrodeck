@@ -322,8 +322,8 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
         fetch(`/api/profiles/${encodeURIComponent(profileId)}/structured-config`, {
           credentials: "include",
         }),
-        fetch("/api/game-files/missions", { credentials: "include" }),
-        fetch("/api/game-files/netgames", { credentials: "include" }),
+        fetch(`/api/game-files/missions?profileId=${encodeURIComponent(profileId)}`, { credentials: "include" }),
+        fetch(`/api/game-files/netgames?profileId=${encodeURIComponent(profileId)}`, { credentials: "include" }),
       ]);
 
       if (!cfgRes.ok) {

@@ -27,10 +27,36 @@ function getMetadataManager(): ServerProfileManager {
   return new ServerProfileManager(CONFIG_DIR, "");
 }
 
-/** @deprecated Use getMetadataManager() or getProfileManagerForId() instead. */
-function getProfileManager(): ServerProfileManager {
-  const config = pyrodeckConfig.get();
-  return new ServerProfileManager(CONFIG_DIR, config.gamePath ?? "");
+/**
+ * Resolve an effective gamePath. If `profileId` is given, use that profile's
+ * gamePath override when set; otherwise fall back to the global gamePath.
+ */
+async function resolveGamePath(profileId?: string): Promise<string> {
+  const globalConfig = pyrodeckConfig.get();
+  if (profileId) {
+    const baseManager = new ServerProfileManager(CONFIG_DIR, globalConfig.gamePath ?? "");
+    try {
+      const profile = await baseManager.read(profileId);
+      const effective = profile.gamePath ?? globalConfig.gamePath;
+      if (!effective) {
+        throw new Error(`Profile "${profile.name}" has no game path configured.`);
+      }
+      return effective;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("game path")) throw err;
+      // Profile not found — fall through to global
+    }
+  }
+  if (!globalConfig.gamePath) {
+    throw new Error("Game path not configured");
+  }
+  return globalConfig.gamePath;
+}
+
+/** Build a ServerProfileManager for bare file ops, scoped by optional profileId. */
+async function getFileManager(profileId?: string): Promise<ServerProfileManager> {
+  const gamePath = await resolveGamePath(profileId);
+  return new ServerProfileManager(CONFIG_DIR, gamePath);
 }
 
 /**
@@ -250,10 +276,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
 
   // --- File access (files live in gamePath) ---
 
-  /** List and classify config-related files in gamePath. */
-  app.get("/api/game-files", async (_request, reply) => {
+  /**
+   * List and classify config-related files in gamePath.
+   * If `?profileId=xxx` is provided, uses that profile's gamePath override.
+   */
+  app.get("/api/game-files", async (request, reply) => {
+    const { profileId } = request.query as { profileId?: string };
     try {
-      const files = await getProfileManager().classifyGameFiles();
+      const manager = await getFileManager(profileId);
+      const files = await manager.classifyGameFiles();
       return { files };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to list files";
@@ -261,11 +292,16 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** Read a file from gamePath (no profile context needed). */
+  /**
+   * Read a file from gamePath.
+   * If `?profileId=xxx` is provided, reads from that profile's gamePath override.
+   */
   app.get("/api/game-files/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
+    const { profileId } = request.query as { profileId?: string };
     try {
-      const content = await getProfileManager().readFile(filename);
+      const manager = await getFileManager(profileId);
+      const content = await manager.readFile(filename);
       return { filename, content };
     } catch (err) {
       const message = err instanceof Error ? err.message : "File not found";
@@ -273,9 +309,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** Write a file to gamePath (no profile context needed). */
+  /**
+   * Write a file to gamePath.
+   * If `?profileId=xxx` is provided, writes to that profile's gamePath override.
+   */
   app.put("/api/game-files/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
+    const { profileId } = request.query as { profileId?: string };
     const { content } = request.body as { content: string };
 
     if (typeof content !== "string") {
@@ -283,7 +323,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      await getProfileManager().writeFile(filename, content);
+      const manager = await getFileManager(profileId);
+      await manager.writeFile(filename, content);
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Write failed";
@@ -491,14 +532,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /api/game-files/missions
    * List available .mn3 mission files from gamePath/missions/.
+   * If `?profileId=xxx` is provided, uses that profile's gamePath override.
    */
-  app.get("/api/game-files/missions", async (_request, reply) => {
-    const config = pyrodeckConfig.get();
-    if (!config.gamePath) {
-      return reply.status(400).send({ error: "Game path not configured" });
-    }
+  app.get("/api/game-files/missions", async (request, reply) => {
+    const { profileId } = request.query as { profileId?: string };
     try {
-      const missionsDir = path.join(config.gamePath, "missions");
+      const gamePath = await resolveGamePath(profileId);
+      const missionsDir = path.join(gamePath, "missions");
       const entries = await fs.readdir(missionsDir);
       const missions = entries.filter((f) => f.toLowerCase().endsWith(".mn3")).sort();
       return { missions };
@@ -512,14 +552,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
    * GET /api/game-files/netgames
    * List available .d3m game type scripts from gamePath/netgames/.
    * Returns filenames without the .d3m extension for use as Scriptname= values.
+   * If `?profileId=xxx` is provided, uses that profile's gamePath override.
    */
-  app.get("/api/game-files/netgames", async (_request, reply) => {
-    const config = pyrodeckConfig.get();
-    if (!config.gamePath) {
-      return reply.status(400).send({ error: "Game path not configured" });
-    }
+  app.get("/api/game-files/netgames", async (request, reply) => {
+    const { profileId } = request.query as { profileId?: string };
     try {
-      const netgamesDir = path.join(config.gamePath, "netgames");
+      const gamePath = await resolveGamePath(profileId);
+      const netgamesDir = path.join(gamePath, "netgames");
       const entries = await fs.readdir(netgamesDir);
       const scripts = entries
         .filter((f) => f.toLowerCase().endsWith(".d3m"))

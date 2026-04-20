@@ -148,6 +148,7 @@ export function ConfigEditor({
         ) : (
           <GameFileBrowser
             profiles={profiles}
+            selectedProfileId={selectedProfileId}
             onRefreshProfiles={onRefreshProfiles}
           />
         )}
@@ -311,9 +312,9 @@ function ProfileEditor({
     if (!selectedProfile) return;
     try {
       const manager = `/api/profiles/${encodeURIComponent(selectedProfile.id)}`;
-      // Read existing content
+      // Read existing content from the profile's gamePath
       const readRes = await fetch(
-        `/api/game-files/${encodeURIComponent(filename)}`,
+        `${manager}/files/${encodeURIComponent(filename)}`,
         { credentials: "include" },
       );
       if (!readRes.ok) return;
@@ -340,7 +341,7 @@ function ProfileEditor({
     try {
       // Read the server config, remove the CVar line, write it back
       const res = await fetch(
-        `/api/game-files/${encodeURIComponent(selectedProfile.configFile)}`,
+        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(selectedProfile.configFile)}`,
         { credentials: "include" },
       );
       if (!res.ok) return;
@@ -365,10 +366,14 @@ function ProfileEditor({
     }
   };
 
-  // Fetch available bot roster files for linking
+  // Fetch available bot roster files for linking (scoped to selected profile's gamePath)
   const fetchBotFiles = useCallback(async () => {
+    if (!selectedProfile) return;
     try {
-      const res = await fetch("/api/game-files", { credentials: "include" });
+      const res = await fetch(
+        `/api/game-files?profileId=${encodeURIComponent(selectedProfile.id)}`,
+        { credentials: "include" },
+      );
       if (res.ok) {
         const data = await res.json();
         setAvailableBotFiles(
@@ -380,7 +385,7 @@ function ProfileEditor({
     } catch {
       // ignore
     }
-  }, []);
+  }, [selectedProfile]);
 
   useEffect(() => {
     if (showBotLink) fetchBotFiles();
@@ -913,11 +918,16 @@ function CompanionCreateButton({
 
 function GameFileBrowser({
   profiles,
+  selectedProfileId,
   onRefreshProfiles,
 }: {
   profiles: ServerProfile[];
+  selectedProfileId: string;
   onRefreshProfiles: () => void;
 }) {
+  const profileQuery = selectedProfileId
+    ? `?profileId=${encodeURIComponent(selectedProfileId)}`
+    : "";
   const [gameFiles, setGameFiles] = useState<ClassifiedGameFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -933,7 +943,7 @@ function GameFileBrowser({
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/game-files", { credentials: "include" });
+      const res = await fetch(`/api/game-files${profileQuery}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setGameFiles(data.files ?? []);
@@ -942,7 +952,7 @@ function GameFileBrowser({
       // ignore
     }
     setLoading(false);
-  }, []);
+  }, [profileQuery]);
 
   useEffect(() => {
     fetchFiles();
@@ -962,7 +972,7 @@ function GameFileBrowser({
       setPreviewLoading(true);
       try {
         const res = await fetch(
-          `/api/game-files/${encodeURIComponent(selectedFile)}`,
+          `/api/game-files/${encodeURIComponent(selectedFile)}${profileQuery}`,
           { credentials: "include" },
         );
         if (res.ok) {
@@ -980,14 +990,14 @@ function GameFileBrowser({
       setPreviewLoading(false);
     };
     loadContent();
-  }, [selectedFile]);
+  }, [selectedFile, profileQuery]);
 
   const saveFile = async () => {
     if (!selectedFile) return;
     setSaving(true);
     try {
       const res = await fetch(
-        `/api/game-files/${encodeURIComponent(selectedFile)}`,
+        `/api/game-files/${encodeURIComponent(selectedFile)}${profileQuery}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

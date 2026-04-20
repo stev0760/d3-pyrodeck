@@ -78,8 +78,10 @@ const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
  *
  * Events:
  *   rotate(entry: PlaylistEntry)   — time to stop the server, swap mission, restart
- *   voteAnnounce(options: PlaylistEntry[], timeoutMs: number)  — broadcast voting options
- *   voteResult(winner: PlaylistEntry)  — voting resolved
+ *   voteAnnounce(options, timeoutMs)       — voting window just opened; announce options to players
+ *   voteReminder(options, deadlineMs)      — periodic re-announce while voting is open
+ *   voteReceived({playerName, option, …})  — a player cast or changed their vote
+ *   voteResult(winner, counts)             — voting resolved; winner picked (does NOT imply rotation)
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
  */
 export class PlaylistManager extends EventEmitter {
@@ -112,6 +114,16 @@ export class PlaylistManager extends EventEmitter {
   private voteDeadline: number | null = null;
   private voteTimer: ReturnType<typeof setTimeout> | null = null;
   private preAnnounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private voteReminderInterval: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Winner selected by a vote that closed BEFORE the level ended. We hold this
+   * until "Ending level." fires so the rotation doesn't cut the level short.
+   * Cleared on rotate, activate/deactivate, and when a new vote opens.
+   */
+  private pendingWinner: PlaylistEntry | null = null;
+
+  /** How often to re-announce the vote options in chat while voting is open. */
+  private static readonly VOTE_REMINDER_INTERVAL_MS = 10_000;
 
   // Countdown announces (fire regardless of playlist state)
   private announceTimers: ReturnType<typeof setTimeout>[] = [];
@@ -240,6 +252,7 @@ export class PlaylistManager extends EventEmitter {
     this.status = "active";
     this.shuffleOrder = null;
     this.needsInitialSync = true;
+    this.pendingWinner = null;
 
     if (playlist.mode === "shuffle") {
       this.buildShuffleOrder();
@@ -262,6 +275,7 @@ export class PlaylistManager extends EventEmitter {
     this.activePlaylist = null;
     this.status = "inactive";
     this.needsInitialSync = false;
+    this.pendingWinner = null;
     this.clearTimers();
     this.gameEndAt = null;
     this.emitTimerUpdate();
@@ -339,10 +353,23 @@ export class PlaylistManager extends EventEmitter {
         const [, playerName, digit] = voteMatch;
         const optionIndex = parseInt(digit, 10) - 1; // "1" → index 0
         if (optionIndex >= 0 && optionIndex < this.voteOptions.length) {
+          const previous = this.votes.get(playerName);
           this.votes.set(playerName, {
             optionIndex,
             playlistEntryId: this.voteOptions[optionIndex].id,
           });
+          // Notify listeners so they can acknowledge in-chat. Emit only if
+          // this is a new vote OR the player changed their pick — suppress
+          // duplicate digits to avoid chat spam from repeated votes.
+          if (!previous || previous.optionIndex !== optionIndex) {
+            this.emit("voteReceived", {
+              playerName,
+              option: this.voteOptions[optionIndex],
+              optionIndex,
+              changed: !!previous,
+              voterCount: this.votes.size,
+            });
+          }
         }
       }
     }
@@ -439,12 +466,21 @@ export class PlaylistManager extends EventEmitter {
     this.clearAnnounceTimers();
     if (!this.activePlaylist || this.status === "restarting") return;
 
-    // If voting is open, tally immediately; otherwise rotate
+    // Voting still open when the level ended: tally and rotate together.
     if (this.status === "voting" && this.voteOptions.length > 0) {
-      this.tallyVotes();
-    } else {
-      this.triggerRotate();
+      this.tallyVotes(true);
+      return;
     }
+
+    // Vote already closed before the level ended: rotate to the winner now.
+    if (this.pendingWinner) {
+      const winner = this.pendingWinner;
+      this.pendingWinner = null;
+      this.triggerRotate(winner);
+      return;
+    }
+
+    this.triggerRotate();
   }
 
   private triggerRotate(entry?: PlaylistEntry): void {
@@ -484,6 +520,9 @@ export class PlaylistManager extends EventEmitter {
 
   private scheduleVoting(secondsLeft: number): void {
     if (!this.activePlaylist) return;
+    // A vote has already closed for the current level and we're waiting on
+    // "Ending level." to rotate. Don't re-open voting mid-window.
+    if (this.pendingWinner) return;
     const { preAnnounceSeconds, voteOpenSeconds } = this.activePlaylist.voting;
 
     this.clearVoteTimers();
@@ -508,15 +547,38 @@ export class PlaylistManager extends EventEmitter {
     this.votes.clear();
     this.voteOptions = this.buildVoteOptions();
     this.voteDeadline = Date.now() + closeAfterMs;
+    // Stale winner from a prior vote (e.g. after $settimelimit re-opens voting)
+    // must not survive into the new round.
+    this.pendingWinner = null;
 
     this.emit("voteAnnounce", this.voteOptions, closeAfterMs);
 
+    // Re-announce periodically — D3 chat only shows the last ~2 lines, so a
+    // reminder keeps the options visible for players joining mid-window.
+    this.voteReminderInterval = setInterval(() => {
+      if (this.status === "voting" && this.voteOptions.length > 0) {
+        this.emit("voteReminder", this.voteOptions, this.voteDeadline);
+      }
+    }, PlaylistManager.VOTE_REMINDER_INTERVAL_MS);
+
+    // Vote timer firing means the vote window CLOSED, not that the level ended.
+    // Store the winner as pendingWinner; rotation happens when "Ending level." fires.
     this.voteTimer = setTimeout(() => {
-      this.tallyVotes();
+      this.tallyVotes(false);
     }, closeAfterMs);
   }
 
-  private tallyVotes(): void {
+  /**
+   * Close the vote window and determine the winner.
+   *
+   * @param rotateNow
+   *   - `true`: rotate immediately (vote was still open when the level ended;
+   *     D3 already ended the level, so we should swap missions right away).
+   *   - `false` (default): store the winner as `pendingWinner` and wait for
+   *     "Ending level." to fire. Prevents cutting the level short when the
+   *     vote window closes before the game timer expires.
+   */
+  private tallyVotes(rotateNow: boolean = false): void {
     if (!this.activePlaylist) return;
 
     // Snapshot before clearVoteTimers wipes voteOptions/votes
@@ -526,7 +588,7 @@ export class PlaylistManager extends EventEmitter {
     this.clearVoteTimers();
 
     if (options.length === 0) {
-      this.triggerRotate();
+      if (rotateNow) this.triggerRotate();
       return;
     }
 
@@ -556,7 +618,12 @@ export class PlaylistManager extends EventEmitter {
       this.currentIndex = entryIdx;
     }
 
-    this.triggerRotate(winner);
+    if (rotateNow) {
+      this.triggerRotate(winner);
+    } else {
+      // Defer rotation until the level actually ends.
+      this.pendingWinner = winner;
+    }
   }
 
   /**
@@ -705,6 +772,10 @@ export class PlaylistManager extends EventEmitter {
     if (this.voteTimer) {
       clearTimeout(this.voteTimer);
       this.voteTimer = null;
+    }
+    if (this.voteReminderInterval) {
+      clearInterval(this.voteReminderInterval);
+      this.voteReminderInterval = null;
     }
     this.voteOptions = [];
     this.voteDeadline = null;
