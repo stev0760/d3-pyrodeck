@@ -169,6 +169,39 @@ export function useServerConnection() {
     connectWs();
   }, [connectWs]);
 
+  // HTTP fallback: also fetch the current session state on mount.
+  // iOS Safari can miss the initial WS "connection_state" message due to
+  // bfcache restore or message-timing quirks, leaving the UI stuck in
+  // "disconnected" even though the server has an active session.
+  // Also re-runs on bfcache restore via the pageshow event.
+  useEffect(() => {
+    const syncStatus = async () => {
+      try {
+        const res = await fetch("/api/server/status", {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.state) setConnectionState(data.state);
+        if (data.capabilities) setCapabilities(data.capabilities);
+      } catch {
+        // Ignore — WS will deliver state when it reconnects
+      }
+    };
+
+    syncStatus();
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        // Restored from bfcache — WS was likely closed, so reconnect and resync
+        syncStatus();
+        connectWs();
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [connectWs]);
+
   const connect = useCallback(
     async (host: string, port: number, password: string) => {
       setError(null);

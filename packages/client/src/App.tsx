@@ -94,11 +94,19 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
   const isConnected = connectionState === "ready";
   const processState = launcher.processStatus?.state;
 
-  // Auto-close the left panel sheet when connected or server goes running
+  // Auto-close the left panel sheet only when transitioning INTO an active state,
+  // not on every change while already connected (which would close it when the
+  // user deliberately opens it to, e.g., stop the server).
+  const prevConnectionStateRef = useRef(connectionState);
+  const prevProcessStateRef = useRef(processState);
   useEffect(() => {
-    if (connectionState === "ready" || processState === "running") {
+    const justConnected = connectionState === "ready" && prevConnectionStateRef.current !== "ready";
+    const justLaunched = processState === "running" && prevProcessStateRef.current === "starting";
+    if (justConnected || justLaunched) {
       setLeftSheetOpen(false);
     }
+    prevConnectionStateRef.current = connectionState;
+    prevProcessStateRef.current = processState;
   }, [connectionState, processState]);
   const hasProcess = mode === "launch" && (
     processState === "starting" || processState === "running" ||
