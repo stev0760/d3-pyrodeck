@@ -38,6 +38,7 @@ export function useServerConnection() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
   const shouldReconnectRef = useRef(false);
+  const lastPongRef = useRef<number>(0);
 
   // Cleanup WebSocket and reconnect timer on unmount
   useEffect(() => {
@@ -80,6 +81,13 @@ export function useServerConnection() {
         const msg = JSON.parse(event.data) as WsMessage;
 
         switch (msg.type) {
+          case "ping":
+            // Respond to server ping with pong
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.pong?.(event.data);
+            }
+            lastPongRef.current = Date.now();
+            break;
           case "output":
             for (const cb of outputCallbacksRef.current) {
               cb((msg.payload as { raw: string }).raw);
@@ -202,6 +210,20 @@ export function useServerConnection() {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, [connectWs]);
 
+  // Liveness check: iOS Safari silently kills WS connections when the app
+  // is backgrounded without firing onclose. If we haven't received a ping
+  // from the server in > 30s, force a reconnect.
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      if (lastPongRef.current > 0 && now - lastPongRef.current > 30_000) {
+        console.log("[Pyrodeck] No ping received in 30s — reconnecting");
+        connectWs();
+      }
+    }, 10_000);
+    return () => clearInterval(checkInterval);
+  }, [connectWs]);
+
   const connect = useCallback(
     async (host: string, port: number, password: string) => {
       setError(null);
@@ -234,6 +256,10 @@ export function useServerConnection() {
     },
     [],
   );
+
+  const reconnect = useCallback(() => {
+    connectWs();
+  }, [connectWs]);
 
   const disconnect = useCallback(async () => {
     try {
@@ -331,6 +357,7 @@ export function useServerConnection() {
     wsConnected,
     wsReconnecting,
     connect,
+    reconnect,
     disconnect,
     sendCommand,
     onOutput,

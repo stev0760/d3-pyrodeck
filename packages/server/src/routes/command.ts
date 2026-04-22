@@ -25,6 +25,16 @@ export function wsBroadcast(type: string, payload: Record<string, unknown>): voi
 /** Track which session is currently wired to prevent duplicate callbacks. */
 let wiredSessionId: string | null = null;
 
+/** Ping all WS clients every 15s so clients can detect dead connections (iOS Safari). */
+setInterval(() => {
+  const msg = JSON.stringify({ type: "ping" });
+  for (const ws of wsClients) {
+    if (ws.readyState === ws.OPEN) {
+      ws.ping(msg);
+    }
+  }
+}, 15_000);
+
 /**
  * Wire up telnet data streaming from the active session to all connected WS clients.
  * Called when a new session is created (by Connect Mode or Launch Mode).
@@ -59,6 +69,10 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
     // For now, the D3 server's console password is the only auth gate.
 
     app.log.info("WebSocket client connected");
+
+    socket.on("pong", () => {
+      // Client is alive — no action needed here, client tracks timestamp
+    });
 
     const session = sessionManager.getActive();
 

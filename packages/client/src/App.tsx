@@ -91,7 +91,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     setActiveTab(newMode === "launch" ? "server-output" : "console");
   };
 
-  const isConnected = connectionState === "ready";
+  const isConnected = connectionState === "ready" && wsConnected;
   const processState = launcher.processStatus?.state;
 
   // Auto-close the left panel sheet only when transitioning INTO an active state,
