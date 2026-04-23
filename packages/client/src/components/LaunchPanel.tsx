@@ -107,11 +107,9 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   const [saving, setSaving] = useState(false);
   const [launching, setLaunching] = useState(false);
 
-  // Fetch profiles on mount (auto-select is handled inside useLauncher)
   useEffect(() => {
     fetchProfiles();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchProfiles]);
 
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;

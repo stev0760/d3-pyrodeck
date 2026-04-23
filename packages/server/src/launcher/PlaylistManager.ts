@@ -86,7 +86,6 @@ const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
-  private gamePath: string;
 
   /** Called to send a D3 console command (set by launcher.ts on telnet ready) */
   sendCommandFn: ((cmd: string) => Promise<string>) | null = null;
@@ -105,7 +104,6 @@ export class PlaylistManager extends EventEmitter {
 
   // Timer tracking
   private gameEndAt: number | null = null; // epoch ms
-  private timerInterval: ReturnType<typeof setInterval> | null = null;
   private driftCorrectionInterval: ReturnType<typeof setInterval> | null = null;
 
   // Vote tracking
@@ -135,7 +133,6 @@ export class PlaylistManager extends EventEmitter {
   constructor(configDir: string) {
     super();
     this.configDir = configDir;
-    this.gamePath = ""; // Not used by PlaylistManager — file ops are delegated to launcher.ts
   }
 
   // ---------------------------------------------------------------------------
@@ -757,10 +754,6 @@ export class PlaylistManager extends EventEmitter {
     if (this.driftCorrectionInterval) {
       clearInterval(this.driftCorrectionInterval);
       this.driftCorrectionInterval = null;
-    }
-    if (this.timerInterval) {
-      clearInterval(this.timerInterval);
-      this.timerInterval = null;
     }
   }
 

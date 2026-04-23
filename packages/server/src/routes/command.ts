@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-// TODO: Re-enable auth import when web admin auth is added back
 import { sessionManager, responseParser, serializeCaps } from "./server.js";
 import { playlistManager } from "../launcher/playlistInstance.js";
 
@@ -65,8 +64,8 @@ export function wireSessionToClients(): void {
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
     wsClients.add(socket);
-    // TODO: Re-enable web admin auth in a later phase.
-    // For now, the D3 server's console password is the only auth gate.
+    // Web admin auth is disabled — D3 console password is the auth gate.
+    // See project_auth_architecture for the tiered auth plan.
 
     app.log.info("WebSocket client connected");
 

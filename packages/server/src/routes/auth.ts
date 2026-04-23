@@ -10,6 +10,13 @@ const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const rateLimitMap = new Map<string, RateBucket>();
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of rateLimitMap) {
+    if (now >= bucket.resetAt) rateLimitMap.delete(ip);
+  }
+}, 5 * 60 * 1000);
+
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const bucket = rateLimitMap.get(ip);

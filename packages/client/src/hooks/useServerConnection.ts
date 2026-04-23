@@ -82,10 +82,6 @@ export function useServerConnection() {
 
         switch (msg.type) {
           case "ping":
-            // Respond to server ping with pong
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.pong?.(event.data);
-            }
             lastPongRef.current = Date.now();
             break;
           case "output":
@@ -262,6 +258,8 @@ export function useServerConnection() {
   }, [connectWs]);
 
   const disconnect = useCallback(async () => {
+    setWsReconnecting(false);
+
     try {
       await fetch("/api/server/disconnect", {
         method: "POST",
@@ -271,8 +269,6 @@ export function useServerConnection() {
       // Server may be unreachable
     }
 
-    // Server will broadcast connection_state: disconnected via WS,
-    // but set it locally too for immediate UI feedback
     setConnectionState("disconnected");
     setCapabilities(null);
   }, []);

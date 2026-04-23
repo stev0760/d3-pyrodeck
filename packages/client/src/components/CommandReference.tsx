@@ -443,6 +443,7 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
   const draggingRef = useRef(false);
   const dragStartYRef = useRef(0);
   const dragStartHeightRef = useRef(0);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     try {
@@ -460,6 +461,10 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
     }
   }, [height]);
 
+  useEffect(() => {
+    return () => { dragCleanupRef.current?.(); };
+  }, []);
+
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
@@ -476,12 +481,16 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
       setHeight(newHeight);
     };
 
-    const onMouseUp = () => {
+    const cleanup = () => {
       draggingRef.current = false;
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
+      dragCleanupRef.current = null;
     };
 
+    const onMouseUp = () => { cleanup(); };
+
+    dragCleanupRef.current = cleanup;
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   }, [height]);

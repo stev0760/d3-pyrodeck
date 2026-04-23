@@ -44,3 +44,6 @@ DEVLOG*.md
 
 # Local scratch files (brainstorming, notes, prompts)
 *.txt
+
+# Code review reports
+CODE_REVIEW*.md

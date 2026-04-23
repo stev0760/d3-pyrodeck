@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
+import fastifyHelmet from "@fastify/helmet";
 import fastifyWebSocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import fs from "node:fs/promises";
@@ -69,6 +70,7 @@ async function main() {
 
   await app.register(fastifyCookie, { secret: sessionSecret });
   await app.register(fastifyCors, { origin: true, credentials: true });
+  await app.register(fastifyHelmet, { contentSecurityPolicy: false });
   await app.register(fastifyWebSocket);
 
   await app.register(authRoutes);
