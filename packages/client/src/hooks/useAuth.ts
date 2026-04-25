@@ -4,6 +4,7 @@ interface AuthState {
   authenticated: boolean;
   checking: boolean;
   authRequired: boolean;
+  needsSetup: boolean;
 }
 
 export function useAuth() {
@@ -11,21 +12,31 @@ export function useAuth() {
     authenticated: false,
     checking: true,
     authRequired: true,
+    needsSetup: false,
   });
 
   useEffect(() => {
     fetch("/api/auth/check", { credentials: "include" })
       .then(async (r) => {
-        const data: { authenticated?: boolean; required?: boolean } =
-          await r.json().catch(() => ({}));
+        const data: {
+          authenticated?: boolean;
+          required?: boolean;
+          needsSetup?: boolean;
+        } = await r.json().catch(() => ({}));
         setState({
           authenticated: r.ok,
           checking: false,
           authRequired: data.required ?? true,
+          needsSetup: data.needsSetup ?? false,
         });
       })
       .catch(() => {
-        setState({ authenticated: false, checking: false, authRequired: true });
+        setState({
+          authenticated: false,
+          checking: false,
+          authRequired: true,
+          needsSetup: false,
+        });
       });
   }, []);
 
@@ -47,10 +58,38 @@ export function useAuth() {
     }
   }, []);
 
+  const setup = useCallback(
+    async (password: string): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const r = await fetch("/api/auth/setup", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          setState((s) => ({
+            ...s,
+            authenticated: true,
+            checking: false,
+            needsSetup: false,
+            authRequired: true,
+          }));
+          return { ok: true };
+        }
+        return { ok: false, error: data.error ?? "Setup failed" };
+      } catch {
+        return { ok: false, error: "Network error" };
+      }
+    },
+    [],
+  );
+
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setState((s) => ({ ...s, authenticated: false, checking: false }));
   }, []);
 
-  return { ...state, login, logout };
+  return { ...state, login, setup, logout };
 }

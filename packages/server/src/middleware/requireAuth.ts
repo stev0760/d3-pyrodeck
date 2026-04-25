@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { pyrodeckConfig } from "../routes/pyrodeck-config.js";
 
 // Routes that bypass auth even when a password is configured
 const SKIP_PREFIXES = ["/api/auth/", "/api/health", "/api/version"];
@@ -9,7 +10,9 @@ export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (!process.env.PYRODECK_ADMIN_PASSWORD) return;
+  const hasEnvPassword = !!process.env.PYRODECK_ADMIN_PASSWORD;
+  const hasConfigPassword = !!pyrodeckConfig.get().adminPasswordHash;
+  if (!hasEnvPassword && !hasConfigPassword) return;
 
   const path = request.url.split("?")[0];
 

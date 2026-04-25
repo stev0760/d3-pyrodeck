@@ -5,6 +5,7 @@ import { useToast } from "./hooks/useToast.ts";
 import { useLauncher } from "./hooks/useLauncher.ts";
 import { useServerInfo } from "./hooks/useServerInfo.ts";
 import { LoginPage } from "./components/LoginPage.tsx";
+import { SetupPage } from "./components/SetupPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
 import { SavedServers } from "./components/SavedServers.tsx";
 import { Console } from "./components/Console.tsx";
@@ -191,7 +192,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             <span className="sr-only">Open panel</span>
           </Button>
           <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
-          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.1</span>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.2</span>
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
@@ -393,7 +394,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 }
 
 function App() {
-  const { authenticated, checking, authRequired, login, logout } = useAuth();
+  const { authenticated, checking, authRequired, needsSetup, login, setup, logout } = useAuth();
 
   if (checking) {
     return (
@@ -401,6 +402,10 @@ function App() {
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
+  }
+
+  if (needsSetup) {
+    return <SetupPage onSetup={setup} />;
   }
 
   if (!authenticated) {

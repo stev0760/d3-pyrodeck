@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import crypto from "node:crypto";
+import { hashPassword, verifyPassword } from "../auth/password.js";
+import { pyrodeckConfig } from "./pyrodeck-config.js";
 
 interface RateBucket {
   count: number;
@@ -33,14 +34,26 @@ function clearRateLimit(ip: string): void {
   rateLimitMap.delete(ip);
 }
 
-function hashPassword(p: string): Buffer {
-  return crypto.createHash("sha256").update(p).digest();
+function getPasswordSource(): "env" | "config" | null {
+  if (process.env.PYRODECK_ADMIN_PASSWORD) return "env";
+  if (pyrodeckConfig.get().adminPasswordHash) return "config";
+  return null;
+}
+
+function setSessionCookie(reply: import("fastify").FastifyReply): void {
+  reply.setCookie("pyrodeck_session", "1", {
+    signed: true,
+    httpOnly: true,
+    sameSite: "strict",
+    path: "/",
+    maxAge: 86400,
+  });
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/auth/login", async (request, reply) => {
-    const adminPassword = process.env.PYRODECK_ADMIN_PASSWORD;
-    if (!adminPassword) {
+    const source = getPasswordSource();
+    if (!source) {
       return reply.status(404).send({ error: "Auth not configured" });
     }
 
@@ -51,23 +64,20 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     const body = request.body as { password?: string };
     const input = body?.password ?? "";
-    const valid = crypto.timingSafeEqual(
-      hashPassword(input),
-      hashPassword(adminPassword),
-    );
+
+    let valid = false;
+    if (source === "env") {
+      valid = await verifyPlaintext(input, process.env.PYRODECK_ADMIN_PASSWORD!);
+    } else {
+      valid = await verifyPassword(input, pyrodeckConfig.get().adminPasswordHash!);
+    }
 
     if (!valid) {
       return reply.status(401).send({ error: "Invalid password" });
     }
 
     clearRateLimit(ip);
-    reply.setCookie("pyrodeck_session", "1", {
-      signed: true,
-      httpOnly: true,
-      sameSite: "strict",
-      path: "/",
-      maxAge: 86400,
-    });
+    setSessionCookie(reply);
     return { ok: true };
   });
 
@@ -77,16 +87,61 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/auth/check", async (request, reply) => {
-    const adminPassword = process.env.PYRODECK_ADMIN_PASSWORD;
-    if (!adminPassword) {
-      return { authenticated: true, required: false };
+    const source = getPasswordSource();
+    if (!source) {
+      return { authenticated: true, required: false, needsSetup: true };
     }
     const result = request.unsignCookie(
       request.cookies["pyrodeck_session"] ?? "",
     );
     if (result.valid && result.value === "1") {
-      return { authenticated: true, required: true };
+      return { authenticated: true, required: true, needsSetup: false };
     }
-    return reply.status(401).send({ authenticated: false, required: true });
+    return reply
+      .status(401)
+      .send({ authenticated: false, required: true, needsSetup: false });
   });
+
+  app.post("/api/auth/setup", async (request, reply) => {
+    // Only allowed when no password is configured anywhere
+    if (getPasswordSource() !== null) {
+      return reply.status(403).send({ error: "Password already configured" });
+    }
+
+    const ip = request.ip;
+    if (!checkRateLimit(ip)) {
+      return reply.status(429).send({ error: "Too many attempts" });
+    }
+
+    const body = request.body as { password?: string };
+    const password = body?.password ?? "";
+
+    if (password.length < 8) {
+      return reply
+        .status(400)
+        .send({ error: "Password must be at least 8 characters" });
+    }
+
+    const hashed = await hashPassword(password);
+    await pyrodeckConfig.save({ adminPasswordHash: hashed });
+
+    clearRateLimit(ip);
+    setSessionCookie(reply);
+    return { ok: true };
+  });
+}
+
+// For env-var passwords: hash the env value on the fly and compare with scrypt
+// so we don't do a plaintext comparison. We cache the hash to avoid re-hashing
+// the env value on every login attempt.
+let envPasswordCache: { raw: string; hash: string } | null = null;
+
+async function verifyPlaintext(
+  input: string,
+  envValue: string,
+): Promise<boolean> {
+  if (!envPasswordCache || envPasswordCache.raw !== envValue) {
+    envPasswordCache = { raw: envValue, hash: await hashPassword(envValue) };
+  }
+  return verifyPassword(input, envPasswordCache.hash);
 }

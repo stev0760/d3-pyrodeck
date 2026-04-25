@@ -327,9 +327,11 @@ objdump -p ./dist-server/pyrodeck-server | grep GLIBC
 
 All configuration is via environment variables. None are required to start in dev/local mode.
 
+The admin password can also be set via the web UI on first run (stored as a scrypt hash in `config/pyrodeck.json`). The environment variable takes precedence if both are set.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PYRODECK_ADMIN_PASSWORD` | *(unset)* | Admin password. If unset, no login gate. Required for any non-localhost deployment. |
+| `PYRODECK_ADMIN_PASSWORD` | *(unset)* | Admin password. If unset, falls back to the password hash in `config/pyrodeck.json`. If neither is set, the web UI prompts for first-time setup. |
 | `PYRODECK_PORT` | `3001` | Port to bind |
 | `PYRODECK_HOST` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only. |
 | `PYRODECK_CONFIG_DIR` | `./config` | Where Pyrodeck stores profiles, secrets, playlists |

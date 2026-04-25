@@ -58,11 +58,18 @@ async function main() {
   const isLocalhost =
     HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost";
 
-  if (!process.env.PYRODECK_ADMIN_PASSWORD && !isLocalhost && !isSidecar) {
+  const { pyrodeckConfig } = await import("./routes/pyrodeck-config.js");
+  await pyrodeckConfig.load();
+
+  const hasPassword =
+    !!process.env.PYRODECK_ADMIN_PASSWORD ||
+    !!pyrodeckConfig.get().adminPasswordHash;
+
+  if (!hasPassword && !isLocalhost && !isSidecar) {
     console.warn(
-      "[Pyrodeck] WARNING: PYRODECK_ADMIN_PASSWORD is not set but server is binding to " +
+      "[Pyrodeck] WARNING: No admin password configured but server is binding to " +
         HOST +
-        ". The admin panel will be accessible without a password.",
+        ". Set PYRODECK_ADMIN_PASSWORD or configure a password via the web UI.",
     );
   }
 

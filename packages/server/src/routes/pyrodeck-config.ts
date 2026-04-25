@@ -16,7 +16,7 @@ export async function pyrodeckConfigRoutes(
   await pyrodeckConfig.load();
 
   app.get("/api/pyrodeck/config", async () => {
-    const config = pyrodeckConfig.get();
+    const { adminPasswordHash: _, ...config } = pyrodeckConfig.get();
     return {
       ...config,
       needsSetup: pyrodeckConfig.needsSetup(),
@@ -24,7 +24,8 @@ export async function pyrodeckConfigRoutes(
   });
 
   app.put("/api/pyrodeck/config", async (request, reply) => {
-    const updates = request.body as Partial<PyrodeckConfig>;
+    const { adminPasswordHash: _, ...updates } =
+      request.body as Partial<PyrodeckConfig>;
 
     // Validate gamePath if being changed
     if (updates.gamePath !== undefined && updates.gamePath !== null) {
@@ -49,7 +50,8 @@ export async function pyrodeckConfigRoutes(
       }
     }
 
-    const config = await pyrodeckConfig.save(updates);
+    const saved = await pyrodeckConfig.save(updates);
+    const { adminPasswordHash: _hash, ...config } = saved;
     return {
       ...config,
       needsSetup: pyrodeckConfig.needsSetup(),

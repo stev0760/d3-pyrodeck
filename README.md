@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.0** — Auth, responsive layout, playlist rotation (tested end-to-end), and server packaging.
+**v0.4.1** — Auth with first-run setup, responsive layout, playlist rotation, and server packaging.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -107,7 +107,19 @@ cd packages/server && pnpm dev
 cd packages/client && pnpm dev
 ```
 
-Open http://localhost:5173, choose Connect or Launch mode, and go.
+Open http://localhost:5173. On first run you'll be prompted to create an admin password. This password is hashed (scrypt) and stored in `config/pyrodeck.json`.
+
+Alternatively, set the password via environment variable (takes precedence over config):
+
+```bash
+# Linux/macOS
+PYRODECK_ADMIN_PASSWORD=yourpassword pnpm dev
+
+# Windows PowerShell
+$env:PYRODECK_ADMIN_PASSWORD="yourpassword"; pnpm dev
+```
+
+> **Note:** After `git pull`, always run `pnpm install` to pick up any new dependencies.
 
 ### Connect Mode
 
@@ -160,7 +172,14 @@ Pre-built binaries are not yet published. Use `pnpm package:server` to build a s
 
 ## Security
 
-Set `PYRODECK_ADMIN_PASSWORD` before exposing the panel to a network. The server warns at startup if it binds to a non-loopback interface without a password. For internet-facing deployments, put Pyrodeck behind nginx with HTTPS.
+An admin password is required to access the web panel from non-localhost connections. You can set one via:
+
+1. **First-run setup** — the web UI prompts for a password on first launch (stored as a scrypt hash in `config/pyrodeck.json`)
+2. **Environment variable** — set `PYRODECK_ADMIN_PASSWORD` (takes precedence over the config file)
+
+The server warns at startup if it binds to a non-loopback interface without a password. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`. Login attempts are rate-limited to 5 per IP per 15 minutes.
+
+For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS.
 
 ## Known Limitations
 

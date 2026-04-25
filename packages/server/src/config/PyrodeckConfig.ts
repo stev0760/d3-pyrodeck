@@ -10,6 +10,8 @@ export interface PyrodeckConfig {
   defaultTelnetPort: number;
   /** Preferred UI mode on startup. */
   preferredMode: "connect" | "launch";
+  /** Scrypt hash of admin password ("salt:hash" hex). Null = no password set via config. */
+  adminPasswordHash: string | null;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -26,6 +28,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   executablePath: null,
   defaultTelnetPort: 2092,
   preferredMode: "connect",
+  adminPasswordHash: null,
 };
 
 /**
@@ -73,6 +76,9 @@ function migrateConfig(
   }
   if ("preferredMode" in raw && (raw.preferredMode === "connect" || raw.preferredMode === "launch")) {
     migrated.preferredMode = raw.preferredMode;
+  }
+  if ("adminPasswordHash" in raw && typeof raw.adminPasswordHash === "string") {
+    migrated.adminPasswordHash = raw.adminPasswordHash;
   }
 
   return migrated;
