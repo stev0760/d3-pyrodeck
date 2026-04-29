@@ -146,7 +146,7 @@ function Section({
 }) {
   return (
     <div className="mb-5">
-      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 pb-1 border-b border-border">
+      <div className="text-xs font-score tracking-wide text-muted-foreground mb-2 pb-1 border-b border-border">
         {title}
       </div>
       <div className="space-y-3">{children}</div>
@@ -454,14 +454,14 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
           <button
             onClick={load}
             disabled={saving}
-            className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground/80 transition-colors"
+            className="px-2 py-1 text-xs font-score tracking-wide text-muted-foreground hover:text-foreground/80 transition-colors"
           >
             Reset
           </button>
           <button
             onClick={save}
             disabled={!dirty || saving}
-            className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
+            className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-score tracking-wide rounded transition-colors"
           >
             {saving ? "Saving..." : "Save"}
           </button>
@@ -694,7 +694,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                   />
                   <button
                     onClick={() => update({ consolePassword: randomPassword() })}
-                    className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground/80 border border-border rounded hover:bg-muted transition-colors"
+                    className="px-2 py-1 text-xs font-score tracking-wide text-muted-foreground hover:text-foreground/80 border border-border rounded hover:bg-muted transition-colors"
                     title="Generate random password"
                   >
                     Gen
@@ -771,14 +771,14 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                   <button
                     onClick={() => update({ disallowedPowerups: [] })}
                     disabled={allAllowed}
-                    className="px-2 py-1 text-[10px] font-medium border border-border rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="px-2 py-1 text-[10px] font-score tracking-wide border border-border rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     Allow All
                   </button>
                   <button
                     onClick={() => update({ disallowedPowerups: [...ALL_POWERUPS] })}
                     disabled={allDisallowed}
-                    className="px-2 py-1 text-[10px] font-medium border border-border rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="px-2 py-1 text-[10px] font-score tracking-wide border border-border rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     Disallow All
                   </button>

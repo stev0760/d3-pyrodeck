@@ -51,11 +51,11 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-medium text-foreground">
+        <h2 className="text-sm font-score tracking-wide text-foreground">
           Players ({players.filter((p) => !p.isObserver).length})
         </h2>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          <label className="flex items-center gap-1 text-sm font-score tracking-wide text-muted-foreground">
             <input
               type="checkbox"
               checked={autoRefresh}
@@ -64,26 +64,26 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
             />
             Auto
           </label>
-          <Button variant="secondary" size="xs" onClick={refresh}>
+          <Button variant="secondary" size="xs" onClick={refresh} className="font-score tracking-wide">
             Refresh
           </Button>
         </div>
       </div>
 
       {players.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No player data yet</p>
+        <p className="text-sm font-score tracking-wide text-muted-foreground">No player data yet</p>
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="pb-1 font-medium">Player</th>
-                <th className="pb-1 font-medium text-right">Pts</th>
-                <th className="pb-1 font-medium text-right">K</th>
-                <th className="pb-1 font-medium text-right">D</th>
-                <th className="pb-1 font-medium text-right">S</th>
-                <th className="pb-1 font-medium text-right">Ping</th>
-                <th className="pb-1 font-medium text-right">Actions</th>
+              <tr className="text-left text-xs font-score tracking-wide text-muted-foreground border-b border-border">
+                <th className="pb-1">Player</th>
+                <th className="pb-1 text-right">Pts</th>
+                <th className="pb-1 text-right">K</th>
+                <th className="pb-1 text-right">D</th>
+                <th className="pb-1 text-right">S</th>
+                <th className="pb-1 text-right">Ping</th>
+                <th className="pb-1 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -127,7 +127,7 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
                           variant="secondary"
                           size="xs"
                           onClick={() => sendCommand(`$kick ${p.pnum}`)}
-                          className="h-8 px-2 hover:bg-primary hover:text-primary-foreground"
+                          className="h-8 px-2 font-score tracking-wide hover:bg-primary hover:text-primary-foreground"
                         >
                           Kick
                         </Button>
@@ -135,7 +135,7 @@ export function PlayerList({ sendCommand, onPlayers }: PlayerListProps) {
                           variant="secondary"
                           size="xs"
                           onClick={() => sendCommand(`$ban ${p.pnum}`)}
-                          className="h-8 px-2 hover:bg-destructive hover:text-white"
+                          className="h-8 px-2 font-score tracking-wide hover:bg-destructive hover:text-white"
                         >
                           Ban
                         </Button>

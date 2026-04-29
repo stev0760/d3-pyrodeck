@@ -36,7 +36,7 @@ function PathFormFields({
   return (
     <div className="space-y-1.5">
       <div>
-        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+        <label className="text-sm font-score tracking-wide text-muted-foreground block mb-0.5">
           Profile Name
         </label>
         <input
@@ -49,7 +49,7 @@ function PathFormFields({
         />
       </div>
       <div>
-        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+        <label className="text-sm font-score tracking-wide text-muted-foreground block mb-0.5">
           Game Path
         </label>
         <input
@@ -64,7 +64,7 @@ function PathFormFields({
         </p>
       </div>
       <div>
-        <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
+        <label className="text-sm font-score tracking-wide text-muted-foreground block mb-0.5">
           Executable
         </label>
         <input
@@ -218,17 +218,17 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   if (mode === "confirming-delete") {
     return (
       <div className="space-y-3">
-        <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+        <h3 className="text-sm font-score tracking-wide text-muted-foreground">
           Delete Profile
         </h3>
         <p className="text-sm text-foreground/80">
           Delete <span className="font-medium">{selectedProfile?.name}</span>? The config files on disk are not removed.
         </p>
         <div className="flex gap-1.5">
-          <Button variant="destructive" onClick={handleDelete} className="flex-1">
+          <Button variant="destructive" onClick={handleDelete} className="flex-1 font-score tracking-wide">
             Delete
           </Button>
-          <Button variant="ghost" onClick={cancel} className="flex-1">
+          <Button variant="ghost" onClick={cancel} className="flex-1 font-score tracking-wide">
             Cancel
           </Button>
         </div>
@@ -241,7 +241,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     const isCreate = mode === "creating";
     return (
       <div className="space-y-3">
-        <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+        <h3 className="text-sm font-score tracking-wide text-muted-foreground">
           {isCreate ? "New Profile" : `Edit: ${selectedProfile?.name}`}
         </h3>
 
@@ -260,11 +260,11 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <Button
             onClick={isCreate ? handleCreate : handleSave}
             disabled={validating || saving || !form.name.trim()}
-            className="flex-1"
+            className="flex-1 font-score tracking-wide"
           >
             {validating ? "Validating..." : saving ? "Saving..." : isCreate ? "Create" : "Save Changes"}
           </Button>
-          <Button variant="ghost" onClick={cancel} className="flex-1">
+          <Button variant="ghost" onClick={cancel} className="flex-1 font-score tracking-wide">
             Cancel
           </Button>
         </div>
@@ -286,7 +286,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   // ── Listing / main view ────────────────────────────────────────────────────
   return (
     <div className="space-y-3">
-      <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+      <h3 className="text-sm font-score tracking-wide text-muted-foreground">
         D3 Server Profiles
       </h3>
 
@@ -295,7 +295,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <p className="text-xs text-muted-foreground">
             No profiles yet. Create one to get started — each profile links to a specific D3 install and config.
           </p>
-          <Button onClick={startCreating} className="w-full">
+          <Button onClick={startCreating} className="w-full font-score tracking-wide">
             + New Profile
           </Button>
         </div>
@@ -316,7 +316,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                 ))}
               </select>
               {selectedProfile && (
-                <Button variant="outline" size="xs" onClick={startEditing} className="shrink-0 px-2">
+                <Button variant="outline" size="xs" onClick={startEditing} className="shrink-0 px-2 font-score tracking-wide">
                   Edit
                 </Button>
               )}
@@ -360,7 +360,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             <div
               className={`w-2 h-2 rounded-full ${STATUS_COLORS[state] ?? STATUS_COLORS.stopped}`}
             />
-            <span className="text-xs text-foreground/70 capitalize">{state}</span>
+            <span className="text-sm font-score tracking-wide text-foreground/70 capitalize">{state}</span>
             {processStatus?.pid && (
               <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
                 PID {processStatus.pid}
@@ -379,7 +379,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               variant="destructive"
               onClick={stop}
               disabled={state === "stopping"}
-              className="w-full"
+              className="w-full font-score tracking-wide"
             >
               {state === "stopping" ? "Stopping..." : "Stop Server"}
             </Button>
@@ -387,7 +387,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             <Button
               onClick={handleLaunch}
               disabled={!selectedProfileId || !profileHasPaths || launching}
-              className="w-full"
+              className="w-full font-score tracking-wide"
             >
               {launching ? "Starting..." : "Launch Server"}
             </Button>

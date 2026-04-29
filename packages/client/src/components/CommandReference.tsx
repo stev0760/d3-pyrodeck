@@ -512,9 +512,9 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
       )}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-score tracking-wide text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
       >
-        <span className="font-medium">Command Reference</span>
+        <span>Command Reference</span>
         <svg
           className={`w-3.5 h-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none"
@@ -531,7 +531,7 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
           <div className="space-y-3">
             {visibleCategories.map((cat) => (
               <div key={cat.id}>
-                <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">
+                <h4 className="text-xs font-score tracking-wide text-muted-foreground mb-1.5">
                   {cat.label}
                 </h4>
                 <div className="flex flex-wrap gap-1.5">

@@ -99,7 +99,7 @@ export function ConfigEditor({
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-4">
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80">
+            <h2 className="text-sm font-score tracking-wide text-foreground/80">
               D3 Server Configuration
             </h2>
             <p className="text-xs text-muted-foreground">
@@ -110,7 +110,7 @@ export function ConfigEditor({
           <div className="flex bg-muted rounded p-0.5">
             <button
               onClick={() => setView("profiles")}
-              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              className={`px-3 py-1 text-xs font-score tracking-wide rounded transition-colors ${
                 view === "profiles"
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:text-foreground/80"
@@ -120,7 +120,7 @@ export function ConfigEditor({
             </button>
             <button
               onClick={() => setView("game-files")}
-              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              className={`px-3 py-1 text-xs font-score tracking-wide rounded transition-colors ${
                 view === "game-files"
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:text-foreground/80"
@@ -131,7 +131,7 @@ export function ConfigEditor({
           </div>
         </div>
         <div className="bg-primary/10 border border-primary/20 rounded-md px-2 py-1">
-          <p className="text-xs text-primary">
+          <p className="text-xs font-score tracking-wide text-primary">
             Changes take effect after server restart
           </p>
         </div>
@@ -417,7 +417,7 @@ function ProfileEditor({
       <div className="w-60 shrink-0 flex flex-col overflow-y-auto">
         {/* Profile name heading */}
         <div className="mb-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+          <p className="text-xs font-score tracking-wide text-muted-foreground">
             Profile
           </p>
           <p className="text-sm font-medium text-foreground/90 mt-0.5">
@@ -426,7 +426,7 @@ function ProfileEditor({
         </div>
 
         <div className="mb-3">
-          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-1">
+          <label className="text-xs font-score tracking-wide text-muted-foreground block mb-1">
             Log File
           </label>
             <div className="flex gap-1">
@@ -467,7 +467,7 @@ function ProfileEditor({
                   setTimeout(() => setLogPathSaved(false), 2000);
                 }}
                 disabled={logPathSaving}
-                className="px-2 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-[10px] font-medium rounded transition-colors shrink-0"
+                className="px-2 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-[10px] font-score tracking-wide rounded transition-colors shrink-0"
               >
                 {logPathSaving ? "..." : logPathSaved ? "Saved!" : "Set"}
               </button>
@@ -486,7 +486,7 @@ function ProfileEditor({
 
             {/* Companion files section */}
             <div className="mt-3 mb-1">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              <span className="text-xs font-score tracking-wide text-muted-foreground">
                 Companion Files
               </span>
             </div>
@@ -686,7 +686,7 @@ function ProfileEditor({
                   <div className="flex bg-muted rounded p-0.5">
                     <button
                       onClick={() => setConfigViewMode("structured")}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                      className={`px-2 py-0.5 text-[10px] font-score tracking-wide rounded transition-colors ${
                         configViewMode === "structured"
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -696,7 +696,7 @@ function ProfileEditor({
                     </button>
                     <button
                       onClick={() => setConfigViewMode("raw")}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                      className={`px-2 py-0.5 text-[10px] font-score tracking-wide rounded transition-colors ${
                         configViewMode === "raw"
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -711,7 +711,7 @@ function ProfileEditor({
                   <div className="flex bg-muted rounded p-0.5">
                     <button
                       onClick={() => setBotViewMode("structured")}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                      className={`px-2 py-0.5 text-[10px] font-score tracking-wide rounded transition-colors ${
                         botViewMode === "structured"
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -721,7 +721,7 @@ function ProfileEditor({
                     </button>
                     <button
                       onClick={() => setBotViewMode("raw")}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                      className={`px-2 py-0.5 text-[10px] font-score tracking-wide rounded transition-colors ${
                         botViewMode === "raw"
                           ? "bg-secondary text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -744,7 +744,7 @@ function ProfileEditor({
                   <button
                     onClick={saveFile}
                     disabled={!dirty || saving}
-                    className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-medium rounded transition-colors"
+                    className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-score tracking-wide rounded transition-colors"
                   >
                     {saving ? "Saving..." : saved ? "Saved!" : "Save"}
                   </button>
@@ -820,7 +820,7 @@ function NavButton({
           : "text-foreground/80 hover:bg-muted"
       }`}
     >
-      <div className="font-medium">{label}</div>
+      <div className="font-score tracking-wide text-sm">{label}</div>
       <div className="text-muted-foreground font-mono text-[11px] mt-0.5">
         {filename}
       </div>

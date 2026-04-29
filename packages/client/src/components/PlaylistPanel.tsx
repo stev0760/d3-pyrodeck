@@ -50,7 +50,7 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate }: P
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5">
           <StatusDot status={status.status} />
-          <h3 className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+          <h3 className="text-xs font-score text-muted-foreground tracking-wide">
             Playlist
           </h3>
         </div>

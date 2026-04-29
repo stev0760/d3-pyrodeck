@@ -60,7 +60,7 @@ export function SavedServers({ onSelect }: SavedServersProps) {
         variant="ghost"
         size="xs"
         onClick={() => setShowAdd(true)}
-        className="mb-2 text-muted-foreground"
+        className="mb-2 font-score tracking-wide text-muted-foreground"
       >
         + Save a server
       </Button>
@@ -70,11 +70,12 @@ export function SavedServers({ onSelect }: SavedServersProps) {
   return (
     <div className="mb-3">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-muted-foreground font-medium">Saved Servers</span>
+        <span className="text-sm font-score tracking-wide text-muted-foreground">Saved Servers</span>
         <Button
           variant="ghost"
           size="xs"
           onClick={() => setShowAdd(!showAdd)}
+          className="font-score tracking-wide"
         >
           {showAdd ? "Cancel" : "+ Add"}
         </Button>
@@ -108,7 +109,7 @@ export function SavedServers({ onSelect }: SavedServersProps) {
             size="xs"
             onClick={handleAdd}
             disabled={!name || !host}
-            className="w-full"
+            className="w-full font-score tracking-wide"
           >
             Save
           </Button>

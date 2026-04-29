@@ -191,8 +191,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             <Menu />
             <span className="sr-only">Open panel</span>
           </Button>
-          <h1 className="text-lg font-bold text-primary">D3 Pyrodeck</h1>
-          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.2</span>
+          <h1 className="text-2xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.3</span>
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
@@ -221,7 +221,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             </Badge>
           )}
           {showLogout && (
-            <Button variant="ghost" size="xs" onClick={onLogout}>
+            <Button variant="outline" size="sm" onClick={onLogout} className="font-score tracking-wide text-base text-primary border-primary/40 hover:bg-primary/10 hover:text-primary">
               Logout
             </Button>
           )}
@@ -276,7 +276,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             className="w-full justify-start px-2 border-b border-border rounded-none h-10 overflow-x-auto flex-nowrap gap-0"
           >
             {visibleTabs.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id} className="shrink-0">
+              <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 font-score tracking-wide">
                 {tab.label}
               </TabsTrigger>
             ))}
@@ -287,8 +287,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               <ServerConsole onProcessOutput={onProcessOutput} />
             ) : (
               <div className="h-full flex items-center justify-center">
-                <p className="text-muted-foreground text-lg">
-                  Launch a D3 server to see output here
+                <p className="text-muted-foreground text-lg font-score tracking-wide">
+                  Launch a Descent 3 server to see output here
                 </p>
               </div>
             )}
@@ -307,10 +307,10 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               </div>
             ) : (
               <div className="h-full flex items-center justify-center">
-                <p className="text-muted-foreground text-lg">
+                <p className="text-muted-foreground text-lg font-score tracking-wide">
                   {mode === "connect"
-                    ? "Connect to a D3 server to get started"
-                    : "Launch a D3 server to get started"}
+                    ? "Connect to a Descent 3 server to get started"
+                    : "Launch a Descent 3 server to get started"}
                 </p>
               </div>
             )}

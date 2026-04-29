@@ -66,7 +66,7 @@ export function ConnectionForm({
       {/* Status bar */}
       <div className="flex items-center gap-2 mb-4">
         <div className={`w-2.5 h-2.5 rounded-full ${STATE_COLORS[connectionState]}`} />
-        <span className="text-sm text-foreground/70">
+        <span className="text-sm font-score tracking-wide text-foreground/70">
           {STATE_LABELS[connectionState]}
         </span>
         {capabilities && capabilities.version > 0 && (
@@ -80,7 +80,7 @@ export function ConnectionForm({
         <form onSubmit={handleConnect} className="space-y-3">
           <div className="grid grid-cols-[1fr_80px] gap-2">
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Host</label>
+              <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">Host</label>
               <input
                 type="text"
                 value={host}
@@ -91,7 +91,7 @@ export function ConnectionForm({
               />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Port</label>
+              <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">Port</label>
               <input
                 type="number"
                 value={port}
@@ -103,7 +103,7 @@ export function ConnectionForm({
           </div>
 
           <div>
-            <label className="block text-xs text-muted-foreground mb-1">
+            <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">
               Console Password
             </label>
             <input
@@ -121,7 +121,7 @@ export function ConnectionForm({
           <Button
             type="submit"
             disabled={loading || !host || !password}
-            className="w-full"
+            className="w-full font-score tracking-wide"
           >
             {loading ? "Connecting..." : "Connect"}
           </Button>
@@ -136,7 +136,7 @@ export function ConnectionForm({
             variant="secondary"
             onClick={handleDisconnect}
             disabled={loading}
-            className="w-full"
+            className="w-full font-score tracking-wide"
           >
             Disconnect
           </Button>

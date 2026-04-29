@@ -108,7 +108,7 @@ export function ServerSidebar({
     <aside className={cn("w-64 shrink-0 border-l border-border bg-sidebar flex flex-col overflow-y-auto", className)}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+        <h2 className="text-xs font-score text-muted-foreground tracking-wide">
           Server
         </h2>
         <Button variant="ghost" size="xs" onClick={actions.refresh} className="text-[10px]">
@@ -135,7 +135,7 @@ export function ServerSidebar({
 
           {/* Settings */}
           <div className="px-3 py-2">
-            <h3 className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-1">
+            <h3 className="text-xs font-score text-muted-foreground tracking-wide mb-1">
               Settings
             </h3>
             <Stepper
@@ -186,7 +186,7 @@ export function ServerSidebar({
 
           {/* Quick Actions */}
           <div className="px-3 py-2">
-            <h3 className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-2">
+            <h3 className="text-xs font-score text-muted-foreground tracking-wide mb-2">
               Actions
             </h3>
             <div className="flex flex-col gap-1.5">

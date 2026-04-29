@@ -14,7 +14,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
         variant={mode === "connect" ? "secondary" : "ghost"}
         size="xs"
         onClick={() => onChange("connect")}
-        className={`flex-1 ${mode === "connect" ? "text-primary" : "text-muted-foreground"}`}
+        className={`flex-1 font-menu tracking-wide text-sm ${mode === "connect" ? "text-primary" : "text-muted-foreground"}`}
       >
         Connect
       </Button>
@@ -22,7 +22,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
         variant={mode === "launch" ? "secondary" : "ghost"}
         size="xs"
         onClick={() => onChange("launch")}
-        className={`flex-1 ${mode === "launch" ? "text-primary" : "text-muted-foreground"}`}
+        className={`flex-1 font-menu tracking-wide text-sm ${mode === "launch" ? "text-primary" : "text-muted-foreground"}`}
       >
         Launch
       </Button>

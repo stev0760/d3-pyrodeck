@@ -3,10 +3,32 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+@font-face {
+    font-family: 'Descent Logo';
+    src: url('/fonts/DESCLOGO.TTF') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+@font-face {
+    font-family: 'Descent Menu';
+    src: url('/fonts/DESCMENU.TTF') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+@font-face {
+    font-family: 'Descent Score';
+    src: url('/fonts/DESCSCOR.TTF') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
+    --font-logo: 'Descent Logo', sans-serif;
+    --font-menu: 'Descent Menu', sans-serif;
+    --font-score: 'Descent Score', sans-serif;
+    --font-heading: var(--font-menu);
     --font-sans: 'Geist Variable', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);

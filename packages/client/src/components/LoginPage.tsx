@@ -25,17 +25,17 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-foreground">D3 Pyrodeck</h1>
-          <p className="text-muted-foreground mt-1">Descent 3 Server Admin</p>
+          <h1 className="text-5xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
+          <p className="text-lg font-score tracking-wide text-muted-foreground mt-2">Descent 3 Server Admin</p>
         </div>
 
         <form
           onSubmit={handleSubmit}
           className="bg-card border border-border rounded-lg p-6"
         >
-          <label className="block text-sm font-medium text-muted-foreground mb-2">
+          <label className="block text-base font-score tracking-wide text-muted-foreground mb-2">
             Admin Password
           </label>
           <input
@@ -49,13 +49,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           />
 
           {error && (
-            <p className="mt-2 text-sm text-destructive">Invalid password</p>
+            <p className="mt-2 text-sm font-score tracking-wide text-destructive">Invalid password</p>
           )}
 
           <Button
             type="submit"
             disabled={loading || !password}
-            className="mt-4 w-full"
+            className="mt-4 w-full font-score tracking-wide text-base"
           >
             {loading ? "Authenticating..." : "Log In"}
           </Button>

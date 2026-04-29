@@ -40,7 +40,7 @@ export function SetupPage({ onSetup }: SetupPageProps) {
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-foreground">D3 Pyrodeck</h1>
+          <h1 className="text-4xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
           <p className="text-muted-foreground mt-1">Initial Setup</p>
         </div>
 

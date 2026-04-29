@@ -66,10 +66,10 @@ export function BotPanel({
     <div className="h-full flex flex-col">
       {/* Add Bot Form */}
       <div className="bg-card border border-border rounded-lg p-3 mb-3">
-        <h3 className="text-xs text-muted-foreground font-medium mb-2">Add Bot</h3>
+        <h3 className="text-sm font-score tracking-wide text-muted-foreground mb-2">Add Bot</h3>
         <div className="flex gap-2 items-end">
           <div className="flex-1">
-            <label className="block text-xs text-muted-foreground mb-1">Name</label>
+            <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">Name</label>
             <input
               type="text"
               value={newName}
@@ -81,7 +81,7 @@ export function BotPanel({
           </div>
           {hasShips && (
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Ship</label>
+              <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">Ship</label>
               <select
                 value={newShip}
                 onChange={(e) => setNewShip(e.target.value)}
@@ -97,7 +97,7 @@ export function BotPanel({
           )}
           {hasDifficulty && (
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">
+              <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">
                 Difficulty
               </label>
               <select
@@ -113,7 +113,7 @@ export function BotPanel({
               </select>
             </div>
           )}
-          <Button onClick={addBot} disabled={!newName.trim()}>
+          <Button onClick={addBot} disabled={!newName.trim()} className="font-score tracking-wide">
             Add
           </Button>
         </div>
@@ -121,11 +121,11 @@ export function BotPanel({
 
       {/* Bot List */}
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-medium text-foreground">
+        <h3 className="text-sm font-score tracking-wide text-foreground">
           Active Bots ({bots.length})
         </h3>
         <div className="flex gap-2">
-          <Button variant="secondary" size="xs" onClick={refresh}>
+          <Button variant="secondary" size="xs" onClick={refresh} className="font-score tracking-wide">
             Refresh
           </Button>
           {bots.length > 0 && (
@@ -136,6 +136,7 @@ export function BotPanel({
                 sendCommand("$removebots");
                 setTimeout(refresh, 500);
               }}
+              className="font-score tracking-wide"
             >
               Remove All
             </Button>
@@ -144,18 +145,18 @@ export function BotPanel({
       </div>
 
       {bots.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No bots active</p>
+        <p className="text-sm font-score tracking-wide text-muted-foreground">No bots active</p>
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="pb-1 font-medium">#</th>
-                <th className="pb-1 font-medium">Name</th>
-                <th className="pb-1 font-medium">Ship</th>
-                <th className="pb-1 font-medium">Difficulty</th>
-                <th className="pb-1 font-medium">Status</th>
-                <th className="pb-1 font-medium text-right">Actions</th>
+              <tr className="text-left text-xs font-score tracking-wide text-muted-foreground border-b border-border">
+                <th className="pb-1">#</th>
+                <th className="pb-1">Name</th>
+                <th className="pb-1">Ship</th>
+                <th className="pb-1">Difficulty</th>
+                <th className="pb-1">Status</th>
+                <th className="pb-1 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -201,7 +202,7 @@ export function BotPanel({
                         sendCommand(`$removebot ${bot.index}`);
                         setTimeout(refresh, 500);
                       }}
-                      className="h-8 px-2 hover:bg-destructive hover:text-white"
+                      className="h-8 px-2 font-score tracking-wide hover:bg-destructive hover:text-white"
                     >
                       Remove
                     </Button>
