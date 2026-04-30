@@ -248,6 +248,7 @@ export const PYRODECK_DEFAULTS: Partial<DedicatedCfgData> = {
   allowRemoteConsole: true,
   remoteConsolePort: 2092,
   randomizeRespawn: true,
+  disallowedPowerups: ["Guided", "4PackGuided"],
 };
 
 function parseBool(value: string | undefined, fallback: boolean): boolean {

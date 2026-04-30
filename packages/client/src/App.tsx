@@ -192,7 +192,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             <span className="sr-only">Open panel</span>
           </Button>
           <h1 className="text-2xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
-          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.3</span>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground">v0.4.4</span>
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
