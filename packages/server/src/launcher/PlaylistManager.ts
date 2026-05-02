@@ -336,8 +336,15 @@ export class PlaylistManager extends EventEmitter {
   private onStdoutLine(line: string): void {
     const trimmed = line.trim();
 
-    // Level end signal — always authoritative regardless of timer state
-    if (trimmed === "Ending level." || trimmed.includes("Mission over.")) {
+    // Mission complete — rotate to next playlist entry
+    if (trimmed.includes("Mission over.")) {
+      this.onMissionEnd();
+      return;
+    }
+
+    // Mid-mission level transition — clear stale vote state so the next
+    // level gets a fresh vote window, but do NOT rotate.
+    if (trimmed === "Ending level.") {
       this.onLevelEnd();
       return;
     }
@@ -459,17 +466,34 @@ export class PlaylistManager extends EventEmitter {
   // Level end handler
   // ---------------------------------------------------------------------------
 
+  /**
+   * Mid-mission level transition ("Ending level." without "Mission over.").
+   * D3 is advancing to the next level within the same mission — do NOT rotate.
+   * Clear any stale vote/pendingWinner state so the next level gets a fresh window.
+   */
   private onLevelEnd(): void {
     this.clearAnnounceTimers();
     if (!this.activePlaylist || this.status === "restarting") return;
 
-    // Voting still open when the level ended: tally and rotate together.
+    this.pendingWinner = null;
+    this.clearVoteTimers();
+  }
+
+  /**
+   * Mission complete ("Mission over.  Looping back to first level...").
+   * The last level of the mission just ended — rotate to next playlist entry.
+   */
+  private onMissionEnd(): void {
+    this.clearAnnounceTimers();
+    if (!this.activePlaylist || this.status === "restarting") return;
+
+    // Voting still open when the mission ended: tally and rotate together.
     if (this.status === "voting" && this.voteOptions.length > 0) {
       this.tallyVotes(true);
       return;
     }
 
-    // Vote already closed before the level ended: rotate to the winner now.
+    // Vote already closed before the mission ended: rotate to the winner now.
     if (this.pendingWinner) {
       const winner = this.pendingWinner;
       this.pendingWinner = null;
@@ -600,7 +624,7 @@ export class PlaylistManager extends EventEmitter {
     let maxVotes = -1;
     let winnerIdx = 0;
     for (let i = 0; i < counts.length; i++) {
-      if (counts[i] > maxVotes) {
+      if (counts[i] >= maxVotes) {
         maxVotes = counts[i];
         winnerIdx = i;
       }

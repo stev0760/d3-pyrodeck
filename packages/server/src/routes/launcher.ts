@@ -35,11 +35,11 @@ playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
 
 /**
  * Build a single-line vote prompt sized for D3's 2-line chat window.
- * Example: "Vote next map (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
+ * Example: "Vote next mission (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
  */
 function buildVotePromptLine(options: PlaylistEntry[]): string {
   const parts = options.map((o, i) => `${i + 1}=${o.label}`).join("  ");
-  return `say Vote next map (type 1-${options.length}): ${parts}`;
+  return `say Vote next mission (type 1-${options.length}): ${parts}`;
 }
 
 playlistManager.on("voteAnnounce", (options: PlaylistEntry[], timeoutMs: number) => {
@@ -83,7 +83,7 @@ playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
 
   // Announce winner in-game
   if (playlistManager.sendCommandFn) {
-    playlistManager.sendCommandFn(`say Vote closed — next map: ${winner.label}`)
+    playlistManager.sendCommandFn(`say Vote closed — next mission: ${winner.label}`)
       .catch(() => {});
   }
 });

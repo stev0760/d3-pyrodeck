@@ -289,6 +289,8 @@ const CATEGORIES: CommandCategory[] = [
           },
         ],
       },
+      { cmd: "$botmode", label: "Game Mode" },
+      { cmd: "$botobj", label: "Objective State" },
       { cmd: "$bothelp", label: "Bot Help" },
       { cmd: "$servercaps", label: "Server Caps" },
     ],

@@ -22,37 +22,83 @@ describe("PlaylistManager — rotation", () => {
     mgr = await makeManager();
   });
 
-  it("emits rotate with entry[1] after first 'Ending level.' (sequential, post-launch)", async () => {
+  it("emits rotate on 'Mission over.' (sequential, post-launch)", async () => {
     const pl = await mgr.create("p", "sequential", sampleEntries);
     await mgr.activate(pl.id);
-    // Simulate the launcher's pre-launch consume — first level on disk is now entry[0]
     expect(mgr.consumeInitialSync()?.missionName).toBe("a.mn3");
 
     const rotated: PlaylistEntry[] = [];
     mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-    mgr.onStdoutChunk("Ending level.\n");
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
 
     expect(rotated).toHaveLength(1);
     expect(rotated[0].missionName).toBe("b.mn3");
     expect(mgr.getStatus().status).toBe("restarting");
   });
 
-  it("first 'Ending level.' loads entry[0] when activated mid-game (no consumeInitialSync)", async () => {
+  it("first 'Mission over.' loads entry[0] when activated mid-game (no consumeInitialSync)", async () => {
     const pl = await mgr.create("p", "sequential", sampleEntries);
     await mgr.activate(pl.id);
-    // No consumeInitialSync call — server was already running on activate
 
     const rotated: PlaylistEntry[] = [];
     mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-    mgr.onStdoutChunk("Ending level.\n");
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
 
     expect(rotated).toHaveLength(1);
     expect(rotated[0].missionName).toBe("a.mn3");
   });
 
-  it("drops 'Ending level.' while restarting, then resumes after markRotationComplete", () => {
+  it("'Ending level.' does NOT rotate (mid-mission level transition)", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+
+    mgr.onStdoutChunk("Ending level.\n");
+    expect(rotated).toHaveLength(0);
+    expect(mgr.getStatus().status).toBe("active");
+  });
+
+  it("'Ending level.' clears pendingWinner from prior vote", async () => {
+    vi.useFakeTimers();
+    try {
+      const pl = await mgr.create("p", "sequential", sampleEntries);
+      await mgr.update(pl.id, {
+        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+      });
+      await mgr.activate(pl.id);
+      mgr.consumeInitialSync();
+
+      const rotated: PlaylistEntry[] = [];
+      mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+
+      mgr.parseAndAnchorFromNetgameinfo(
+        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+      );
+      expect(mgr.getStatus().status).toBe("voting");
+      mgr.onStdoutChunk("*Alice says: 1\n");
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mgr.getStatus().status).toBe("active");
+
+      // Mid-mission level end clears the pending winner
+      mgr.onStdoutChunk("Ending level.\n");
+      expect(rotated).toHaveLength(0);
+
+      // Mission finally ends — stale winner was cleared, so default advancement
+      // from currentIndex=1 (set by tallyVotes) gives c.mn3
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+      expect(rotated).toHaveLength(1);
+      expect(rotated[0].missionName).toBe("c.mn3");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops 'Mission over.' while restarting, then resumes after markRotationComplete", () => {
     return (async () => {
       const pl = await mgr.create("p", "sequential", sampleEntries);
       await mgr.activate(pl.id);
@@ -61,17 +107,14 @@ describe("PlaylistManager — rotation", () => {
       const rotated: PlaylistEntry[] = [];
       mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-      mgr.onStdoutChunk("Ending level.\n");
-      // Second signal during restart is dropped
-      mgr.onStdoutChunk("Ending level.\n");
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
       expect(rotated).toHaveLength(1);
 
-      // Simulate launcher finishing the restart
       mgr.markRotationComplete();
       expect(mgr.getStatus().status).toBe("active");
 
-      // Now another level-end advances again
-      mgr.onStdoutChunk("Ending level.\n");
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
       expect(rotated).toHaveLength(2);
       expect(rotated[1].missionName).toBe("c.mn3");
     })();
@@ -86,7 +129,7 @@ describe("PlaylistManager — rotation", () => {
     mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
     for (let i = 0; i < 3; i++) {
-      mgr.onStdoutChunk("Ending level.\n");
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
       mgr.markRotationComplete();
     }
 
@@ -101,14 +144,14 @@ describe("PlaylistManager — rotation", () => {
     const rotated: PlaylistEntry[] = [];
     mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-    mgr.onStdoutChunk("Ending ");
+    mgr.onStdoutChunk("Mission over.  Looping back to first ");
     expect(rotated).toHaveLength(0);
-    mgr.onStdoutChunk("level.\n");
+    mgr.onStdoutChunk("level in mission file.\n");
     expect(rotated).toHaveLength(1);
   });
 
-  it("ignores 'Ending level.' when no playlist is active", () => {
-    mgr.onStdoutChunk("Ending level.\n");
+  it("ignores 'Mission over.' when no playlist is active", () => {
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
     expect(mgr.getStatus().status).toBe("inactive");
   });
 });
@@ -154,8 +197,8 @@ describe("PlaylistManager — voting", () => {
       results.push({ winner, counts });
     });
 
-    // Trigger end of level — should tally immediately
-    mgr.onStdoutChunk("Ending level.\n");
+    // Trigger mission end — should tally immediately
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
 
     expect(results).toHaveLength(1);
     expect(results[0].counts[0]).toBe(2);
@@ -215,8 +258,8 @@ describe("PlaylistManager — voting", () => {
       expect(rotated).toHaveLength(0);
       expect(mgr.getStatus().status).toBe("active");
 
-      // Level finally ends — now we rotate to the stored winner
-      mgr.onStdoutChunk("Ending level.\n");
+      // Mission finally ends — now we rotate to the stored winner
+      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
       expect(rotated).toHaveLength(1);
       expect(rotated[0].id).toBe(opts[0].id);
       expect(mgr.getStatus().status).toBe("restarting");
@@ -346,8 +389,8 @@ describe("PlaylistManager — voting", () => {
     expect(mgr.getStatus().status).toBe("voting");
 
     mgr.onStdoutChunk("*Alice says: 1\n");
-    // Level ends before the vote window closes — tally + rotate together.
-    mgr.onStdoutChunk("Ending level.\n");
+    // Mission ends before the vote window closes — tally + rotate together.
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
 
     expect(rotated).toHaveLength(1);
     expect(mgr.getStatus().status).toBe("restarting");
