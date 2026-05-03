@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.1** — Auth with first-run setup, responsive layout, playlist rotation, and server packaging.
+**v0.4.5** — Auth with first-run setup, responsive layout, playlist rotation, structured config editor, and server packaging.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -31,15 +31,15 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 
 ### Bots (Matcen fork only)
 - Auto-detected via `$servercaps` probe — bot UI only appears when connected to a Matcen fork server
-- Add bots with name, ship, difficulty, and team selection
-- Active bot list with per-bot difficulty, team adjustment, and remove controls
+- Add bots with name, ship, and difficulty selection
+- Active bot list with per-bot difficulty adjustment and remove controls
 - Bulk remove all bots
 
 ### Server Dashboard
 - Live server info: game name, mission, game mode, network model, time remaining
 - Stepper controls for max players, PPS, time limit, and kill goal
 - Quick actions: end level, warp to level, balance teams
-- Quit server with confirmation dialog
+- Quit server with confirmation dialog (Connect mode; Launch mode uses Stop Server button)
 
 ### Server Playlists (Launch mode)
 
@@ -56,7 +56,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Tabbed editor sections: Server Config, Ship Settings, Bot Roster, Startup Commands
 - **Structured form UI** (no .cfg editing required): server identity, network settings, rules, ship bans, powerup toggles, bot roster
 - Starting level (SetLevel) exposed in the identity section
-- Bot Roster: per-bot name, ship, difficulty, and team assignment (1–4 or auto-balance); roster count vs max-players warnings; default difficulty
+- Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
@@ -79,6 +79,12 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Process lifecycle management (launch, stop, auto-connect via telnet)
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
+
+### Responsive Layout
+- Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
+- Mobile: hamburger menu opens left sheet, server icon opens right sheet, full-screen tab content
+- Tablet: compact top bar, left panel via sheet, right sidebar inline
+- Desktop: full three-column layout
 
 ## Requirements
 
@@ -161,10 +167,7 @@ docs/
 ## Documentation
 
 - [`BUILDING.md`](BUILDING.md) — building from source and running on all platforms (Windows, Ubuntu, Rocky Linux/RHEL, Arch)
-- `D3_PYRODECK_SPEC.md` — full project specification
-- `PLAN.md` — development roadmap and progress tracking
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
-- `CLAUDE.md` — project conventions and architecture notes
 
 ## Releases
 
@@ -183,8 +186,8 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 
 ## Known Limitations
 
-- Single server connection only (multi-server planned for Phase 5)
-- Quit button sends raw `quit` — Pyrodeck interprets this as a crash rather than intentional shutdown
+- Single server connection only (multi-server support planned)
+- Bot team assignment in the add-bot form is not yet implemented (team assignment is available in the Bot Roster config editor for pre-launch setup)
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
 - Windows binaries are unsigned; SmartScreen will warn on first run — click **More info → Run anyway**
 
