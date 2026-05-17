@@ -27,10 +27,6 @@ pnpm monorepo:
 - `$kick`/`$ban` don't work on bots via DMFC (`CheckPlayerNum` rejects synthetic players). Use `$removebot` for bots.
 - Web admin auth is currently disabled — D3 console password is sufficient for dev
 
-## Matcen Fork Source
-
-The D3 engine fork source is at `/home/steve/Projects/Descent3-mulitplayer-bots-fork/Descent3`. Useful for tracing D3 server behavior, command routing, and DMFC internals.
-
 ## UI Testing Pipeline
 
 Playwright MCP is configured for automated browser testing. Use it to verify UI changes

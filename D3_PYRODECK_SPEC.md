@@ -145,7 +145,7 @@ These are the only additions made to the `stev0760/Descent3` engine fork that th
 
 **Response format:** Single line, no terminator required.
 ```
-SERVERCAPS version=1 fork=Matcen fork_version=0.8.0 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,difficulty
 ```
 
 **Current feature flags (version=1):**
@@ -164,7 +164,7 @@ SERVERCAPS version=1 fork=Matcen fork_version=0.8.0 features=bots,roster,ships,d
 interface ServerCapabilities {
   version: number;           // 0 = vanilla/unknown
   fork: string;              // fork name (e.g., "Matcen"), empty on vanilla
-  forkVersion: string;       // fork version (e.g., "0.8.0"), empty on vanilla
+  forkVersion: string;       // fork version (e.g., "0.8.16"), empty on vanilla
   features: Set<string>;     // empty set on vanilla
 }
 

@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.5** — Auth with first-run setup, responsive layout, playlist rotation, structured config editor, and server packaging.
+**v0.4.6** — Matcen 0.8.16 compatibility, botstat parser update for role/lean fields.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 

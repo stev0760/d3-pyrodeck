@@ -347,7 +347,7 @@ $servercaps
 
 **Output format:**
 ```
-SERVERCAPS version=1 fork=Matcen fork_version=0.8.3 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,difficulty
 ```
 
 A vanilla D3 server will not recognize `$servercaps` and will produce no structured output. The presence of the `SERVERCAPS` line confirms the Matcen fork.
@@ -355,7 +355,7 @@ A vanilla D3 server will not recognize `$servercaps` and will produce no structu
 **Fields:**
 - `version` — Protocol version (currently 1)
 - `fork` — Fork name (`Matcen`)
-- `fork_version` — Semantic version (e.g., `0.8.3`)
+- `fork_version` — Semantic version (e.g., `0.8.16`)
 - `features` — Comma-separated feature flags: `bots`, `roster`, `ships`, `difficulty`
 
 ### Bot Commands
@@ -686,4 +686,4 @@ DisallowPowerup=Betty4Pack
 - descentforum.net/serverops/d3dedi.htm (Midnight Squadron server ops guide)
 - D3 engine source (dedicated_server.cpp, DMFC framework)
 - Matcen fork source analysis (bot.cpp, dmfcinputcommand.cpp, dmfcbase.cpp)
-- Matcen fork testing (v0.8.3)
+- Matcen fork testing (v0.8.16)

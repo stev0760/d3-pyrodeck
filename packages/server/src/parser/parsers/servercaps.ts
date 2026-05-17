@@ -2,7 +2,7 @@
  * Parser for $servercaps response.
  *
  * Fork servers respond with:
- *   SERVERCAPS version=1 fork=Matcen fork_version=0.8.0 features=bots,roster,ships,difficulty
+ *   SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,difficulty
  *
  * Vanilla servers respond with "Unknown command" or nothing.
  */
