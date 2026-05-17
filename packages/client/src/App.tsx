@@ -43,6 +43,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     onProcessOutput,
     onPlayers,
     onBots,
+    onBotStats,
     onServerInfo,
     onPlaylistEvent,
     hasFeature,
@@ -327,6 +328,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               <BotPanel
                 sendCommand={sendCommand}
                 onBots={onBots}
+                onBotStats={onBotStats}
                 hasShips={hasFeature("ships")}
                 hasDifficulty={hasFeature("difficulty")}
               />

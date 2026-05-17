@@ -139,6 +139,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
                 const typeMap: Record<string, string> = {
                   "$scores": "players",
                   "$botlist": "bots",
+                  "$botstat": "botstats",
                   "$netgameinfo": "serverinfo",
                 };
                 const msgType = typeMap[commandName];

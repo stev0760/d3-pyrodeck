@@ -33,6 +33,7 @@ export function useServerConnection() {
   const processOutputCallbacksRef = useRef<Array<(data: string, stream: string) => void>>([]);
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,6 +104,11 @@ export function useServerConnection() {
             break;
           case "bots":
             for (const cb of botsCallbacksRef.current) {
+              cb(msg.payload);
+            }
+            break;
+          case "botstats":
+            for (const cb of botStatsCallbacksRef.current) {
               cb(msg.payload);
             }
             break;
@@ -321,6 +327,15 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onBotStats = useCallback((callback: (data: unknown) => void) => {
+    botStatsCallbacksRef.current.push(callback);
+    return () => {
+      botStatsCallbacksRef.current = botStatsCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const onServerInfo = useCallback((callback: (data: unknown) => void) => {
     serverInfoCallbacksRef.current.push(callback);
     return () => {
@@ -360,6 +375,7 @@ export function useServerConnection() {
     onProcessOutput,
     onPlayers,
     onBots,
+    onBotStats,
     onServerInfo,
     onPlaylistEvent,
     hasFeature,
