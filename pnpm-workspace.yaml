@@ -1,2 +1,7 @@
 packages:
   - "packages/*"
+
+# pnpm v11+ replaced onlyBuiltDependencies with allowBuilds (package -> boolean).
+allowBuilds:
+  esbuild: true
+  msw: false

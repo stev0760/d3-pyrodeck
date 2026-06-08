@@ -291,6 +291,20 @@ const CATEGORIES: CommandCategory[] = [
       },
       { cmd: "$botmode", label: "Game Mode" },
       { cmd: "$botobj", label: "Objective State" },
+      {
+        cmd: "$terrainsteer",
+        label: "Terrain Steer",
+        select: [
+          {
+            name: "toggle",
+            options: [
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ],
+          },
+        ],
+      },
+      { cmd: "$navdump", label: "Nav Dump" },
       { cmd: "$bothelp", label: "Bot Help" },
       { cmd: "$servercaps", label: "Server Caps" },
     ],

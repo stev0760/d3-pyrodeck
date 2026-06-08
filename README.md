@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.6** — Matcen 0.8.16 compatibility, botstat parser update for role/lean fields.
+**v0.4.8** — Matcen 0.9.1 compatibility: verified the `$botstat` two-line format parses (the Phase 11 `nav:` diagnostic line is skipped); added `$navdump` and `$terrainsteer` to the command reference.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 

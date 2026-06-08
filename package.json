@@ -1,6 +1,6 @@
 {
   "name": "d3-pyrodeck",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "private": true,
   "scripts": {
     "dev": "pnpm --parallel -r run dev",
@@ -9,11 +9,6 @@
     "test": "pnpm -r run test",
     "package:server": "node scripts/package-server.mjs",
     "package:server:windows": "node scripts/package-server.mjs --windows"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "typescript": "^5.9.3"
