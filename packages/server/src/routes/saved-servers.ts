@@ -32,19 +32,34 @@ export async function savedServerRoutes(app: FastifyInstance): Promise<void> {
     return await readServers();
   });
 
-  app.post("/api/servers/saved", async (request) => {
-    const { name, host, port } = request.body as {
-      name: string;
-      host: string;
-      port: number;
+  app.post("/api/servers/saved", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      name?: unknown;
+      host?: unknown;
+      port?: unknown;
     };
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const host = typeof body.host === "string" ? body.host.trim() : "";
+    if (!name || !host) {
+      return reply.status(400).send({ error: "name and host are required" });
+    }
+
+    let port = 2092;
+    if (body.port !== undefined) {
+      const p = Number(body.port);
+      if (!Number.isInteger(p) || p < 1 || p > 65535) {
+        return reply.status(400).send({ error: "port must be an integer 1-65535" });
+      }
+      port = p;
+    }
 
     const servers = await readServers();
     const entry: SavedServer = {
       id: crypto.randomUUID(),
       name,
       host,
-      port: port ?? 2092,
+      port,
     };
     servers.push(entry);
     await writeServers(servers);
