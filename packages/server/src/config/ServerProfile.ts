@@ -217,9 +217,12 @@ export class ServerProfileManager {
 
   /** Create a profile that links to an existing config file in gamePath (no new file generated). */
   async importExisting(name: string, configFile: string): Promise<ServerProfile> {
+    const safe = this.safeName(configFile);
+    if (!safe) throw new Error("Invalid config filename");
+
     // Verify the file exists
     try {
-      await fs.access(path.join(this.gamePath, configFile));
+      await fs.access(path.join(this.gamePath, safe));
     } catch {
       throw new Error(`Config file not found in game directory: ${configFile}`);
     }
@@ -351,7 +354,9 @@ export class ServerProfileManager {
     cvarName: string,
     cvarValue: string,
   ): Promise<boolean> {
-    const cfgPath = path.join(this.gamePath, configFile);
+    const safe = this.safeName(configFile);
+    if (!safe) throw new Error("Invalid config filename");
+    const cfgPath = path.join(this.gamePath, safe);
     let content: string;
     try {
       content = await fs.readFile(cfgPath, "utf-8");
@@ -389,7 +394,9 @@ export class ServerProfileManager {
     configFile: string,
     cvarName: string,
   ): Promise<boolean> {
-    const cfgPath = path.join(this.gamePath, configFile);
+    const safe = this.safeName(configFile);
+    if (!safe) return false;
+    const cfgPath = path.join(this.gamePath, safe);
     let content: string;
     try {
       content = await fs.readFile(cfgPath, "utf-8");
