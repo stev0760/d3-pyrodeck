@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -18,8 +18,18 @@ const sampleEntries: Omit<PlaylistEntry, "id">[] = [
 describe("PlaylistManager — rotation", () => {
   let mgr: PlaylistManager;
 
+  // Fake timers keep the suite hermetic: production code schedules real
+  // setTimeouts (level-end window, post-load re-anchor, countdown announces)
+  // that would otherwise dangle past each test. Enable after makeManager so
+  // its temp-dir I/O runs on the real clock; useRealTimers discards anything
+  // still pending.
   beforeEach(async () => {
     mgr = await makeManager();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("emits rotate on 'Mission over.' (sequential, post-launch)", async () => {
@@ -64,79 +74,69 @@ describe("PlaylistManager — rotation", () => {
   });
 
   it("mid-mission transition ('Ending level.' then 'Opening level') clears pendingWinner", async () => {
-    vi.useFakeTimers();
-    try {
-      const pl = await mgr.create("p", "sequential", sampleEntries);
-      await mgr.update(pl.id, {
-        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
-      });
-      await mgr.activate(pl.id);
-      mgr.consumeInitialSync();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
 
-      const rotated: PlaylistEntry[] = [];
-      mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      expect(mgr.getStatus().status).toBe("voting");
-      mgr.onStdoutChunk("*Alice says: 1\n");
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(mgr.getStatus().status).toBe("active");
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().status).toBe("voting");
+    mgr.onStdoutChunk("*Alice says: 1\n");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mgr.getStatus().status).toBe("active");
 
-      // Mid-mission level end: "Opening level" follows without "Mission
-      // over." — clears the pending winner, no rotation.
-      mgr.onStdoutChunk("Ending level.\n");
-      mgr.onStdoutChunk("Opening level 'b.d3l'...\n");
-      expect(rotated).toHaveLength(0);
+    // Mid-mission level end: "Opening level" follows without "Mission
+    // over." — clears the pending winner, no rotation.
+    mgr.onStdoutChunk("Ending level.\n");
+    mgr.onStdoutChunk("Opening level 'b.d3l'...\n");
+    expect(rotated).toHaveLength(0);
 
-      // Mission finally ends — stale winner was cleared, so default advancement
-      // from currentIndex=1 (set by tallyVotes) gives c.mn3
-      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
-      expect(rotated).toHaveLength(1);
-      expect(rotated[0].missionName).toBe("c.mn3");
-    } finally {
-      vi.useRealTimers();
-    }
+    // Mission finally ends — stale winner was cleared, so default advancement
+    // from currentIndex=1 (set by tallyVotes) gives c.mn3
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0].missionName).toBe("c.mn3");
   });
 
   it("mission end ('Ending level.' then 'Mission over.') keeps pendingWinner", async () => {
-    vi.useFakeTimers();
-    try {
-      const pl = await mgr.create("p", "sequential", sampleEntries);
-      await mgr.update(pl.id, {
-        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
-      });
-      await mgr.activate(pl.id);
-      mgr.consumeInitialSync();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
 
-      const rotated: PlaylistEntry[] = [];
-      mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      const opts = mgr.getStatus().voteOptions;
-      mgr.onStdoutChunk("*Alice says: 1\n");
-      await vi.advanceTimersByTimeAsync(30_000);
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    const opts = mgr.getStatus().voteOptions;
+    mgr.onStdoutChunk("*Alice says: 1\n");
+    await vi.advanceTimersByTimeAsync(30_000);
 
-      // Real D3 prints these without trailing newlines, so debug output gets
-      // concatenated onto the same line — matching must tolerate that.
-      mgr.onStdoutChunk(
-        "Ending level.2026-04-10 22:22:15.311 DEBUG [276084] [MultiSendLevelEnded@3587] Sending level ended!\n",
-      );
-      expect(rotated).toHaveLength(0);
-      await vi.advanceTimersByTimeAsync(1_000);
-      mgr.onStdoutChunk(
-        "Mission over.  Looping back to first level in mission file.2026-04-10 22:22:16.312 DEBUG [276084] [CheckHogfile@1288] Checking\n",
-      );
+    // Real D3 prints these without trailing newlines, so debug output gets
+    // concatenated onto the same line — matching must tolerate that.
+    mgr.onStdoutChunk(
+      "Ending level.2026-04-10 22:22:15.311 DEBUG [276084] [MultiSendLevelEnded@3587] Sending level ended!\n",
+    );
+    expect(rotated).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    mgr.onStdoutChunk(
+      "Mission over.  Looping back to first level in mission file.2026-04-10 22:22:16.312 DEBUG [276084] [CheckHogfile@1288] Checking\n",
+    );
 
-      // Vote winner is honored, not the natural next entry
-      expect(rotated).toHaveLength(1);
-      expect(rotated[0].id).toBe(opts[0].id);
-    } finally {
-      vi.useRealTimers();
-    }
+    // Vote winner is honored, not the natural next entry
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0].id).toBe(opts[0].id);
   });
 
   it("player chat cannot trigger rotation or level-end handling", async () => {
@@ -273,6 +273,11 @@ describe("PlaylistManager — voting", () => {
 
   beforeEach(async () => {
     mgr = await makeManager();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("tallies vote chat lines and resolves to winner", async () => {
@@ -374,88 +379,78 @@ describe("PlaylistManager — voting", () => {
   });
 
   it("vote closing via timer does NOT rotate early; rotation waits for level end", async () => {
-    vi.useFakeTimers();
-    try {
-      const pl = await mgr.create("p", "sequential", sampleEntries);
-      await mgr.update(pl.id, {
-        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
-      });
-      await mgr.activate(pl.id);
-      mgr.consumeInitialSync();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
 
-      const rotated: PlaylistEntry[] = [];
-      mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
 
-      const results: Array<{ winner: PlaylistEntry; counts: number[] }> = [];
-      mgr.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
-        results.push({ winner, counts });
-      });
+    const results: Array<{ winner: PlaylistEntry; counts: number[] }> = [];
+    mgr.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
+      results.push({ winner, counts });
+    });
 
-      // preAnnounceSeconds=60 and timeLeft=60 triggers the "already inside
-      // the window" branch → openVoting fires immediately.
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      expect(mgr.getStatus().status).toBe("voting");
-      const opts = mgr.getStatus().voteOptions;
-      expect(opts.length).toBeGreaterThan(0);
+    // preAnnounceSeconds=60 and timeLeft=60 triggers the "already inside
+    // the window" branch → openVoting fires immediately.
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().status).toBe("voting");
+    const opts = mgr.getStatus().voteOptions;
+    expect(opts.length).toBeGreaterThan(0);
 
-      // Players vote — option 1 wins
-      mgr.onStdoutChunk("*Alice says: 1\n");
-      mgr.onStdoutChunk("*Bob says: 1\n");
-      mgr.onStdoutChunk("*Carol says: 2\n");
+    // Players vote — option 1 wins
+    mgr.onStdoutChunk("*Alice says: 1\n");
+    mgr.onStdoutChunk("*Bob says: 1\n");
+    mgr.onStdoutChunk("*Carol says: 2\n");
 
-      // Vote window closes (voteOpenSeconds=30)
-      await vi.advanceTimersByTimeAsync(30_000);
+    // Vote window closes (voteOpenSeconds=30)
+    await vi.advanceTimersByTimeAsync(30_000);
 
-      // Winner is announced but NO rotation yet — level still has ~30s to play
-      expect(results).toHaveLength(1);
-      expect(results[0].counts[0]).toBe(2);
-      expect(results[0].winner.id).toBe(opts[0].id);
-      expect(rotated).toHaveLength(0);
-      expect(mgr.getStatus().status).toBe("active");
+    // Winner is announced but NO rotation yet — level still has ~30s to play
+    expect(results).toHaveLength(1);
+    expect(results[0].counts[0]).toBe(2);
+    expect(results[0].winner.id).toBe(opts[0].id);
+    expect(rotated).toHaveLength(0);
+    expect(mgr.getStatus().status).toBe("active");
 
-      // Mission finally ends — now we rotate to the stored winner
-      mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
-      expect(rotated).toHaveLength(1);
-      expect(rotated[0].id).toBe(opts[0].id);
-      expect(mgr.getStatus().status).toBe("restarting");
-    } finally {
-      vi.useRealTimers();
-    }
+    // Mission finally ends — now we rotate to the stored winner
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0].id).toBe(opts[0].id);
+    expect(mgr.getStatus().status).toBe("restarting");
   });
 
   it("drift-correction re-anchor after vote close does not re-open voting", async () => {
-    vi.useFakeTimers();
-    try {
-      const pl = await mgr.create("p", "sequential", sampleEntries);
-      await mgr.update(pl.id, {
-        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
-      });
-      await mgr.activate(pl.id);
-      mgr.consumeInitialSync();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
 
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      expect(mgr.getStatus().status).toBe("voting");
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().status).toBe("voting");
 
-      mgr.onStdoutChunk("*Alice says: 1\n");
-      await vi.advanceTimersByTimeAsync(30_000);
+    mgr.onStdoutChunk("*Alice says: 1\n");
+    await vi.advanceTimersByTimeAsync(30_000);
 
-      // Vote closed, pendingWinner is set, status is "active" again.
-      expect(mgr.getStatus().status).toBe("active");
+    // Vote closed, pendingWinner is set, status is "active" again.
+    expect(mgr.getStatus().status).toBe("active");
 
-      // Simulate drift correction re-anchor with time still on the clock.
-      // scheduleVoting() must NOT re-open voting while a winner is pending.
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 0:25\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      expect(mgr.getStatus().status).toBe("active");
-      expect(mgr.getStatus().voteOptions).toHaveLength(0);
-    } finally {
-      vi.useRealTimers();
-    }
+    // Simulate drift correction re-anchor with time still on the clock.
+    // scheduleVoting() must NOT re-open voting while a winner is pending.
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 0:25\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().status).toBe("active");
+    expect(mgr.getStatus().voteOptions).toHaveLength(0);
   });
 
   it("emits voteReceived on new vote and on vote change, suppresses duplicates", async () => {
@@ -495,38 +490,33 @@ describe("PlaylistManager — voting", () => {
   });
 
   it("emits voteReminder periodically while voting is open", async () => {
-    vi.useFakeTimers();
-    try {
-      const pl = await mgr.create("p", "sequential", sampleEntries);
-      await mgr.update(pl.id, {
-        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 60, optionCount: 2 },
-      });
-      await mgr.activate(pl.id);
-      mgr.consumeInitialSync();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 60, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
 
-      const reminders: PlaylistEntry[][] = [];
-      mgr.on("voteReminder", (opts: PlaylistEntry[]) => reminders.push(opts));
+    const reminders: PlaylistEntry[][] = [];
+    mgr.on("voteReminder", (opts: PlaylistEntry[]) => reminders.push(opts));
 
-      mgr.parseAndAnchorFromNetgameinfo(
-        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
-      );
-      expect(mgr.getStatus().status).toBe("voting");
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().status).toBe("voting");
 
-      // 25s of voting → reminders should fire at 10s and 20s (two)
-      await vi.advanceTimersByTimeAsync(25_000);
-      expect(reminders.length).toBe(2);
+    // 25s of voting → reminders should fire at 10s and 20s (two)
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(reminders.length).toBe(2);
 
-      // Advance past vote close (voteOpenSeconds=60, so 60s total)
-      await vi.advanceTimersByTimeAsync(40_000);
-      expect(mgr.getStatus().status).toBe("active"); // vote closed
-      const countAtClose = reminders.length;
+    // Advance past vote close (voteOpenSeconds=60, so 60s total)
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(mgr.getStatus().status).toBe("active"); // vote closed
+    const countAtClose = reminders.length;
 
-      // After close, no more reminders
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(reminders.length).toBe(countAtClose);
-    } finally {
-      vi.useRealTimers();
-    }
+    // After close, no more reminders
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reminders.length).toBe(countAtClose);
   });
 
   it("level ends mid-vote: tally and rotate together (no deferral)", async () => {
