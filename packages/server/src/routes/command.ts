@@ -8,8 +8,11 @@ interface WsCommand {
   payload: { command: string };
 }
 
+/** WebSocket with liveness flag for dead-connection culling. */
+type AliveWebSocket = WebSocket & { isAlive?: boolean };
+
 /** Connected WebSocket clients for broadcasting. */
-const wsClients = new Set<WebSocket>();
+const wsClients = new Set<AliveWebSocket>();
 
 /** Broadcast a message to all connected WebSocket clients. */
 export function wsBroadcast(type: string, payload: Record<string, unknown>): void {
@@ -24,13 +27,27 @@ export function wsBroadcast(type: string, payload: Record<string, unknown>): voi
 /** Track which session is currently wired to prevent duplicate callbacks. */
 let wiredSessionId: string | null = null;
 
-/** Ping all WS clients every 15s so clients can detect dead connections (iOS Safari). */
+/**
+ * Ping all WS clients every 15s. Two mechanisms, two purposes:
+ * - A JSON text message lets browser clients detect dead connections —
+ *   browsers can NOT see protocol-level ping frames in onmessage.
+ * - A protocol-level ping elicits an automatic pong from live browsers,
+ *   which we use to cull connections that died silently (iOS Safari kills
+ *   backgrounded sockets without a close frame).
+ */
 setInterval(() => {
   const msg = JSON.stringify({ type: "ping" });
   for (const ws of wsClients) {
-    if (ws.readyState === ws.OPEN) {
-      ws.ping(msg);
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.isAlive === false) {
+      // No pong since the last interval — connection is dead
+      ws.terminate();
+      wsClients.delete(ws);
+      continue;
     }
+    ws.isAlive = false;
+    ws.send(msg);
+    ws.ping();
   }
 }, 15_000);
 
@@ -62,15 +79,14 @@ export function wireSessionToClients(): void {
 }
 
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
+  app.get("/ws", { websocket: true }, (socket: AliveWebSocket, request) => {
+    socket.isAlive = true;
     wsClients.add(socket);
-    // Web admin auth is disabled — D3 console password is the auth gate.
-    // See project_auth_architecture for the tiered auth plan.
 
     app.log.info("WebSocket client connected");
 
     socket.on("pong", () => {
-      // Client is alive — no action needed here, client tracks timestamp
+      socket.isAlive = true;
     });
 
     const session = sessionManager.getActive();

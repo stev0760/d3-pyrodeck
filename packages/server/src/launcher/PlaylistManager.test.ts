@@ -63,7 +63,7 @@ describe("PlaylistManager — rotation", () => {
     expect(mgr.getStatus().status).toBe("active");
   });
 
-  it("'Ending level.' clears pendingWinner from prior vote", async () => {
+  it("mid-mission transition ('Ending level.' then 'Opening level') clears pendingWinner", async () => {
     vi.useFakeTimers();
     try {
       const pl = await mgr.create("p", "sequential", sampleEntries);
@@ -84,8 +84,10 @@ describe("PlaylistManager — rotation", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       expect(mgr.getStatus().status).toBe("active");
 
-      // Mid-mission level end clears the pending winner
+      // Mid-mission level end: "Opening level" follows without "Mission
+      // over." — clears the pending winner, no rotation.
       mgr.onStdoutChunk("Ending level.\n");
+      mgr.onStdoutChunk("Opening level 'b.d3l'...\n");
       expect(rotated).toHaveLength(0);
 
       // Mission finally ends — stale winner was cleared, so default advancement
@@ -96,6 +98,82 @@ describe("PlaylistManager — rotation", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("mission end ('Ending level.' then 'Mission over.') keeps pendingWinner", async () => {
+    vi.useFakeTimers();
+    try {
+      const pl = await mgr.create("p", "sequential", sampleEntries);
+      await mgr.update(pl.id, {
+        voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+      });
+      await mgr.activate(pl.id);
+      mgr.consumeInitialSync();
+
+      const rotated: PlaylistEntry[] = [];
+      mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+
+      mgr.parseAndAnchorFromNetgameinfo(
+        "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+      );
+      const opts = mgr.getStatus().voteOptions;
+      mgr.onStdoutChunk("*Alice says: 1\n");
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      // Real D3 prints these without trailing newlines, so debug output gets
+      // concatenated onto the same line — matching must tolerate that.
+      mgr.onStdoutChunk(
+        "Ending level.2026-04-10 22:22:15.311 DEBUG [276084] [MultiSendLevelEnded@3587] Sending level ended!\n",
+      );
+      expect(rotated).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      mgr.onStdoutChunk(
+        "Mission over.  Looping back to first level in mission file.2026-04-10 22:22:16.312 DEBUG [276084] [CheckHogfile@1288] Checking\n",
+      );
+
+      // Vote winner is honored, not the natural next entry
+      expect(rotated).toHaveLength(1);
+      expect(rotated[0].id).toBe(opts[0].id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("player chat cannot trigger rotation or level-end handling", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+
+    mgr.onStdoutChunk("*Griefer says: Mission over.  Looping back to first level in mission file.\n");
+    mgr.onStdoutChunk("*Griefer says: Ending level.\n");
+
+    expect(rotated).toHaveLength(0);
+    expect(mgr.getStatus().status).toBe("active");
+  });
+
+  it("emits levelChanged and clears the timer when a new level loads", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    expect(mgr.getStatus().gameEndAt).not.toBeNull();
+
+    let levelChanged = 0;
+    const timerUpdates: Array<number | null> = [];
+    mgr.on("levelChanged", () => levelChanged++);
+    mgr.on("timerUpdate", (t: number | null) => timerUpdates.push(t));
+
+    mgr.onStdoutChunk("Opening level 'b.d3l'...some concatenated debug output\n");
+
+    expect(levelChanged).toBe(1);
+    expect(mgr.getStatus().gameEndAt).toBeNull();
+    expect(timerUpdates).toContain(null);
   });
 
   it("drops 'Mission over.' while restarting, then resumes after markRotationComplete", () => {
@@ -203,6 +281,51 @@ describe("PlaylistManager — voting", () => {
     expect(results).toHaveLength(1);
     expect(results[0].counts[0]).toBe(2);
     expect(results[0].counts[1]).toBe(1);
+    expect(results[0].winner.id).toBe(opts[0].id);
+  });
+
+  it("vote ties resolve to the first option", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    const opts = mgr.getStatus().voteOptions;
+
+    mgr.onStdoutChunk("*Alice says: 1\n");
+    mgr.onStdoutChunk("*Bob says: 2\n");
+
+    const results: Array<{ winner: PlaylistEntry }> = [];
+    mgr.on("voteResult", (winner: PlaylistEntry) => results.push({ winner }));
+
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+    expect(results).toHaveLength(1);
+    expect(results[0].winner.id).toBe(opts[0].id);
+  });
+
+  it("zero votes resolve to the first option", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.update(pl.id, {
+      voting: { enabled: true, preAnnounceSeconds: 60, voteOpenSeconds: 30, optionCount: 2 },
+    });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    const opts = mgr.getStatus().voteOptions;
+
+    const results: Array<{ winner: PlaylistEntry }> = [];
+    mgr.on("voteResult", (winner: PlaylistEntry) => results.push({ winner }));
+
+    mgr.onStdoutChunk("Mission over.  Looping back to first level in mission file.\n");
+    expect(results).toHaveLength(1);
     expect(results[0].winner.id).toBe(opts[0].id);
   });
 

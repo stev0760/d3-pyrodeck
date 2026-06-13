@@ -45,6 +45,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     onBots,
     onBotStats,
     onServerInfo,
+    onLevelChanged,
     onPlaylistEvent,
     hasFeature,
   } = useServerConnection();
@@ -55,6 +56,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
   const serverInfoHook = useServerInfo({
     sendCommand,
     onServerInfo,
+    onLevelChanged,
     connected: connectionState === "ready",
   });
   const prevErrorRef = useRef<string | null>(null);

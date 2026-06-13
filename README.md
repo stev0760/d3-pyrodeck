@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.8** — Matcen 0.9.1 compatibility: verified the `$botstat` two-line format parses (the Phase 11 `nav:` diagnostic line is skipped); added `$navdump` and `$terrainsteer` to the command reference.
+**v0.4.9** — Timer reliability: the Time Left countdown now resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s so it can't drift. Launch mode broadcasts a `level_changed` signal (parsed from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads. Also fixed: playlist vote ties now resolve to the first option, drift correction survives rotations and reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect now works), and dead WS clients are culled.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -46,8 +46,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Create named playlists with ordered mission entries (label, `.mn3` filename, optional starting level)
 - Three rotation modes: Sequential (in order, looping), Shuffle (Fisher-Yates, reshuffles on loop), Weighted (random draw by weight)
 - Activate/deactivate from the Playlists tab or the Server sidebar widget
-- On level end (`"Ending level."` in stdout), server automatically stops, swaps `MissionName=` in the active profile config, and restarts
-- Timer anchoring: queries `$netgameinfo` on activation and every 60s for drift correction; countdown visible in sidebar
+- On mission completion (`"Mission over."` in stdout), server automatically stops, swaps `MissionName=` in the active profile config, and restarts. Mid-mission level transitions (`"Ending level."` followed by `"Opening level"`) do not rotate
+- Timer anchoring: queries `$netgameinfo` on activation, after each level loads, and every 60s for drift correction; the anchor survives rotations and telnet reconnects. Countdown visible in sidebar
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
 

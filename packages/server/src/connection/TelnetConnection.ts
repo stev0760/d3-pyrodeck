@@ -27,9 +27,6 @@ export class TelnetConnection implements ServerConnection {
   private commandQueue: QueuedCommand[] = [];
   private processing = false;
 
-  // Buffer for incomplete lines arriving across TCP chunks
-  private inputBuffer = "";
-
   isConnected(): boolean {
     return this.connected;
   }
@@ -90,7 +87,6 @@ export class TelnetConnection implements ServerConnection {
       // value and produce garbled text if converted to UTF-8 as-is.
       const cleaned = this.stripD3ColorCodes(chunk);
       const text = cleaned.toString("utf-8");
-      this.inputBuffer += text;
 
       // Emit cleaned data to all listeners (for console passthrough)
       for (const cb of this.dataCallbacks) {
@@ -218,9 +214,6 @@ export class TelnetConnection implements ServerConnection {
       let responseBuffer = "";
       let silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // Clear any data that arrived between commands
-      this.inputBuffer = "";
-
       const onData = (chunk: Buffer) => {
         const cleaned = this.stripD3ColorCodes(chunk);
         responseBuffer += cleaned.toString("utf-8");
@@ -325,6 +318,5 @@ export class TelnetConnection implements ServerConnection {
     this.disconnectCallbacks = [];
     this.commandQueue = [];
     this.processing = false;
-    this.inputBuffer = "";
   }
 }

@@ -69,6 +69,16 @@ const STATE_FILE = "playlist-state.json";
 // How often (ms) to query $netgameinfo to correct timer drift
 const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
 
+// "Ending level." fires for BOTH mid-mission transitions and mission end.
+// Mission end is confirmed by "Mission over." which D3 prints ~1s later;
+// if neither "Mission over." nor "Opening level" arrives within this window,
+// treat it as a mid-mission transition.
+const LEVEL_END_WINDOW_MS = 5_000;
+
+// How long after "Opening level" to wait before re-querying $netgameinfo.
+// Level loads take ~1s on the dedicated server; 5s gives slow hosts headroom.
+const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
+
 // ---------------------------------------------------------------------------
 // PlaylistManager
 // ---------------------------------------------------------------------------
@@ -83,6 +93,7 @@ const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
  *   voteReceived({playerName, option, …})  — a player cast or changed their vote
  *   voteResult(winner, counts)             — voting resolved; winner picked (does NOT imply rotation)
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
+ *   levelChanged()                          — a new level is loading (fires regardless of playlist state)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -126,6 +137,10 @@ export class PlaylistManager extends EventEmitter {
   // Countdown announces (fire regardless of playlist state)
   private announceTimers: ReturnType<typeof setTimeout>[] = [];
   private static readonly ANNOUNCE_THRESHOLDS_S = [300, 120, 60, 30, 10];
+
+  // Level transition tracking
+  private levelEndWindowTimer: ReturnType<typeof setTimeout> | null = null;
+  private reanchorTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Stdout line buffering
   private stdoutLineBuffer = "";
@@ -258,10 +273,10 @@ export class PlaylistManager extends EventEmitter {
     // Cancel any pending timers from a previous activation
     this.clearTimers();
 
-    // Query current game state to anchor timer (if server is running)
+    // Query current game state to anchor timer (if server is running).
+    // anchorTimer() also starts drift correction.
     if (this.sendCommandFn) {
       this.anchorTimer().catch(() => {});
-      this.startDriftCorrection();
     }
 
     await this.saveState();
@@ -336,22 +351,46 @@ export class PlaylistManager extends EventEmitter {
   private onStdoutLine(line: string): void {
     const trimmed = line.trim();
 
-    // Mission complete — rotate to next playlist entry
+    // Chat lines start with "*Name says:" — handle them first so player chat
+    // can never trigger the level-control markers below (e.g. someone typing
+    // "Mission over." in chat must not restart the server).
+    if (trimmed.startsWith("*")) {
+      this.onChatLine(trimmed);
+      return;
+    }
+
+    // Mission complete ("Mission over.  Looping back to first level...") —
+    // confirms the "Ending level." that preceded it was a mission end.
     if (trimmed.includes("Mission over.")) {
+      this.cancelLevelEndWindow();
       this.onMissionEnd();
       return;
     }
 
-    // Mid-mission level transition — clear stale vote state so the next
-    // level gets a fresh vote window, but do NOT rotate.
-    if (trimmed === "Ending level.") {
-      this.onLevelEnd();
+    // D3 prints "Ending level." WITHOUT a trailing newline, so the next log
+    // line is concatenated onto it — match with includes(), never equality.
+    // It fires for both mid-mission transitions and mission end; we don't
+    // know which until "Mission over." does (or doesn't) follow.
+    if (trimmed.includes("Ending level.")) {
+      this.openLevelEndWindow();
       return;
     }
 
-    // Chat message — check for vote
+    // New level loading. If the level-end window is still open, no
+    // "Mission over." arrived — this was a mid-mission transition.
+    if (trimmed.includes("Opening level ")) {
+      if (this.levelEndWindowTimer) {
+        this.cancelLevelEndWindow();
+        this.onLevelEnd();
+      }
+      this.onLevelLoading();
+      return;
+    }
+  }
+
+  /** Handle a "*PlayerName says: message" chat line (vote detection). */
+  private onChatLine(trimmed: string): void {
     if (this.status === "voting") {
-      // D3 dedicated stdout format: "*PlayerName says: message"
       const voteMatch = trimmed.match(/^\*(.+?) says: (\d)$/);
       if (voteMatch) {
         const [, playerName, digit] = voteMatch;
@@ -385,10 +424,19 @@ export class PlaylistManager extends EventEmitter {
 
   /**
    * Query $netgameinfo and anchor the game end timer.
-   * Called on activation and periodically for drift correction.
+   * Called on activation, after level loads, and periodically for drift
+   * correction. Runs without an active playlist too — countdown announces
+   * are scheduled regardless.
    */
   async anchorTimer(): Promise<void> {
-    if (!this.sendCommandFn || !this.activePlaylist) return;
+    if (!this.sendCommandFn) return;
+
+    // Drift correction must survive rotations and reconnects: clearTimers()
+    // kills the interval when a rotation starts, and the launcher calls
+    // anchorTimer() again once telnet is back — restart it here.
+    if (this.activePlaylist) {
+      this.ensureDriftCorrection();
+    }
 
     try {
       const raw = await this.sendCommandFn("$netgameinfo");
@@ -465,6 +513,47 @@ export class PlaylistManager extends EventEmitter {
   // ---------------------------------------------------------------------------
   // Level end handler
   // ---------------------------------------------------------------------------
+
+  /**
+   * "Ending level." was seen. Wait briefly to learn whether it's a mission
+   * end ("Mission over." follows) or a mid-mission transition ("Opening
+   * level" follows, or nothing). The timer is the fallback if neither
+   * marker shows up.
+   */
+  private openLevelEndWindow(): void {
+    this.cancelLevelEndWindow();
+    this.levelEndWindowTimer = setTimeout(() => {
+      this.levelEndWindowTimer = null;
+      this.onLevelEnd();
+    }, LEVEL_END_WINDOW_MS);
+  }
+
+  private cancelLevelEndWindow(): void {
+    if (this.levelEndWindowTimer) {
+      clearTimeout(this.levelEndWindowTimer);
+      this.levelEndWindowTimer = null;
+    }
+  }
+
+  /**
+   * A new level is loading ("Opening level 'x.d3l'..."). The previous game's
+   * timer is gone — clear the stale anchor immediately and re-query
+   * $netgameinfo once the level is up. Fires regardless of playlist state so
+   * countdown announces and UI timers reset on $warp/$endlevel too.
+   */
+  private onLevelLoading(): void {
+    this.emit("levelChanged");
+    this.clearAnnounceTimers();
+    if (this.gameEndAt !== null) {
+      this.gameEndAt = null;
+      this.emitTimerUpdate();
+    }
+    if (this.reanchorTimer) clearTimeout(this.reanchorTimer);
+    this.reanchorTimer = setTimeout(() => {
+      this.reanchorTimer = null;
+      this.anchorTimer().catch(() => {});
+    }, LEVEL_LOAD_REANCHOR_DELAY_MS);
+  }
 
   /**
    * Mid-mission level transition ("Ending level." without "Mission over.").
@@ -624,7 +713,7 @@ export class PlaylistManager extends EventEmitter {
     let maxVotes = -1;
     let winnerIdx = 0;
     for (let i = 0; i < counts.length; i++) {
-      if (counts[i] >= maxVotes) {
+      if (counts[i] > maxVotes) {
         maxVotes = counts[i];
         winnerIdx = i;
       }
@@ -744,7 +833,9 @@ export class PlaylistManager extends EventEmitter {
   // Timer helpers
   // ---------------------------------------------------------------------------
 
-  private startDriftCorrection(): void {
+  /** Start the periodic $netgameinfo drift-correction poll (idempotent). */
+  private ensureDriftCorrection(): void {
+    if (this.driftCorrectionInterval) return;
     this.driftCorrectionInterval = setInterval(() => {
       if (this.status === "active" || this.status === "voting") {
         this.anchorTimer().catch(() => {});
@@ -775,6 +866,11 @@ export class PlaylistManager extends EventEmitter {
   private clearTimers(): void {
     this.clearVoteTimers();
     this.clearAnnounceTimers();
+    this.cancelLevelEndWindow();
+    if (this.reanchorTimer) {
+      clearTimeout(this.reanchorTimer);
+      this.reanchorTimer = null;
+    }
     if (this.driftCorrectionInterval) {
       clearInterval(this.driftCorrectionInterval);
       this.driftCorrectionInterval = null;

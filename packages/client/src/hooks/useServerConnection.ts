@@ -35,6 +35,7 @@ export function useServerConnection() {
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const levelChangedCallbacksRef = useRef<Array<() => void>>([]);
   const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
@@ -115,6 +116,11 @@ export function useServerConnection() {
           case "serverinfo":
             for (const cb of serverInfoCallbacksRef.current) {
               cb(msg.payload);
+            }
+            break;
+          case "level_changed":
+            for (const cb of levelChangedCallbacksRef.current) {
+              cb();
             }
             break;
           case "connection_state": {
@@ -345,6 +351,15 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onLevelChanged = useCallback((callback: () => void) => {
+    levelChangedCallbacksRef.current.push(callback);
+    return () => {
+      levelChangedCallbacksRef.current = levelChangedCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const hasFeature = useCallback(
     (feature: string): boolean => {
       return capabilities?.features.includes(feature) ?? false;
@@ -377,6 +392,7 @@ export function useServerConnection() {
     onBots,
     onBotStats,
     onServerInfo,
+    onLevelChanged,
     onPlaylistEvent,
     hasFeature,
   };

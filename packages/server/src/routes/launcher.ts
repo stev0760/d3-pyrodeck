@@ -33,6 +33,12 @@ playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
   wsBroadcast("playlist_timer", { gameEndAt });
 });
 
+// A new level is loading (level rotation, $warp, $endlevel) — tell clients so
+// they can drop their stale countdown and re-query $netgameinfo.
+playlistManager.on("levelChanged", () => {
+  wsBroadcast("level_changed", {});
+});
+
 /**
  * Build a single-line vote prompt sized for D3's 2-line chat window.
  * Example: "Vote next mission (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
@@ -190,6 +196,11 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   // from our side so the TCP 4-tuple closes through FIN_WAIT rather than
   // lingering in TIME_WAIT with D3's local port as the sockname, which can
   // interfere with the next D3 binding the same port.
+  //
+  // Rotation deliberately SKIPS the graceful `quit` path (unlike /stop):
+  // `quit` makes D3 close the connection from its side, parking the 4-tuple
+  // in TIME_WAIT on D3's port and forcing waitForPortFree() to delay the
+  // relaunch by up to a minute between missions.
   const existingSession = sessionManager.getActive();
   if (existingSession) {
     sessionManager.remove(existingSession.id);
@@ -467,15 +478,20 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: "Server is not running" });
     }
 
-    // Clean up session
+    playlistManager.sendCommandFn = null;
+
+    // Stop while the telnet session is still wired so ProcessManager can try
+    // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
+    // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
+    // absorbs that on the next launch.
+    await processManager.stop();
+
+    // Clean up session after the process is down
+    processManager.sendQuitFn = null;
     const session = sessionManager.getActive();
     if (session) {
       sessionManager.remove(session.id);
     }
-    processManager.sendQuitFn = null;
-    playlistManager.sendCommandFn = null;
-
-    await processManager.stop();
 
     wsBroadcast("connection_state", { state: "disconnected" });
 
