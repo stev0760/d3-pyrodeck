@@ -124,6 +124,7 @@ export function ServerSidebar({
           <div className="px-3 py-2">
             <InfoRow label="Game" value={info.gameName} />
             <InfoRow label="Mission" value={info.missionName} />
+            <InfoRow label="Level" value={info.currentLevel} />
             <InfoRow label="Mode" value={info.scriptName} />
             <InfoRow label="Network" value={info.networkModel} />
             {info.timeLeft && (

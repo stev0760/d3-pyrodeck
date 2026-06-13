@@ -6,7 +6,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
-**v0.4.9** — Timer reliability: the Time Left countdown now resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s so it can't drift. Launch mode broadcasts a `level_changed` signal (parsed from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads. Also fixed: playlist vote ties now resolve to the first option, drift correction survives rotations and reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect now works), and dead WS clients are culled.
+**v0.4.9** — Timer reliability: the Time Left countdown now resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s so it can't drift. Launch mode broadcasts a `level_changed` signal (parsed from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads, and the Server panel now shows the actual loaded level (e.g. `TheCore`), not just the mission file — handy for long multi-level rotations. Also fixed: playlist vote ties now resolve to the first option, drift correction survives rotations and reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect now works), and dead WS clients are culled.
 
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
 
@@ -36,7 +36,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Bulk remove all bots
 
 ### Server Dashboard
-- Live server info: game name, mission, game mode, network model, time remaining
+- Live server info: game name, mission, current level (Launch mode), game mode, network model, time remaining
 - Stepper controls for max players, PPS, time limit, and kill goal
 - Quick actions: end level, warp to level, balance teams
 - Quit server with confirmation dialog (Connect mode; Launch mode uses Stop Server button)

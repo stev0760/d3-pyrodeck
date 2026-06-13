@@ -13,13 +13,20 @@ export interface NetGameInfo {
   goalLimit: number;
   respawnTime: string;
   networkModel: string;
+  /**
+   * The level file currently loaded (".d3l" stripped). Merged in from the
+   * server's level_changed signal, not from $netgameinfo (which has no level
+   * field). Null in Connect mode (no stdout to parse) or before the first
+   * level loads.
+   */
+  currentLevel?: string | null;
 }
 
 interface UseServerInfoOptions {
   sendCommand: (cmd: string) => void;
   onServerInfo: (cb: (data: unknown) => void) => () => void;
   /** Fires when the server starts loading a new level (Launch mode only). */
-  onLevelChanged?: (cb: () => void) => () => void;
+  onLevelChanged?: (cb: (level: string | null) => void) => () => void;
   connected: boolean;
 }
 
@@ -53,6 +60,7 @@ export function useServerInfo({
 }: UseServerInfoOptions) {
   const [serverInfo, setServerInfo] = useState<NetGameInfo | null>(null);
   const [localTimeLeft, setLocalTimeLeft] = useState<string | null>(null);
+  const [currentLevel, setCurrentLevel] = useState<string | null>(null);
   const anchorRef = useRef<{ seconds: number; at: number } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -125,6 +133,7 @@ export function useServerInfo({
       sendCommand("$netgameinfo");
     } else {
       setServerInfo(null);
+      setCurrentLevel(null);
     }
   }, [connected, sendCommand]);
 
@@ -138,11 +147,13 @@ export function useServerInfo({
     return () => clearInterval(interval);
   }, [connected, sendCommand]);
 
-  // Launch mode: the server tells us when a new level starts loading.
-  // Clear the stale countdown right away and re-query once it's loaded.
+  // Launch mode: the server tells us when a new level starts loading (and
+  // pushes the current level on connect). Record which level is loaded, clear
+  // the stale countdown, and re-query once it's up.
   useEffect(() => {
     if (!onLevelChanged) return;
-    return onLevelChanged(() => {
+    return onLevelChanged((level) => {
+      setCurrentLevel(level);
       anchorRef.current = null;
       setLocalTimeLeft(null);
       refreshAfterChange(LEVEL_CHANGE_REFRESH_DELAY_MS);
@@ -221,7 +232,7 @@ export function useServerInfo({
   }, [sendCommand]);
 
   const displayInfo = serverInfo
-    ? { ...serverInfo, timeLeft: localTimeLeft }
+    ? { ...serverInfo, timeLeft: localTimeLeft, currentLevel }
     : null;
 
   return {

@@ -34,9 +34,10 @@ playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
 });
 
 // A new level is loading (level rotation, $warp, $endlevel) — tell clients so
-// they can drop their stale countdown and re-query $netgameinfo.
-playlistManager.on("levelChanged", () => {
-  wsBroadcast("level_changed", {});
+// they can drop their stale countdown, re-query $netgameinfo, and show which
+// level is now loaded.
+playlistManager.on("levelChanged", (level: string | null) => {
+  wsBroadcast("level_changed", { level });
 });
 
 /**
@@ -312,6 +313,12 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 // Wire process events to WebSocket broadcasts
 processManager.on("stateChange", (state: string) => {
   wsBroadcast("process_state", { state });
+  // The loaded level is gone once the process is down; forget it so a stale
+  // name isn't reported on the next connect. A restart re-populates it from
+  // the next "Opening level" line.
+  if (state === "stopped" || state === "crashed") {
+    playlistManager.clearCurrentLevel();
+  }
 });
 
 processManager.on("stdout", (data: string) => {

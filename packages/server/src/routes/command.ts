@@ -105,6 +105,14 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
           payload: serializeCaps(session.capabilities),
         }),
       );
+      // Push the currently-loaded level so a client joining/refreshing
+      // mid-level sees it without waiting for the next level change.
+      const level = playlistManager.getCurrentLevel();
+      if (level) {
+        socket.send(
+          JSON.stringify({ type: "level_changed", payload: { level } }),
+        );
+      }
       app.log.info(
         "WebSocket client linked to session %s (state: %s)",
         session.id,

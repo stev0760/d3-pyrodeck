@@ -35,7 +35,7 @@ export function useServerConnection() {
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const levelChangedCallbacksRef = useRef<Array<() => void>>([]);
+  const levelChangedCallbacksRef = useRef<Array<(level: string | null) => void>>([]);
   const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
@@ -118,11 +118,13 @@ export function useServerConnection() {
               cb(msg.payload);
             }
             break;
-          case "level_changed":
+          case "level_changed": {
+            const level = (msg.payload as { level: string | null }).level;
             for (const cb of levelChangedCallbacksRef.current) {
-              cb();
+              cb(level);
             }
             break;
+          }
           case "connection_state": {
             const newState = (msg.payload as { state: ConnectionState }).state;
             setConnectionState(newState);
@@ -351,7 +353,7 @@ export function useServerConnection() {
     };
   }, []);
 
-  const onLevelChanged = useCallback((callback: () => void) => {
+  const onLevelChanged = useCallback((callback: (level: string | null) => void) => {
     levelChangedCallbacksRef.current.push(callback);
     return () => {
       levelChangedCallbacksRef.current = levelChangedCallbacksRef.current.filter(

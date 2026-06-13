@@ -93,7 +93,7 @@ const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
  *   voteReceived({playerName, option, …})  — a player cast or changed their vote
  *   voteResult(winner, counts)             — voting resolved; winner picked (does NOT imply rotation)
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
- *   levelChanged()                          — a new level is loading (fires regardless of playlist state)
+ *   levelChanged(level: string | null)      — a new level is loading (fires regardless of playlist state)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -141,6 +141,11 @@ export class PlaylistManager extends EventEmitter {
   // Level transition tracking
   private levelEndWindowTimer: ReturnType<typeof setTimeout> | null = null;
   private reanchorTimer: ReturnType<typeof setTimeout> | null = null;
+  // The level file currently loaded (e.g. "TheCore"), parsed from D3's
+  // "Opening level 'x.d3l'" stdout. This is server state, not playlist state,
+  // but it's tracked here because this is the stdout line parser. Null until
+  // the first level loads, or in Connect mode (no stdout to observe).
+  private currentLevel: string | null = null;
 
   // Stdout line buffering
   private stdoutLineBuffer = "";
@@ -315,6 +320,7 @@ export class PlaylistManager extends EventEmitter {
     activePlaylistId: string | null;
     currentIndex: number;
     currentEntry: PlaylistEntry | null;
+    currentLevel: string | null;
     gameEndAt: number | null;
     voteOptions: PlaylistEntry[];
     voteDeadline: number | null;
@@ -324,10 +330,21 @@ export class PlaylistManager extends EventEmitter {
       activePlaylistId: this.activePlaylist?.id ?? null,
       currentIndex: this.currentIndex,
       currentEntry: this.currentEntryOrNull(),
+      currentLevel: this.currentLevel,
       gameEndAt: this.gameEndAt,
       voteOptions: this.voteOptions,
       voteDeadline: this.voteDeadline,
     };
+  }
+
+  /** The level file currently loaded, or null. See {@link currentLevel}. */
+  getCurrentLevel(): string | null {
+    return this.currentLevel;
+  }
+
+  /** Forget the loaded level (call when the server process stops). */
+  clearCurrentLevel(): void {
+    this.currentLevel = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -383,7 +400,10 @@ export class PlaylistManager extends EventEmitter {
         this.cancelLevelEndWindow();
         this.onLevelEnd();
       }
-      this.onLevelLoading();
+      // "Opening level 'TheCore.d3l'..." — capture the level file, sans .d3l.
+      const m = trimmed.match(/Opening level '([^']+)'/);
+      const level = m ? m[1].replace(/\.d3l$/i, "") : null;
+      this.onLevelLoading(level);
       return;
     }
   }
@@ -540,9 +560,12 @@ export class PlaylistManager extends EventEmitter {
    * timer is gone — clear the stale anchor immediately and re-query
    * $netgameinfo once the level is up. Fires regardless of playlist state so
    * countdown announces and UI timers reset on $warp/$endlevel too.
+   *
+   * @param level the loaded level name (".d3l" stripped), or null if unparsed
    */
-  private onLevelLoading(): void {
-    this.emit("levelChanged");
+  private onLevelLoading(level: string | null): void {
+    if (level) this.currentLevel = level;
+    this.emit("levelChanged", this.currentLevel);
     this.clearAnnounceTimers();
     if (this.gameEndAt !== null) {
       this.gameEndAt = null;

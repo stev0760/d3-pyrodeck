@@ -164,16 +164,33 @@ describe("PlaylistManager — rotation", () => {
     );
     expect(mgr.getStatus().gameEndAt).not.toBeNull();
 
-    let levelChanged = 0;
+    const levels: Array<string | null> = [];
     const timerUpdates: Array<number | null> = [];
-    mgr.on("levelChanged", () => levelChanged++);
+    mgr.on("levelChanged", (l: string | null) => levels.push(l));
     mgr.on("timerUpdate", (t: number | null) => timerUpdates.push(t));
 
     mgr.onStdoutChunk("Opening level 'b.d3l'...some concatenated debug output\n");
 
-    expect(levelChanged).toBe(1);
+    expect(levels).toEqual(["b"]); // ".d3l" stripped
+    expect(mgr.getStatus().currentLevel).toBe("b");
+    expect(mgr.getCurrentLevel()).toBe("b");
     expect(mgr.getStatus().gameEndAt).toBeNull();
     expect(timerUpdates).toContain(null);
+  });
+
+  it("parses the level name from real D3 'Opening level' output", () => {
+    // D3 prints the .d3l filename with debug text concatenated, no newline.
+    mgr.onStdoutChunk(
+      "Opening level 'TheCore.d3l'...2026-04-03 18:46:16.868 DEBUG [563532] [FreeAllRooms@715]\n",
+    );
+    expect(mgr.getCurrentLevel()).toBe("TheCore");
+  });
+
+  it("clearCurrentLevel forgets the loaded level", () => {
+    mgr.onStdoutChunk("Opening level 'TheCore.d3l'...\n");
+    expect(mgr.getCurrentLevel()).toBe("TheCore");
+    mgr.clearCurrentLevel();
+    expect(mgr.getCurrentLevel()).toBeNull();
   });
 
   it("drops 'Mission over.' while restarting, then resumes after markRotationComplete", () => {
