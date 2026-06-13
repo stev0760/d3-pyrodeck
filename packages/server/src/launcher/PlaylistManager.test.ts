@@ -193,6 +193,23 @@ describe("PlaylistManager — rotation", () => {
     expect(mgr.getCurrentLevel()).toBeNull();
   });
 
+  it("anchors the timer from an H:MM:SS Time Left", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+
+    const before = Date.now();
+    // 1:05:00 = 3900s remaining, 90-minute limit
+    mgr.parseAndAnchorFromNetgameinfo(
+      "Time Left: 1:05:00\nTime Limit: 90 minutes\nGoal: None\n",
+    );
+    const gameEndAt = mgr.getStatus().gameEndAt;
+    expect(gameEndAt).not.toBeNull();
+    const secondsLeft = (gameEndAt! - before) / 1000;
+    expect(secondsLeft).toBeGreaterThan(3895);
+    expect(secondsLeft).toBeLessThan(3905);
+  });
+
   it("drops 'Mission over.' while restarting, then resumes after markRotationComplete", () => {
     return (async () => {
       const pl = await mgr.create("p", "sequential", sampleEntries);

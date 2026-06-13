@@ -39,10 +39,11 @@ const SYNC_INTERVAL_MS = 30_000;
 const LEVEL_CHANGE_REFRESH_DELAY_MS = 4_000;
 
 function parseTimeLeftToSeconds(str: string): number {
+  // Handles "M:SS", "MM:SS", and "H:MM:SS".
   const parts = str.split(":").map((s) => parseInt(s, 10));
-  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-    return parts[0] * 60 + parts[1];
-  }
+  if (parts.some((n) => isNaN(n))) return 0;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return 0;
 }
 

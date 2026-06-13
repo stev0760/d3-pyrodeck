@@ -81,11 +81,16 @@ export class TelnetConnection implements ServerConnection {
   private setupListeners(): void {
     if (!this.socket) return;
 
+    // Per-consumer carry for color markers split across TCP chunks.
+    let colorCarry: Buffer = Buffer.alloc(0);
     this.socket.on("data", (chunk: Buffer) => {
       // Strip D3's inline color codes from raw bytes before UTF-8 conversion.
       // D3 uses \x01 + 3 RGB bytes as color markers. These bytes can be any
       // value and produce garbled text if converted to UTF-8 as-is.
-      const cleaned = this.stripD3ColorCodes(chunk);
+      const { cleaned, carry } = this.stripD3ColorCodes(
+        Buffer.concat([colorCarry, chunk]),
+      );
+      colorCarry = carry;
       const text = cleaned.toString("utf-8");
 
       // Emit cleaned data to all listeners (for console passthrough)
@@ -122,6 +127,7 @@ export class TelnetConnection implements ServerConnection {
 
       let authBuffer = "";
       let passwordSent = false;
+      let colorCarry: Buffer = Buffer.alloc(0);
       const timeout = setTimeout(() => {
         cleanup();
         reject(new Error("Authentication timed out"));
@@ -129,7 +135,10 @@ export class TelnetConnection implements ServerConnection {
 
       const onData = (chunk: Buffer) => {
         // Strip D3 color codes before converting to text
-        const cleaned = this.stripD3ColorCodes(chunk);
+        const { cleaned, carry } = this.stripD3ColorCodes(
+          Buffer.concat([colorCarry, chunk]),
+        );
+        colorCarry = carry;
         const text = cleaned.toString("utf-8");
         authBuffer += text;
 
@@ -213,9 +222,13 @@ export class TelnetConnection implements ServerConnection {
 
       let responseBuffer = "";
       let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+      let colorCarry: Buffer = Buffer.alloc(0);
 
       const onData = (chunk: Buffer) => {
-        const cleaned = this.stripD3ColorCodes(chunk);
+        const { cleaned, carry } = this.stripD3ColorCodes(
+          Buffer.concat([colorCarry, chunk]),
+        );
+        colorCarry = carry;
         responseBuffer += cleaned.toString("utf-8");
 
         // Reset the silence timer on each chunk
@@ -259,25 +272,36 @@ export class TelnetConnection implements ServerConnection {
    * Strip D3's inline color codes from raw byte data.
    * D3 uses \x01 followed by 3 RGB bytes as color markers.
    * These must be removed before UTF-8 conversion to avoid garbled output.
+   *
+   * A color marker can straddle a TCP chunk boundary (\x01 in one chunk, its
+   * RGB bytes in the next). When the trailing bytes of `data` are an incomplete
+   * marker, they're returned as `carry` so the caller can prepend them to the
+   * next chunk instead of leaking them as garbage. Each consumer keeps its own
+   * carry, since the auth/command/passthrough readers strip independently.
    */
-  private stripD3ColorCodes(data: Buffer): Buffer {
+  private stripD3ColorCodes(data: Buffer): { cleaned: Buffer; carry: Buffer } {
     const result: number[] = [];
     let i = 0;
     while (i < data.length) {
+      const b = data[i];
       // Strip null bytes — D3 sends \x00 as line prefixes in some responses
-      if (data[i] === 0x00) {
+      if (b === 0x00) {
         i++;
         continue;
       }
-      if (data[i] === 0x01 && i + 3 < data.length) {
-        // Skip the \x01 marker and 3 RGB bytes
-        i += 4;
-      } else {
-        result.push(data[i]);
-        i++;
+      if (b === 0x01) {
+        if (i + 3 < data.length) {
+          // Full marker present — skip the \x01 and its 3 RGB bytes
+          i += 4;
+          continue;
+        }
+        // Incomplete marker at the end — carry it to the next chunk
+        return { cleaned: Buffer.from(result), carry: Buffer.from(data.subarray(i)) };
       }
+      result.push(b);
+      i++;
     }
-    return Buffer.from(result);
+    return { cleaned: Buffer.from(result), carry: Buffer.alloc(0) };
   }
 
   /**

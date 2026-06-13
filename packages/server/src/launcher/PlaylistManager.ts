@@ -927,12 +927,12 @@ export class PlaylistManager extends EventEmitter {
   // Utility parsers
   // ---------------------------------------------------------------------------
 
-  /** Parse "M:SS" or "MM:SS" timeLeft string to total seconds. */
+  /** Parse "M:SS", "MM:SS", or "H:MM:SS" timeLeft string to total seconds. */
   private parseTimeLeft(str: string): number {
     const parts = str.split(":").map((p) => parseInt(p, 10));
-    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-      return parts[0] * 60 + parts[1];
-    }
+    if (parts.some((n) => isNaN(n))) return 0;
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
     return 0;
   }
 
