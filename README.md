@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.4.11** — Stop crashing dedicated servers via `$netgameinfo`. On a dedicated server the engine never flushes its 16 KB text-command buffer (no rendering), and `$netgameinfo` writes ~17 lines into it per call that are never cleared — so polling it overflows the buffer and aborts the server after ~30 calls (~10–15 min at the old 30s/60s intervals). This was an engine bug present in retail D3 1999, unfixable on unmodified servers, so the fix is entirely Pyrodeck-side: **all `$netgameinfo` polling is removed.** The client now queries once per connection (plus the manual refresh button) and derives the countdown locally; the server queries once per activation and once per mission rotation, re-anchoring mid-mission level changes from the cached time limit. The server pushes fresh `serverinfo` to clients after its queries so panels stay current without polling. (`$netgameinfo` is the lone offender — its handler calls a dual-purpose function that writes the overlay even headless. `$scores` and the other polls are verified to use console-only/`DPrintf` paths and are safe to poll.)
+
 **v0.4.10** — Hardening and cleanup pass: config filenames are guarded against path traversal; playlist and saved-server request bodies are validated; `parseTimeLeft` handles `H:MM:SS` and color-code stripping survives TCP chunk boundaries. Network-facing defaults are safer (env-gated `trustProxy`, same-origin CORS, localhost-only first-run setup — see Security). Added an eslint flat config so `pnpm lint` runs clean.
 
 **v0.4.9** — Timer reliability: the Time Left countdown resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s. Launch mode broadcasts a `level_changed` signal (from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads, and the Server panel shows the actual loaded level (e.g. `TheCore`), not just the mission file. Also fixed: playlist vote ties resolve to the first option, drift correction survives rotations/reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect works), and dead WS clients are culled.
@@ -49,7 +51,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Three rotation modes: Sequential (in order, looping), Shuffle (Fisher-Yates, reshuffles on loop), Weighted (random draw by weight)
 - Activate/deactivate from the Playlists tab or the Server sidebar widget
 - On mission completion (`"Mission over."` in stdout), server automatically stops, swaps `MissionName=` in the active profile config, and restarts. Mid-mission level transitions (`"Ending level."` followed by `"Opening level"`) do not rotate
-- Timer anchoring: queries `$netgameinfo` on activation, after each level loads, and every 60s for drift correction; the anchor survives rotations and telnet reconnects. Countdown visible in sidebar
+- Timer anchoring: queries `$netgameinfo` once on activation and once per mission rotation (never on a timer — it leaks the engine text buffer and crashes dedicated servers). Mid-mission level changes re-anchor from the cached time limit; the countdown ticks down locally and is visible in the sidebar
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
 

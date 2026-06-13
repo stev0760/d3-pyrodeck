@@ -178,6 +178,51 @@ describe("PlaylistManager — rotation", () => {
     expect(timerUpdates).toContain(null);
   });
 
+  it("re-anchors a mid-mission level from cache WITHOUT re-querying $netgameinfo", async () => {
+    // $netgameinfo permanently leaks a fixed-size engine buffer on dedicated
+    // servers (~30-call budget), so mid-mission level changes must derive the
+    // timer from the cached limit rather than polling.
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    const send = vi.fn(
+      async () => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    mgr.sendCommandFn = send;
+    await mgr.activate(pl.id); // activation → one $netgameinfo
+    mgr.consumeInitialSync();
+    await vi.advanceTimersByTimeAsync(1); // flush activate's anchorTimer
+    const netCalls = () =>
+      send.mock.calls.filter((c) => c[0] === "$netgameinfo").length;
+    expect(netCalls()).toBe(1);
+
+    mgr.onStdoutChunk("Opening level 'b.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(5_000); // LEVEL_LOAD_REANCHOR_DELAY_MS
+    expect(netCalls()).toBe(1); // still one — re-anchored from cache
+    expect(mgr.getStatus().gameEndAt).toBeGreaterThan(Date.now() + 290_000);
+  });
+
+  it("re-queries $netgameinfo once when a new mission opens after rotation", async () => {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    const send = vi.fn(
+      async () => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
+    );
+    mgr.sendCommandFn = send;
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+    await vi.advanceTimersByTimeAsync(1);
+    const netCalls = () =>
+      send.mock.calls.filter((c) => c[0] === "$netgameinfo").length;
+    expect(netCalls()).toBe(1);
+
+    // Mission end → rotate; the next mission's config may differ, so its first
+    // level load refreshes the cache with exactly one query.
+    mgr.onStdoutChunk(
+      "Mission over.  Looping back to first level in mission file.\n",
+    );
+    mgr.onStdoutChunk("Opening level 'b.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(netCalls()).toBe(2);
+  });
+
   it("parses the level name from real D3 'Opening level' output", () => {
     // D3 prints the .d3l filename with debug text concatenated, no newline.
     mgr.onStdoutChunk(

@@ -66,9 +66,6 @@ type PlaylistStatus = "inactive" | "active" | "voting" | "restarting";
 const PLAYLISTS_FILE = "playlists.json";
 const STATE_FILE = "playlist-state.json";
 
-// How often (ms) to query $netgameinfo to correct timer drift
-const DRIFT_CORRECTION_INTERVAL_MS = 60_000;
-
 // "Ending level." fires for BOTH mid-mission transitions and mission end.
 // Mission end is confirmed by "Mission over." which D3 prints ~1s later;
 // if neither "Mission over." nor "Opening level" arrives within this window,
@@ -94,6 +91,7 @@ const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
  *   voteResult(winner, counts)             — voting resolved; winner picked (does NOT imply rotation)
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
  *   levelChanged(level: string | null)      — a new level is loading (fires regardless of playlist state)
+ *   serverInfoRaw(raw: string)              — raw $netgameinfo output from a server-side query (for client broadcast)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -115,7 +113,18 @@ export class PlaylistManager extends EventEmitter {
 
   // Timer tracking
   private gameEndAt: number | null = null; // epoch ms
-  private driftCorrectionInterval: ReturnType<typeof setInterval> | null = null;
+  // Last-known full time limit (seconds) and kill goal, cached from the most
+  // recent $netgameinfo. Used to re-anchor the timer on a mid-mission level
+  // change WITHOUT re-querying — each $netgameinfo permanently leaks a
+  // fixed-size engine text buffer on dedicated servers and crashes them after
+  // ~30 calls, so we query at most once per activation/rotation and derive the
+  // rest. Null until the first query.
+  private cachedTimeLimitSec: number | null = null;
+  private cachedKillGoal = 0;
+  // Set when a fresh mission is loading (activation/rotation) so the next
+  // "Opening level" re-queries $netgameinfo instead of deriving from a stale
+  // cache. Mid-mission level transitions leave this false and derive locally.
+  private requeryOnNextLevel = false;
 
   // Vote tracking
   private voteOptions: PlaylistEntry[] = [];
@@ -278,8 +287,8 @@ export class PlaylistManager extends EventEmitter {
     // Cancel any pending timers from a previous activation
     this.clearTimers();
 
-    // Query current game state to anchor timer (if server is running).
-    // anchorTimer() also starts drift correction.
+    // Query current game state once to anchor the timer (if server is running)
+    // and cache the time limit for subsequent local re-anchoring.
     if (this.sendCommandFn) {
       this.anchorTimer().catch(() => {});
     }
@@ -443,26 +452,25 @@ export class PlaylistManager extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   /**
-   * Query $netgameinfo and anchor the game end timer.
-   * Called on activation, after level loads, and periodically for drift
-   * correction. Runs without an active playlist too — countdown announces
-   * are scheduled regardless.
+   * Query $netgameinfo once and anchor the game end timer. Called on activation
+   * and on mission rotation only — NEVER on a timer. $netgameinfo permanently
+   * leaks a fixed-size engine text buffer on dedicated servers (it's never
+   * flushed without rendering), so repeated polling crashes the server after
+   * ~30 calls. Mid-mission level changes re-anchor from the cached limit
+   * instead (see onLevelLoading). Runs without an active playlist too —
+   * countdown announces are scheduled regardless.
    */
   async anchorTimer(): Promise<void> {
     if (!this.sendCommandFn) return;
 
-    // Drift correction must survive rotations and reconnects: clearTimers()
-    // kills the interval when a rotation starts, and the launcher calls
-    // anchorTimer() again once telnet is back — restart it here.
-    if (this.activePlaylist) {
-      this.ensureDriftCorrection();
-    }
-
     try {
       const raw = await this.sendCommandFn("$netgameinfo");
+      // Push the fresh static config to connected web clients so they don't
+      // have to poll $netgameinfo themselves.
+      this.emit("serverInfoRaw", raw);
       this.parseAndAnchorFromNetgameinfo(raw);
     } catch {
-      // Non-fatal — we'll try again on next drift correction
+      // Non-fatal — the next level load or rotation will retry.
     }
   }
 
@@ -488,8 +496,22 @@ export class PlaylistManager extends EventEmitter {
     const hasTimeLimit = !!(timeLeftStr && timeLimit > 0);
     const secondsLeft = hasTimeLimit ? this.parseTimeLeft(timeLeftStr!) : 0;
 
-    // Always schedule end-of-game announces regardless of playlist state
-    if (hasTimeLimit) {
+    // Cache the FULL limit (minutes → seconds) and goal so a mid-mission level
+    // change can re-anchor without re-querying $netgameinfo.
+    this.cachedTimeLimitSec = timeLimit > 0 ? timeLimit * 60 : null;
+    this.cachedKillGoal = killGoal;
+
+    this.applyTimerAnchor(secondsLeft, killGoal);
+  }
+
+  /**
+   * Anchor the game-end timer and (re)schedule announces/voting from a known
+   * seconds-left value. Shared by the $netgameinfo path (real "Time Left") and
+   * the level-load path (cached full limit). Announces fire regardless of
+   * playlist state; gameEndAt and voting only with an active playlist.
+   */
+  private applyTimerAnchor(secondsLeft: number, killGoal: number): void {
+    if (secondsLeft > 0) {
       this.scheduleAnnounces(secondsLeft);
     } else {
       this.clearAnnounceTimers();
@@ -497,7 +519,7 @@ export class PlaylistManager extends EventEmitter {
 
     if (!this.activePlaylist) return;
 
-    if (hasTimeLimit) {
+    if (secondsLeft > 0) {
       this.gameEndAt = Date.now() + secondsLeft * 1000;
       // Schedule voting pre-announce if voting enabled and game has a time limit but no kill goal
       if (this.activePlaylist.voting.enabled && killGoal === 0 && this.status === "active") {
@@ -571,10 +593,26 @@ export class PlaylistManager extends EventEmitter {
       this.gameEndAt = null;
       this.emitTimerUpdate();
     }
+    // No timer to maintain without an active playlist — clients derive their
+    // own countdown locally, so we don't query $netgameinfo here.
+    if (!this.activePlaylist) return;
+
+    // A fresh mission (activation/rotation) may have a different time limit or
+    // goal, so re-query $netgameinfo ONCE to refresh the cache. Mid-mission
+    // level transitions keep the same config — re-anchor from the cache with
+    // no query, which is what keeps long multi-level sessions under the
+    // engine's ~30-call buffer budget.
+    const requery = this.requeryOnNextLevel || this.cachedTimeLimitSec === null;
+    this.requeryOnNextLevel = false;
+
     if (this.reanchorTimer) clearTimeout(this.reanchorTimer);
     this.reanchorTimer = setTimeout(() => {
       this.reanchorTimer = null;
-      this.anchorTimer().catch(() => {});
+      if (requery) {
+        this.anchorTimer().catch(() => {});
+      } else {
+        this.applyTimerAnchor(this.cachedTimeLimitSec ?? 0, this.cachedKillGoal);
+      }
     }, LEVEL_LOAD_REANCHOR_DELAY_MS);
   }
 
@@ -621,6 +659,9 @@ export class PlaylistManager extends EventEmitter {
 
     this.status = "restarting";
     this.clearTimers();
+    // The next mission may change time limit/goal — refresh the cache once when
+    // its first level opens.
+    this.requeryOnNextLevel = true;
 
     let next: PlaylistEntry;
     if (entry) {
@@ -856,16 +897,6 @@ export class PlaylistManager extends EventEmitter {
   // Timer helpers
   // ---------------------------------------------------------------------------
 
-  /** Start the periodic $netgameinfo drift-correction poll (idempotent). */
-  private ensureDriftCorrection(): void {
-    if (this.driftCorrectionInterval) return;
-    this.driftCorrectionInterval = setInterval(() => {
-      if (this.status === "active" || this.status === "voting") {
-        this.anchorTimer().catch(() => {});
-      }
-    }, DRIFT_CORRECTION_INTERVAL_MS);
-  }
-
   private clearAnnounceTimers(): void {
     for (const t of this.announceTimers) clearTimeout(t);
     this.announceTimers = [];
@@ -893,10 +924,6 @@ export class PlaylistManager extends EventEmitter {
     if (this.reanchorTimer) {
       clearTimeout(this.reanchorTimer);
       this.reanchorTimer = null;
-    }
-    if (this.driftCorrectionInterval) {
-      clearInterval(this.driftCorrectionInterval);
-      this.driftCorrectionInterval = null;
     }
   }
 

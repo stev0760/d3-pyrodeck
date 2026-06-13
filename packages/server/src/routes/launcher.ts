@@ -12,6 +12,7 @@ import {
   VANILLA_CAPS,
   type ServerCapabilities,
 } from "../parser/parsers/servercaps.js";
+import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 import { sessionManager, serializeCaps } from "./server.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
@@ -34,10 +35,19 @@ playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
 });
 
 // A new level is loading (level rotation, $warp, $endlevel) — tell clients so
-// they can drop their stale countdown, re-query $netgameinfo, and show which
-// level is now loaded.
+// they drop their stale countdown, re-anchor locally, and show which level is
+// now loaded. Clients do NOT re-query $netgameinfo (it leaks the engine text
+// buffer and crashes dedicated servers); they derive the countdown locally.
 playlistManager.on("levelChanged", (level: string | null) => {
   wsBroadcast("level_changed", { level });
+});
+
+// The server re-queried $netgameinfo (activation/rotation only) — push the
+// fresh static config to all clients so their panels stay current without
+// any client-side polling.
+playlistManager.on("serverInfoRaw", (raw: string) => {
+  const info = parseNetgameinfo(raw);
+  if (info) wsBroadcast("serverinfo", info as unknown as Record<string, unknown>);
 });
 
 /**

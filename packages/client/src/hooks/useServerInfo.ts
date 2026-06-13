@@ -30,14 +30,6 @@ interface UseServerInfoOptions {
   connected: boolean;
 }
 
-// Periodically re-sync with the server so the local countdown can't drift
-// far from the real game timer.
-const SYNC_INTERVAL_MS = 30_000;
-
-// How long after a level change ($warp, $endlevel, natural transition) to
-// wait before re-querying — the new level needs a moment to load.
-const LEVEL_CHANGE_REFRESH_DELAY_MS = 4_000;
-
 function parseTimeLeftToSeconds(str: string): number {
   // Handles "M:SS", "MM:SS", and "H:MM:SS".
   const parts = str.split(":").map((s) => parseInt(s, 10));
@@ -63,7 +55,29 @@ export function useServerInfo({
   const [localTimeLeft, setLocalTimeLeft] = useState<string | null>(null);
   const [currentLevel, setCurrentLevel] = useState<string | null>(null);
   const anchorRef = useRef<{ seconds: number; at: number } | null>(null);
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest serverInfo, readable from callbacks without re-subscribing.
+  const serverInfoRef = useRef<NetGameInfo | null>(null);
+
+  // IMPORTANT: $netgameinfo permanently leaks a fixed-size engine text buffer
+  // on dedicated D3 servers (retail 1999 bug — the buffer is only flushed by
+  // rendering, which a dedicated server never does). After ~30 calls the
+  // server aborts. So this hook NEVER polls it: it queries once on connect (and
+  // on the manual refresh button), caches the result, and derives the live
+  // countdown locally. Level changes re-anchor from the cached time limit; the
+  // server pushes a fresh serverinfo on rotation so static fields stay current.
+
+  // Re-anchor the local countdown to the full time limit — a new level starts
+  // the clock fresh. Pure client-side; issues no command.
+  const reanchorToFullLimit = useCallback(() => {
+    const limitSec = (serverInfoRef.current?.timeLimit ?? 0) * 60;
+    if (limitSec > 0) {
+      anchorRef.current = { seconds: limitSec, at: Date.now() };
+      setLocalTimeLeft(formatSeconds(limitSec));
+    } else {
+      anchorRef.current = null;
+      setLocalTimeLeft(null);
+    }
+  }, []);
 
   // Subscribe to serverinfo WS messages. Re-anchor the countdown on EVERY
   // response — a new level can start with the same "Time Left" string, so
@@ -72,6 +86,7 @@ export function useServerInfo({
     return onServerInfo((data: unknown) => {
       const info = data as NetGameInfo;
       setServerInfo(info);
+      serverInfoRef.current = info;
       if (info?.timeLeft) {
         const seconds = parseTimeLeftToSeconds(info.timeLeft);
         anchorRef.current = seconds > 0 ? { seconds, at: Date.now() } : null;
@@ -83,37 +98,17 @@ export function useServerInfo({
     });
   }, [onServerInfo]);
 
+  // Manual refresh (refresh button) — the only on-demand $netgameinfo. Bounded
+  // by user clicks, never a timer.
   const refresh = useCallback(() => {
     if (connected) {
       sendCommand("$netgameinfo");
     }
   }, [connected, sendCommand]);
 
-  // Re-query after a change (debounced). Settings apply near-instantly
-  // (default 500ms); level changes need a longer delay while the level loads.
-  const refreshAfterChange = useCallback(
-    (delayMs: number = 500) => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-      }
-      refreshTimerRef.current = setTimeout(() => {
-        refreshTimerRef.current = null;
-        refresh();
-      }, delayMs);
-    },
-    [refresh],
-  );
-
-  // Keep the latest refreshAfterChange reachable from the 1s tick interval
-  // without re-creating the interval.
-  const refreshAfterChangeRef = useRef(refreshAfterChange);
-  useEffect(() => {
-    refreshAfterChangeRef.current = refreshAfterChange;
-  }, [refreshAfterChange]);
-
-  // Tick every second to count down locally. When the countdown hits zero
-  // the level is about to rotate — drop the anchor and re-query shortly so
-  // the timer picks up the next level instead of sitting at 0:00.
+  // Tick every second to count down locally. When the countdown hits zero the
+  // level is about to rotate — drop the anchor and let the level_changed signal
+  // re-anchor the next level (we never re-query to find out).
   useEffect(() => {
     const interval = setInterval(() => {
       if (!anchorRef.current) return;
@@ -122,106 +117,109 @@ export function useServerInfo({
       setLocalTimeLeft(formatSeconds(remaining));
       if (remaining <= 0) {
         anchorRef.current = null;
-        refreshAfterChangeRef.current(LEVEL_CHANGE_REFRESH_DELAY_MS);
       }
     }, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Query on connect
+  // Query once on connect; clear on disconnect.
   useEffect(() => {
     if (connected) {
       sendCommand("$netgameinfo");
     } else {
       setServerInfo(null);
+      serverInfoRef.current = null;
       setCurrentLevel(null);
     }
   }, [connected, sendCommand]);
 
-  // Periodic re-sync while connected — catches level changes Pyrodeck can't
-  // observe (e.g. Connect mode, where there's no stdout) and corrects drift.
-  useEffect(() => {
-    if (!connected) return;
-    const interval = setInterval(() => {
-      sendCommand("$netgameinfo");
-    }, SYNC_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [connected, sendCommand]);
-
   // Launch mode: the server tells us when a new level starts loading (and
-  // pushes the current level on connect). Record which level is loaded, clear
-  // the stale countdown, and re-query once it's up.
+  // pushes the current level on connect). Record which level is loaded and
+  // re-anchor the countdown locally from the cached time limit — no re-query.
   useEffect(() => {
     if (!onLevelChanged) return;
     return onLevelChanged((level) => {
       setCurrentLevel(level);
-      anchorRef.current = null;
-      setLocalTimeLeft(null);
-      refreshAfterChange(LEVEL_CHANGE_REFRESH_DELAY_MS);
+      reanchorToFullLimit();
     });
-  }, [onLevelChanged, refreshAfterChange]);
+  }, [onLevelChanged, reanchorToFullLimit]);
 
-  // Cleanup timer on unmount
-  useEffect(() => {
-    return () => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-      }
-    };
+  // Action helpers. Each sends a command and updates the cached display
+  // optimistically — re-querying $netgameinfo to confirm would burn the
+  // server's limited call budget, so we trust the value we just set.
+  const patchInfo = useCallback((patch: Partial<NetGameInfo>) => {
+    setServerInfo((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      serverInfoRef.current = next;
+      return next;
+    });
   }, []);
 
-  // Action helpers — each sends a command then refreshes
   const setMaxPlayers = useCallback(
     (n: number) => {
       sendCommand(`$setmaxplayers ${n}`);
-      refreshAfterChange();
+      patchInfo({ maxPlayers: n });
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand, patchInfo],
   );
 
   const setPps = useCallback(
     (n: number) => {
       sendCommand(`$setpps ${n}`);
-      refreshAfterChange();
+      patchInfo({ pps: n });
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand, patchInfo],
   );
 
   const setTimeLimit = useCallback(
     (minutes: number) => {
       sendCommand(`$settimelimit ${minutes}`);
-      refreshAfterChange();
+      patchInfo({ timeLimit: minutes });
+      // Changing the limit restarts the clock at the new full value.
+      const limitSec = minutes * 60;
+      if (limitSec > 0) {
+        anchorRef.current = { seconds: limitSec, at: Date.now() };
+        setLocalTimeLeft(formatSeconds(limitSec));
+      } else {
+        anchorRef.current = null;
+        setLocalTimeLeft(null);
+      }
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand, patchInfo],
   );
 
   const setGoalLimit = useCallback(
     (points: number) => {
       sendCommand(`$setgoallimit ${points}`);
-      refreshAfterChange();
+      patchInfo({ goalLimit: points });
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand, patchInfo],
   );
 
   const setRespawnTime = useCallback(
     (seconds: number) => {
       sendCommand(`$setrespawntime ${seconds}`);
-      refreshAfterChange();
+      patchInfo({ respawnTime: formatSeconds(seconds) });
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand, patchInfo],
   );
 
+  // Level changes: drop the stale countdown immediately. In Launch mode the
+  // level_changed signal re-anchors once the new level loads.
   const endLevel = useCallback(() => {
     sendCommand("$endlevel");
-    refreshAfterChange(LEVEL_CHANGE_REFRESH_DELAY_MS);
-  }, [sendCommand, refreshAfterChange]);
+    anchorRef.current = null;
+    setLocalTimeLeft(null);
+  }, [sendCommand]);
 
   const warp = useCallback(
     (level: number) => {
       sendCommand(`$warp ${level}`);
-      refreshAfterChange(LEVEL_CHANGE_REFRESH_DELAY_MS);
+      anchorRef.current = null;
+      setLocalTimeLeft(null);
     },
-    [sendCommand, refreshAfterChange],
+    [sendCommand],
   );
 
   const balanceTeams = useCallback(() => {
