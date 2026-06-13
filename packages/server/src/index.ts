@@ -69,14 +69,30 @@ async function main() {
     console.warn(
       "[Pyrodeck] WARNING: No admin password configured but server is binding to " +
         HOST +
-        ". Set PYRODECK_ADMIN_PASSWORD or configure a password via the web UI.",
+        ". Set PYRODECK_ADMIN_PASSWORD before exposing this server. Web-based setup " +
+        "is blocked from non-local clients unless PYRODECK_ALLOW_REMOTE_SETUP=1.",
     );
   }
 
-  const app = Fastify({ logger: !isSidecar, trustProxy: true });
+  // trustProxy must be opt-in: when the server is directly exposed (no reverse
+  // proxy), trusting X-Forwarded-For lets a client spoof its IP and bypass the
+  // login rate limiter. Enable only when actually behind a trusted proxy.
+  const trustProxy = process.env.PYRODECK_TRUST_PROXY === "1";
+
+  const app = Fastify({ logger: !isSidecar, trustProxy });
 
   await app.register(fastifyCookie, { secret: sessionSecret });
-  await app.register(fastifyCors, { origin: true, credentials: true });
+
+  // The SPA is served same-origin (Fastify static in prod, Vite proxy in dev),
+  // so cross-origin access is disabled by default. Set PYRODECK_CORS_ORIGIN to
+  // a comma-separated allowlist only if you front the API from another origin.
+  const corsOrigin = process.env.PYRODECK_CORS_ORIGIN;
+  await app.register(fastifyCors, {
+    origin: corsOrigin
+      ? corsOrigin.split(",").map((o) => o.trim()).filter(Boolean)
+      : false,
+    credentials: true,
+  });
   await app.register(fastifyHelmet, { contentSecurityPolicy: false });
   await app.register(fastifyWebSocket);
 

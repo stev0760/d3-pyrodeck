@@ -180,9 +180,19 @@ An admin password is required to access the web panel from non-localhost connect
 1. **First-run setup** — the web UI prompts for a password on first launch (stored as a scrypt hash in `config/pyrodeck.json`)
 2. **Environment variable** — set `PYRODECK_ADMIN_PASSWORD` (takes precedence over the config file)
 
-The server warns at startup if it binds to a non-loopback interface without a password. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`. Login attempts are rate-limited to 5 per IP per 15 minutes.
+The server warns at startup if it binds to a non-loopback interface without a password. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`. Login attempts are rate-limited to 5 per IP per 15 minutes. Web-based first-run setup is allowed only from localhost (so nobody can claim the admin password on a freshly-exposed instance); set `PYRODECK_ALLOW_REMOTE_SETUP=1` to permit it from a remote browser.
 
-For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS.
+For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS, and set `PYRODECK_TRUST_PROXY=1` so rate-limiting and logging see the real client IP from `X-Forwarded-For` (off by default, since trusting that header on a directly-exposed server lets clients spoof their IP).
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PYRODECK_ADMIN_PASSWORD` | Admin password (plaintext; takes precedence over the config hash) |
+| `PYRODECK_TRUST_PROXY` | `1` to trust `X-Forwarded-For` (set only behind a reverse proxy) |
+| `PYRODECK_CORS_ORIGIN` | Comma-separated origin allowlist; CORS is off (same-origin only) by default |
+| `PYRODECK_ALLOW_REMOTE_SETUP` | `1` to allow first-run password setup from a non-local browser |
+| `PYRODECK_HOST` / `PYRODECK_PORT` | Bind address/port (default `0.0.0.0:3001`) |
 
 ## Known Limitations
 

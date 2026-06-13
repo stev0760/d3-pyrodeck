@@ -40,6 +40,11 @@ function getPasswordSource(): "env" | "config" | null {
   return null;
 }
 
+/** True for loopback peers (no proxy in front, so request.ip is the real peer). */
+function isLocalRequest(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 function setSessionCookie(reply: import("fastify").FastifyReply): void {
   reply.setCookie("pyrodeck_session", "1", {
     signed: true,
@@ -106,6 +111,18 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // Only allowed when no password is configured anywhere
     if (getPasswordSource() !== null) {
       return reply.status(403).send({ error: "Password already configured" });
+    }
+
+    // Block drive-by remote setup: whoever reaches an unconfigured public
+    // instance first could otherwise claim the admin password. Allow setup
+    // only from localhost, unless an operator explicitly opts in.
+    const allowRemoteSetup = process.env.PYRODECK_ALLOW_REMOTE_SETUP === "1";
+    if (!allowRemoteSetup && !isLocalRequest(request.ip)) {
+      return reply.status(403).send({
+        error:
+          "Remote setup is disabled. Configure the password via PYRODECK_ADMIN_PASSWORD, " +
+          "or set PYRODECK_ALLOW_REMOTE_SETUP=1 to allow setup from a non-local browser.",
+      });
     }
 
     const ip = request.ip;
