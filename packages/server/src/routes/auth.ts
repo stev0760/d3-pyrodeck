@@ -70,12 +70,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = request.body as { password?: string };
     const input = body?.password ?? "";
 
-    let valid = false;
-    if (source === "env") {
-      valid = await verifyPlaintext(input, process.env.PYRODECK_ADMIN_PASSWORD!);
-    } else {
-      valid = await verifyPassword(input, pyrodeckConfig.get().adminPasswordHash!);
-    }
+    const valid =
+      source === "env"
+        ? await verifyPlaintext(input, process.env.PYRODECK_ADMIN_PASSWORD!)
+        : await verifyPassword(input, pyrodeckConfig.get().adminPasswordHash!);
 
     if (!valid) {
       return reply.status(401).send({ error: "Invalid password" });

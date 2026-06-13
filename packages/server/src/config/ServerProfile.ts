@@ -117,7 +117,7 @@ function classifyFile(filename: string, content: string): ClassifiedGameFile {
  */
 function configFilename(name: string, existingFiles: string[]): string {
   const existing = new Set(existingFiles.map((f) => f.toLowerCase()));
-  let base =
+  const base =
     name
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "-")

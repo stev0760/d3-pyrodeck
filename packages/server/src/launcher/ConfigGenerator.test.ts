@@ -7,7 +7,6 @@ import {
   generateMpsFile,
   parseBotRoster,
   generateBotRoster,
-  type DedicatedCfgData,
 } from "./ConfigGenerator.js";
 
 // ---------------------------------------------------------------------------

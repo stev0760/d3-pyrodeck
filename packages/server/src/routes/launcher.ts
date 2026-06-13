@@ -375,9 +375,11 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
     const cfgPath = path.join(gamePath, configFile);
 
-    // Parse the config file to get telnet password
-    let telnetPort = body.telnetPort ?? config.defaultTelnetPort;
-    let telnetPassword = "";
+    // Parse the config file for the telnet port/password. Both are always set
+    // from the parsed config below before use (every other path returns), so
+    // they're declared without a dead initializer.
+    let telnetPort: number;
+    let telnetPassword: string;
 
     try {
       const cfgContent = await fs.readFile(cfgPath, "utf-8");

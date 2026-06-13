@@ -79,7 +79,7 @@ export function wireSessionToClients(): void {
 }
 
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/ws", { websocket: true }, (socket: AliveWebSocket, request) => {
+  app.get("/ws", { websocket: true }, (socket: AliveWebSocket, _request) => {
     socket.isAlive = true;
     wsClients.add(socket);
 
