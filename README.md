@@ -26,7 +26,13 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 
 ### Server Console (Launch mode)
 - Separate xterm.js terminal showing D3 process stdout/stderr
-- Server output logged to `server.log` for post-session analysis
+- Server output auto-logged to a timestamped file per launch (see Logs)
+
+### Logs (Launch mode)
+- Each launch writes a timestamped log file (e.g. `testing-2026-06-17T22-20-31.log`) — no hand-edited paths
+- Log directory is configurable; defaults to the directory containing the D3 executable
+- Logs panel lists runs (newest first) with in-browser view and download
+- Pre-launch validation refuses to start if the log directory isn't writable, and a post-launch write-check raises a loud warning if output isn't being saved
 
 ### Players
 - Auto-refreshing scoreboard from `$scores` (name, points, kills, deaths, suicides, ping)

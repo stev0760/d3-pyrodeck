@@ -6,6 +6,12 @@ export interface PyrodeckConfig {
   gamePath: string | null;
   /** Full path to D3 binary, or filename if binary is in gamePath. */
   executablePath: string | null;
+  /**
+   * Directory where server logs are written. When null, logs are auto-placed
+   * in the directory containing the D3 executable (next to the game), so they
+   * sit alongside the install rather than buried in a Pyrodeck-internal path.
+   */
+  logDir: string | null;
   /** Default telnet port for D3 remote console. */
   defaultTelnetPort: number;
   /** Preferred UI mode on startup. */
@@ -26,6 +32,7 @@ interface LegacyPyrodeckConfig {
 const DEFAULT_CONFIG: PyrodeckConfig = {
   gamePath: null,
   executablePath: null,
+  logDir: null,
   defaultTelnetPort: 2092,
   preferredMode: "connect",
   adminPasswordHash: null,
@@ -49,6 +56,9 @@ function migrateConfig(
   }
   if ("executablePath" in raw) {
     migrated.executablePath = (raw.executablePath as string | null) ?? null;
+  }
+  if ("logDir" in raw) {
+    migrated.logDir = (raw.logDir as string | null) ?? null;
   }
 
   // Migrate legacy fields

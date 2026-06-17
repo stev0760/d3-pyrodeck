@@ -51,6 +51,11 @@ const PORT_RELEASE_POLL_INTERVAL_MS = 500;
 // We wait up to this long after a managed D3 exit before re-launching on the
 // same port.  First-launch never waits (no prior exit to worry about).
 const WINDOWS_TIME_WAIT_MS = 120_000;
+// After launch, give the log file this long to receive its first bytes. The
+// startup banner is written synchronously on open, so a healthy log is non-empty
+// almost immediately; if it's still empty (or the stream errored) past this
+// window, logging silently failed and we raise a loud warning.
+const LOG_WRITE_CHECK_MS = 8000;
 
 /**
  * Manages the D3 dedicated server process lifecycle.
@@ -61,6 +66,7 @@ const WINDOWS_TIME_WAIT_MS = 120_000;
  *   stderr(data: string)
  *   telnetReady(port: number)
  *   exit(code: number | null, signal: string | null)
+ *   logWarning(message: string)  — logging failed; server runs but output isn't saved
  */
 export class ProcessManager extends EventEmitter {
   private child: ChildProcess | null = null;
@@ -76,6 +82,9 @@ export class ProcessManager extends EventEmitter {
   private telnetReady = false;
   private launchConfig: LaunchConfig | null = null;
   private logStream: fs.WriteStream | null = null;
+  private logPath: string | null = null;
+  private logStreamFailed = false;
+  private writeCheckTimer: ReturnType<typeof setTimeout> | null = null;
   // Track the last D3 exit so we only apply port-release waits when needed.
   private lastExitedPort: number | null = null;
   private lastExitedAt: number = 0;
@@ -130,20 +139,41 @@ export class ProcessManager extends EventEmitter {
     this.status.stoppedAt = null;
 
     // Open log file if configured
+    this.logPath = config.logPath ?? null;
+    this.logStreamFailed = false;
     if (config.logPath) {
+      const logPath = config.logPath;
       try {
-        this.logStream = fs.createWriteStream(config.logPath, { flags: "a" });
-        this.logStream.on("error", () => {}); // Don't crash on log write errors
+        this.logStream = fs.createWriteStream(logPath, { flags: "a" });
+        // A bad/unwritable target (e.g. a non-existent parent dir from a mangled
+        // path) surfaces here asynchronously rather than throwing. Don't swallow
+        // it — flag the failure and raise a warning so the run isn't logging
+        // silently into the void.
+        this.logStream.on("error", (err) => {
+          if (this.logStreamFailed) return;
+          this.logStreamFailed = true;
+          this.emit(
+            "logWarning",
+            `Logging failed: cannot write ${logPath} (${err.message}). Server is running but its output is NOT being saved.`,
+          );
+        });
         const timestamp = new Date().toISOString();
         this.logStream.write(`\n--- D3 Server started at ${timestamp} ---\n`);
         this.logStream.write(`  Executable: ${config.executablePath}\n`);
         this.logStream.write(`  Config: ${config.gamePath}/${config.configFile}\n`);
         this.logStream.write(`  Args: ${args.join(" ")}\n`);
         this.logStream.write(`  PID: ${this.child.pid}\n\n`);
-      } catch {
-        // Log file is optional — don't fail the launch
+      } catch (err) {
+        // Log file is optional — don't fail the launch, but don't hide it either.
         this.logStream = null;
+        this.logStreamFailed = true;
+        const message = err instanceof Error ? err.message : String(err);
+        this.emit(
+          "logWarning",
+          `Logging failed: cannot open ${logPath} (${message}). Server is running but its output is NOT being saved.`,
+        );
       }
+      this.startLogWriteCheck();
     }
 
     // Drain stdout/stderr to prevent SIGPIPE if D3 writes faster than we read
@@ -233,6 +263,42 @@ export class ProcessManager extends EventEmitter {
   private setState(state: ProcessState): void {
     this.status.state = state;
     this.emit("stateChange", state);
+  }
+
+  /**
+   * Backstop for the log stream's async 'error': a short while after launch,
+   * confirm the log file actually exists and has received bytes. If it's still
+   * empty (or the stream already errored), logging silently failed — raise a
+   * loud warning so it's caught in seconds rather than after an overnight soak.
+   */
+  private startLogWriteCheck(): void {
+    if (this.writeCheckTimer) clearTimeout(this.writeCheckTimer);
+    const logPath = this.logPath;
+    if (!logPath) return;
+    this.writeCheckTimer = setTimeout(() => {
+      this.writeCheckTimer = null;
+      // Stream error path already warned; don't double-report.
+      if (this.logStreamFailed) return;
+      fs.promises
+        .stat(logPath)
+        .then((st) => {
+          if (st.size === 0) {
+            this.logStreamFailed = true;
+            this.emit(
+              "logWarning",
+              `Logging failed: ${logPath} exists but is empty ${LOG_WRITE_CHECK_MS / 1000}s after launch. Server output is NOT being saved.`,
+            );
+          }
+        })
+        .catch((err) => {
+          this.logStreamFailed = true;
+          const message = err instanceof Error ? err.message : String(err);
+          this.emit(
+            "logWarning",
+            `Logging failed: ${logPath} not found ${LOG_WRITE_CHECK_MS / 1000}s after launch (${message}). Server output is NOT being saved.`,
+          );
+        });
+    }, LOG_WRITE_CHECK_MS);
   }
 
   /**
@@ -332,6 +398,10 @@ export class ProcessManager extends EventEmitter {
 
   private cleanup(): void {
     this.stopTelnetProbe();
+    if (this.writeCheckTimer) {
+      clearTimeout(this.writeCheckTimer);
+      this.writeCheckTimer = null;
+    }
     // Record exit so waitForPortFree() can skip the delay on first-ever launch.
     if (this.launchConfig) {
       this.lastExitedPort = this.launchConfig.telnetPort;

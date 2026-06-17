@@ -178,10 +178,6 @@ function ProfileEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [companions, setCompanions] = useState<CompanionInfo | null>(null);
-  // Log path editing
-  const [logPathEdit, setLogPathEdit] = useState("");
-  const [logPathSaving, setLogPathSaving] = useState(false);
-  const [logPathSaved, setLogPathSaved] = useState(false);
   // For creating new bot roster with custom name
   const [showBotCreate, setShowBotCreate] = useState(false);
   const [newBotFilename, setNewBotFilename] = useState("bots.cfg");
@@ -209,14 +205,11 @@ function ProfileEditor({
   useEffect(() => {
     if (selectedProfile) {
       fetchCompanions(selectedProfile.id);
-      setLogPathEdit(selectedProfile.logPath ?? "");
     } else {
       setCompanions(null);
-      setLogPathEdit("");
     }
     setShowBotCreate(false);
     setShowBotLink(false);
-    setLogPathSaved(false);
   }, [selectedProfileId, selectedProfile, fetchCompanions]);
 
   // Load the profile's main config on select
@@ -426,53 +419,12 @@ function ProfileEditor({
         </div>
 
         <div className="mb-3">
-          <label className="text-xs font-score tracking-wide text-muted-foreground block mb-1">
-            Log File
-          </label>
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={logPathEdit}
-                onChange={(e) => { setLogPathEdit(e.target.value); setLogPathSaved(false); }}
-                placeholder="default (server.log)"
-                className="flex-1 min-w-0 px-2 py-1 bg-muted border border-border rounded text-[11px] text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
-                onKeyDown={async (e) => {
-                  if (e.key === "Enter") {
-                    setLogPathSaving(true);
-                    await fetch(`/api/profiles/${encodeURIComponent(selectedProfile.id)}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      credentials: "include",
-                      body: JSON.stringify({ logPath: logPathEdit || null }),
-                    });
-                    setLogPathSaving(false);
-                    setLogPathSaved(true);
-                    onRefreshProfiles();
-                    setTimeout(() => setLogPathSaved(false), 2000);
-                  }
-                }}
-              />
-              <button
-                onClick={async () => {
-                  setLogPathSaving(true);
-                  await fetch(`/api/profiles/${encodeURIComponent(selectedProfile.id)}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "include",
-                    body: JSON.stringify({ logPath: logPathEdit || null }),
-                  });
-                  setLogPathSaving(false);
-                  setLogPathSaved(true);
-                  onRefreshProfiles();
-                  setTimeout(() => setLogPathSaved(false), 2000);
-                }}
-                disabled={logPathSaving}
-                className="px-2 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-[10px] font-score tracking-wide rounded transition-colors shrink-0"
-              >
-                {logPathSaving ? "..." : logPathSaved ? "Saved!" : "Set"}
-              </button>
-            </div>
-          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Logs are auto-named per launch (e.g.{" "}
+            <span className="font-mono">{selectedProfile.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}-2026-06-17T22-20-31.log</span>)
+            and saved to the directory set in the Logs tab.
+          </p>
+        </div>
 
         {companions && (
           <>

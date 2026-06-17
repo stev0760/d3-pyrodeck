@@ -14,6 +14,7 @@ import { savedServerRoutes } from "./routes/saved-servers.js";
 import { configRoutes } from "./routes/config.js";
 import { pyrodeckConfigRoutes } from "./routes/pyrodeck-config.js";
 import { launcherRoutes } from "./routes/launcher.js";
+import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
 import { requireAuth } from "./middleware/requireAuth.js";
@@ -104,6 +105,7 @@ async function main() {
   await app.register(configRoutes);
   await app.register(pyrodeckConfigRoutes);
   await app.register(launcherRoutes);
+  await app.register(logsRoutes);
   await app.register(playlistRoutes);
 
   app.get("/api/health", async () => ({ status: "ok" }));

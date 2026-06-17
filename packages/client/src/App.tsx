@@ -19,15 +19,23 @@ import { LaunchPanel } from "./components/LaunchPanel.tsx";
 import { ServerSidebar } from "./components/ServerSidebar.tsx";
 import { ServerConsole } from "./components/ServerConsole.tsx";
 import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
+import { LogsPanel } from "./components/LogsPanel.tsx";
 import { usePlaylist } from "./hooks/usePlaylist.ts";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Menu, Server as ServerIcon } from "lucide-react";
+import { Menu, Server as ServerIcon, ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists";
+type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists" | "logs";
 
 function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout: boolean }) {
   const {
@@ -117,13 +125,16 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     processState === "stopping" || processState === "crashed"
   );
 
-  const tabs: { id: Tab; label: string; show: boolean }[] = [
-    { id: "server-output", label: "Server Output", show: mode === "launch" },
-    { id: "console", label: "Telnet Console", show: true },
-    { id: "players", label: "Players", show: isConnected },
-    { id: "bots", label: "Bots", show: isConnected && hasFeature("bots") },
-    { id: "config", label: "D3 Server Config", show: mode === "launch" },
-    { id: "playlists", label: "Playlists", show: mode === "launch" },
+  // "primary" tabs stay inline; "more" tabs (Launch-only management screens)
+  // collapse into a dropdown so the bar stays short and responsive.
+  const tabs: { id: Tab; label: string; show: boolean; group: "primary" | "more" }[] = [
+    { id: "server-output", label: "Output", show: mode === "launch", group: "primary" },
+    { id: "console", label: "Console", show: true, group: "primary" },
+    { id: "players", label: "Players", show: isConnected, group: "primary" },
+    { id: "bots", label: "Bots", show: isConnected && hasFeature("bots"), group: "primary" },
+    { id: "config", label: "Config", show: mode === "launch", group: "more" },
+    { id: "playlists", label: "Playlists", show: mode === "launch", group: "more" },
+    { id: "logs", label: "Logs", show: mode === "launch", group: "more" },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -133,6 +144,9 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
   // Keep activeTab valid when tabs change visibility
   const visibleTabs = tabs.filter((t) => t.show);
+  const primaryTabs = visibleTabs.filter((t) => t.group === "primary");
+  const moreTabs = visibleTabs.filter((t) => t.group === "more");
+  const activeMoreTab = moreTabs.find((t) => t.id === activeTab);
   useEffect(() => {
     if (!visibleTabs.find((t) => t.id === activeTab)) {
       setActiveTab(visibleTabs[0]?.id ?? "console");
@@ -224,7 +238,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             </Badge>
           )}
           {showLogout && (
-            <Button variant="outline" size="sm" onClick={onLogout} className="font-score tracking-wide text-base text-primary border-primary/40 hover:bg-primary/10 hover:text-primary">
+            <Button variant="ghost" size="xs" onClick={onLogout} className="font-menu tracking-wide text-sm text-muted-foreground border border-border/60">
               Logout
             </Button>
           )}
@@ -276,13 +290,41 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
         >
           <TabsList
             variant="line"
-            className="w-full justify-start px-2 border-b border-border rounded-none h-10 overflow-x-auto flex-nowrap gap-0"
+            className="w-full justify-start px-2 border-b border-border rounded-none h-10 flex-nowrap gap-0"
           >
-            {visibleTabs.map((tab) => (
+            {primaryTabs.map((tab) => (
               <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 font-score tracking-wide">
                 {tab.label}
               </TabsTrigger>
             ))}
+            {moreTabs.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  className={cn(
+                    "ml-auto shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-sm font-score tracking-wide whitespace-nowrap transition-colors outline-none",
+                    "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                    activeMoreTab
+                      ? "text-foreground"
+                      : "text-foreground/60 hover:text-foreground",
+                  )}
+                >
+                  {activeMoreTab ? activeMoreTab.label : "More"}
+                  <ChevronDown className="size-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {moreTabs.map((tab) => (
+                    <DropdownMenuItem
+                      key={tab.id}
+                      active={tab.id === activeTab}
+                      onSelect={() => setActiveTab(tab.id)}
+                      className="font-score tracking-wide"
+                    >
+                      {tab.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </TabsList>
 
           <TabsContent value="server-output" className="p-3 min-h-0">
@@ -357,6 +399,10 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               onActivate={playlistHook.activatePlaylist}
               onDeactivate={playlistHook.deactivatePlaylist}
             />
+          </TabsContent>
+
+          <TabsContent value="logs" className="p-3 min-h-0">
+            <LogsPanel />
           </TabsContent>
         </Tabs>
 

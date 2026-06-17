@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from "react";
 export interface PyrodeckConfig {
   gamePath: string | null;
   executablePath: string | null;
+  /** Directory for server logs. Null = auto (next to the executable). */
+  logDir: string | null;
   defaultTelnetPort: number;
   preferredMode: "connect" | "launch";
   needsSetup: boolean;
@@ -22,7 +24,6 @@ export interface ServerProfile {
   name: string;
   description?: string;
   configFile: string;
-  logPath?: string;
   /** Per-profile game data directory override (inherits global if omitted). */
   gamePath?: string;
   /** Per-profile D3 executable override (inherits global if omitted). */

@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { ProcessManager } from "../launcher/ProcessManager.js";
+import { resolveLogDir, buildLogFilename } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
   extractTelnetConfig,
@@ -287,7 +289,16 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         if (!path.isAbsolute(executablePath)) {
           executablePath = path.join(gamePath, executablePath);
         }
-        const logPath = activeProfile.logPath ?? path.join(CONFIG_DIR, "server.log");
+        // Auto-name the rotation's log in the configured dir (default: next to
+        // the executable), creating it if needed. Mirrors POST /start.
+        const logDir = resolveLogDir(config.logDir, executablePath);
+        try {
+          await fs.mkdir(logDir, { recursive: true });
+        } catch {
+          // Non-fatal for rotation — ProcessManager surfaces a write-check
+          // warning if logging then fails to materialize.
+        }
+        const logPath = path.join(logDir, buildLogFilename(activeProfile.name));
 
         // Register auto-connect handler BEFORE calling start()
         registerAutoConnect(telnetCfg.password);
@@ -341,6 +352,13 @@ processManager.on("stderr", (data: string) => {
   wsBroadcast("process_output", { stream: "stderr", data });
 });
 
+// Logging failed to materialize (bad/unwritable dir, stream error). Surface it
+// as an error toast so a soak that's writing nowhere is caught in seconds, not
+// discovered hours later.
+processManager.on("logWarning", (message: string) => {
+  wsBroadcast("error", { message });
+});
+
 export async function launcherRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/launcher/start", async (request, reply) => {
     if (processManager.isRunning()) {
@@ -356,7 +374,9 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
 
     // Resolve config file and effective paths from profile (if specified)
     let configFile = "dedicated.cfg";
-    let profileLogPath: string | undefined;
+    // Label used to auto-name the log file for this launch; profile name when
+    // launching a profile, otherwise the config filename.
+    let logLabel = path.basename(configFile, path.extname(configFile));
     // Start with global config; profile may override these
     let gamePath = config.gamePath;
     let executablePath = config.executablePath;
@@ -367,7 +387,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       try {
         const profile = await profileManager.read(body.profileId);
         configFile = profile.configFile;
-        profileLogPath = profile.logPath;
+        logLabel = profile.name;
         // Per-profile path overrides take precedence over global config
         if (profile.gamePath) gamePath = profile.gamePath;
         if (profile.executablePath) executablePath = profile.executablePath;
@@ -434,8 +454,21 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       executablePath = path.join(gamePath, executablePath);
     }
 
-    // Log file: use profile-specific path if set, otherwise default to config dir
-    const logPath = profileLogPath ?? path.join(CONFIG_DIR, "server.log");
+    // Log file: auto-named per launch in the configured log directory (default:
+    // next to the executable). Validate/create the directory BEFORE launch so a
+    // missing or unwritable target fails loudly instead of silently logging into
+    // the void for hours.
+    const logDir = resolveLogDir(config.logDir, executablePath);
+    try {
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.access(logDir, fsConstants.W_OK);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.status(400).send({
+        error: `Log directory is not writable: ${logDir} (${message}). Set a valid Log Directory in the Logs panel.`,
+      });
+    }
+    const logPath = path.join(logDir, buildLogFilename(logLabel));
 
     // If a playlist is active and hasn't been synced to a server yet, override
     // the profile's MissionName/SetLevel with the playlist's current entry
