@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { resolveLogDir } from "../launcher/logPaths.js";
+import { processManager } from "./launcher.js";
 
 /**
  * Resolve the directory the log viewer enumerates. Mirrors the launch-time
@@ -23,6 +24,9 @@ function viewerLogDir(): string | null {
   return config.gamePath ?? null;
 }
 
+/** How much of a log the in-browser viewer fetches with ?tail=1 (last N bytes). */
+const TAIL_BYTES = 256 * 1024;
+
 /** Reject path traversal / non-log filenames. Returns the safe basename or null. */
 function safeLogName(name: string): string | null {
   if (
@@ -36,6 +40,26 @@ function safeLogName(name: string): string | null {
     return null;
   }
   return name;
+}
+
+/**
+ * Resolve a request's :name param to an absolute path inside the log dir,
+ * rejecting traversal. Shared by the read and delete routes.
+ */
+function resolveLogFile(name: string): { filePath: string } | { status: number; error: string } {
+  const logDir = viewerLogDir();
+  if (!logDir) return { status: 404, error: "No log directory configured" };
+
+  const safe = safeLogName(name);
+  if (!safe) return { status: 400, error: "Invalid log filename" };
+
+  const filePath = path.join(logDir, safe);
+  // Defense in depth against traversal: the resolved path must stay in logDir.
+  const resolvedDir = path.resolve(logDir);
+  if (!path.resolve(filePath).startsWith(resolvedDir + path.sep)) {
+    return { status: 400, error: "Invalid log path" };
+  }
+  return { filePath };
 }
 
 export async function logsRoutes(app: FastifyInstance): Promise<void> {
@@ -75,32 +99,58 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
   // Fetch a single log: text/plain inline by default, or as a download with
   // ?download=1. Used by the panel to view in-browser or save a run.
   app.get("/api/logs/:name", async (request, reply) => {
-    const logDir = viewerLogDir();
-    if (!logDir) return reply.status(404).send({ error: "No log directory configured" });
-
     const { name } = request.params as { name: string };
-    const safe = safeLogName(name);
-    if (!safe) return reply.status(400).send({ error: "Invalid log filename" });
+    const resolved = resolveLogFile(name);
+    if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
+    const { filePath } = resolved;
 
-    const filePath = path.join(logDir, safe);
-    // Defense in depth against traversal: the resolved path must stay in logDir.
-    const resolvedDir = path.resolve(logDir);
-    if (!path.resolve(filePath).startsWith(resolvedDir + path.sep)) {
-      return reply.status(400).send({ error: "Invalid log path" });
-    }
-
+    let st;
     try {
-      const st = await fs.stat(filePath);
+      st = await fs.stat(filePath);
       if (!st.isFile()) return reply.status(404).send({ error: "Not found" });
     } catch {
       return reply.status(404).send({ error: "Log not found" });
     }
 
-    const { download } = request.query as { download?: string };
+    const { download, tail } = request.query as { download?: string; tail?: string };
     reply.type("text/plain; charset=utf-8");
     if (download === "1") {
-      reply.header("Content-Disposition", `attachment; filename="${safe}"`);
+      reply.header("Content-Disposition", `attachment; filename="${path.basename(filePath)}"`);
+    }
+    // Soak logs run to hundreds of MB — the in-browser viewer only ever shows
+    // the recent end, so let it ask for just that instead of the whole file.
+    // Never truncate downloads: a saved file must always be the complete log.
+    if (tail === "1" && download !== "1" && st.size > TAIL_BYTES) {
+      reply.header("X-Log-Truncated", "1");
+      reply.header("X-Log-Total-Size", String(st.size));
+      return reply.send(createReadStream(filePath, { start: st.size - TAIL_BYTES }));
     }
     return reply.send(createReadStream(filePath));
+  });
+
+  // Delete a log file. The log a running launch is writing is protected —
+  // deleting it would silently discard the rest of the run's output.
+  app.delete("/api/logs/:name", async (request, reply) => {
+    const { name } = request.params as { name: string };
+    const resolved = resolveLogFile(name);
+    if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
+    const { filePath } = resolved;
+
+    const activeLog = processManager.getActiveLogPath();
+    if (activeLog && path.resolve(activeLog) === path.resolve(filePath)) {
+      return reply.status(409).send({
+        error: "This log is being written by the running server — stop the server first",
+      });
+    }
+
+    try {
+      await fs.unlink(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return reply.status(404).send({ error: "Log not found" });
+      }
+      return reply.status(500).send({ error: "Failed to delete log" });
+    }
+    return { ok: true };
   });
 }

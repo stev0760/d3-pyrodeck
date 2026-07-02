@@ -40,6 +40,10 @@ export function LogsPanel() {
   const [viewText, setViewText] = useState("");
   const [viewLoading, setViewLoading] = useState(false);
 
+  // Two-step delete: first click arms (button shows "Confirm?"), second deletes.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/logs", { credentials: "include" });
@@ -85,23 +89,56 @@ export function LogsPanel() {
     setViewLoading(true);
     setViewText("");
     try {
-      const res = await fetch(`/api/logs/${encodeURIComponent(name)}`, {
+      // ?tail=1 — the server sends only the last chunk of huge soak logs, so
+      // we never download (or hold in memory) hundreds of MB just to peek.
+      const res = await fetch(`/api/logs/${encodeURIComponent(name)}?tail=1`, {
         credentials: "include",
       });
       const text = await res.text();
-      // Tail the file — soak logs can be huge; show the most recent activity.
-      const lines = text.split("\n");
-      const tail = lines.length > 2000 ? lines.slice(-2000).join("\n") : text;
-      setViewText(
-        lines.length > 2000
-          ? `… showing last 2000 of ${lines.length} lines …\n\n${tail}`
-          : tail,
-      );
+      if (res.headers.get("X-Log-Truncated") === "1") {
+        const total = Number(res.headers.get("X-Log-Total-Size") ?? 0);
+        const totalLabel = total ? ` of ${formatBytes(total)}` : "";
+        // Drop the first (likely partial) line of the tail chunk.
+        const firstNewline = text.indexOf("\n");
+        const clean = firstNewline >= 0 ? text.slice(firstNewline + 1) : text;
+        // Blob measures bytes; string length would undercount multi-byte UTF-8.
+        const shownBytes = new Blob([clean]).size;
+        setViewText(
+          `… showing last ${formatBytes(shownBytes)}${totalLabel} — Download for the full log …\n\n${clean}`,
+        );
+      } else {
+        setViewText(text);
+      }
     } catch {
       setViewText("Failed to load log.");
     } finally {
       setViewLoading(false);
     }
+  };
+
+  const remove = async (name: string) => {
+    if (confirmDelete !== name) {
+      setConfirmDelete(name);
+      return;
+    }
+    setConfirmDelete(null);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/logs/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setDeleteError(body.error ?? `Failed to delete ${name}`);
+      } else if (viewing === name) {
+        setViewing(null);
+        setViewText("");
+      }
+    } catch {
+      setDeleteError(`Failed to delete ${name}`);
+    }
+    await refresh();
   };
 
   if (loading) {
@@ -197,9 +234,25 @@ export function LogsPanel() {
               >
                 Download
               </a>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void remove(f.name)}
+                onBlur={() => setConfirmDelete((prev) => (prev === f.name ? null : prev))}
+                className={`font-score tracking-wide shrink-0 ${
+                  confirmDelete === f.name
+                    ? "text-destructive hover:text-destructive"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {confirmDelete === f.name ? "Confirm?" : "Delete"}
+              </Button>
             </li>
           ))}
         </ul>
+      )}
+      {deleteError && (
+        <p className="text-[11px] text-destructive">{deleteError}</p>
       )}
 
       {/* Inline viewer */}

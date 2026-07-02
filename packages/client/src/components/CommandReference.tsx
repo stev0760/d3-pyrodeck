@@ -291,12 +291,26 @@ const CATEGORIES: CommandCategory[] = [
       },
       { cmd: "$botmode", label: "Game Mode" },
       { cmd: "$botobj", label: "Objective State" },
+      { cmd: "$nav", label: "Nav Toggles" },
       {
-        cmd: "$terrainsteer",
-        label: "Terrain Steer",
+        cmd: "$nav",
+        label: "Nav Set",
         select: [
           {
-            name: "toggle",
+            name: "channel",
+            options: [
+              { value: "grid", label: "Grid roadmap" },
+              { value: "bridge", label: "Corner bridge" },
+              { value: "route", label: "Grid routing" },
+              { value: "terrain", label: "Terrain steer" },
+              { value: "bnodes", label: "Pseudo-BNodes" },
+              { value: "outdoorvia", label: "Outdoor via" },
+              { value: "outdoorgraph", label: "Outdoor graph" },
+              { value: "softhop", label: "Soft-hop" },
+            ],
+          },
+          {
+            name: "state",
             options: [
               { value: "on", label: "On" },
               { value: "off", label: "Off" },
@@ -304,7 +318,11 @@ const CATEGORIES: CommandCategory[] = [
           },
         ],
       },
-      { cmd: "$navdump", label: "Nav Dump" },
+      {
+        cmd: "$nav dump",
+        label: "Nav Dump",
+        args: [{ name: "file", placeholder: "file (optional)", type: "text" }],
+      },
       { cmd: "$bothelp", label: "Bot Help" },
       { cmd: "$servercaps", label: "Server Caps" },
     ],
@@ -329,6 +347,14 @@ function CommandButton({
 
   const hasInputs = (def.args && def.args.length > 0) || (def.select && def.select.length > 0);
 
+  // What the dropdown displays and what execute() sends must be the same
+  // value, so both read through this single fallback.
+  const selectValue = useCallback(
+    (sel: NonNullable<CommandDef["select"]>[number]) =>
+      selectValues[sel.name] ?? sel.options[0]?.value ?? "",
+    [selectValues],
+  );
+
   const execute = useCallback(() => {
     const parts = [def.cmd];
 
@@ -341,7 +367,7 @@ function CommandButton({
 
     if (def.select) {
       for (const sel of def.select) {
-        const val = selectValues[sel.name];
+        const val = selectValue(sel);
         if (val) parts.push(val);
       }
     }
@@ -350,7 +376,7 @@ function CommandButton({
     setArgValues({});
     setSelectValues({});
     setExpanded(false);
-  }, [def, argValues, selectValues, sendCommand]);
+  }, [def, argValues, selectValue, sendCommand]);
 
   if (!hasInputs) {
     return (
@@ -406,7 +432,7 @@ function CommandButton({
       {def.select?.map((sel) => (
         <select
           key={sel.name}
-          value={selectValues[sel.name] || sel.options[0]?.value || ""}
+          value={selectValue(sel)}
           onChange={(e) =>
             setSelectValues((prev) => ({ ...prev, [sel.name]: e.target.value }))
           }
@@ -553,7 +579,7 @@ export function CommandReference({ sendCommand, hasFeature }: CommandReferencePr
                 <div className="flex flex-wrap gap-1.5">
                   {cat.commands.map((def) => (
                     <CommandButton
-                      key={def.cmd}
+                      key={`${def.cmd} ${def.label}`}
                       def={def}
                       sendCommand={sendCommand}
                     />

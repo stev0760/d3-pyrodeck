@@ -6,13 +6,17 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.4.14** — Matcen 0.9.5 command-surface sync, console performance overhaul, and log management. The command reference gains the fork's new `$nav` namespace (toggle table, per-channel on/off, nav dump), replacing the retired flat `$terrainsteer`/`$navdump` buttons; the spec now documents the fork's command stability tiers (§5.1.1) — Pyrodeck parses only Tier 1 output and lists diagnostics as type-able text. Performance: D3 process output is coalesced server-side into ~10 WebSocket messages/sec instead of one per pipe chunk (debug builds emit hundreds of lines/sec — the per-message overhead was making the UI laggy, especially in Firefox), both consoles now use xterm's GPU-accelerated WebGL renderer (DOM-renderer fallback where WebGL is unavailable), and the log viewer fetches only the last 256 KB of a log (`?tail=1`) instead of downloading multi-hundred-MB soak logs to the browser. Logs panel gains per-file delete with confirm (the active log of a running server is protected). Trailing process output is flushed before state-change broadcasts so crash diagnostics render before the "crashed" badge.
+
+**v0.4.13** — Auto-named per-launch logs, in-browser log viewer, tab overflow menu.
+
 **v0.4.11** — Stop crashing dedicated servers via `$netgameinfo`. On a dedicated server the engine never flushes its 16 KB text-command buffer (no rendering), and `$netgameinfo` writes ~17 lines into it per call that are never cleared — so polling it overflows the buffer and aborts the server after ~30 calls (~10–15 min at the old 30s/60s intervals). This was an engine bug present in retail D3 1999, unfixable on unmodified servers, so the fix is entirely Pyrodeck-side: **all `$netgameinfo` polling is removed.** The client now queries once per connection (plus the manual refresh button) and derives the countdown locally; the server queries once per activation and once per mission rotation, re-anchoring mid-mission level changes from the cached time limit. The server pushes fresh `serverinfo` to clients after its queries so panels stay current without polling. (`$netgameinfo` is the lone offender — its handler calls a dual-purpose function that writes the overlay even headless. `$scores` and the other polls are verified to use console-only/`DPrintf` paths and are safe to poll.)
 
 **v0.4.10** — Hardening and cleanup pass: config filenames are guarded against path traversal; playlist and saved-server request bodies are validated; `parseTimeLeft` handles `H:MM:SS` and color-code stripping survives TCP chunk boundaries. Network-facing defaults are safer (env-gated `trustProxy`, same-origin CORS, localhost-only first-run setup — see Security). Added an eslint flat config so `pnpm lint` runs clean.
 
 **v0.4.9** — Timer reliability: the Time Left countdown resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s. Launch mode broadcasts a `level_changed` signal (from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads, and the Server panel shows the actual loaded level (e.g. `TheCore`), not just the mission file. Also fixed: playlist vote ties resolve to the first option, drift correction survives rotations/reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect works), and dead WS clients are culled.
 
-Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+. Two operating modes:
+Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+ (command reference tracks fork 0.9.5; newer fork-only commands are harmless no-ops on older builds). Two operating modes:
 
 - **Connect mode:** Remote admin — connect to any running D3 server via its TCP console (port 2092)
 - **Launch mode:** Full server manager — configure, launch, and manage a local D3 dedicated server process
@@ -31,7 +35,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 ### Logs (Launch mode)
 - Each launch writes a timestamped log file (e.g. `testing-2026-06-17T22-20-31.log`) — no hand-edited paths
 - Log directory is configurable; defaults to the directory containing the D3 executable
-- Logs panel lists runs (newest first) with in-browser view and download
+- Logs panel lists runs (newest first) with in-browser view, download, and delete (two-step confirm; the active log of a running server can't be deleted)
+- The in-browser viewer fetches only the last 256 KB of large logs; Download always saves the complete file
 - Pre-launch validation refuses to start if the log directory isn't writable, and a post-launch write-check raises a loud warning if output isn't being saved
 
 ### Players

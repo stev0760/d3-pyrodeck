@@ -96,6 +96,11 @@ export class ProcessManager extends EventEmitter {
     return { ...this.status };
   }
 
+  /** Log file the current launch is writing, or null when no child is alive. */
+  getActiveLogPath(): string | null {
+    return this.child ? this.logPath : null;
+  }
+
   isRunning(): boolean {
     return this.status.state === "running" || this.status.state === "starting";
   }

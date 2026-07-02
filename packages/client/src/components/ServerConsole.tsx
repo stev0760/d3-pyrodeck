@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
+import { createManagedTerminal } from "@/lib/xtermRenderer";
 import "@xterm/xterm/css/xterm.css";
 
 interface ServerConsoleProps {
@@ -10,12 +10,11 @@ interface ServerConsoleProps {
 export function ServerConsole({ onProcessOutput }: ServerConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const terminal = new Terminal({
+    const { terminal, dispose } = createManagedTerminal(containerRef.current, {
       theme: {
         background: "#0c0a09",
         foreground: "#a8a29e",
@@ -29,27 +28,12 @@ export function ServerConsole({ onProcessOutput }: ServerConsoleProps) {
       disableStdin: true,
     });
 
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
-    fitAddon.fit();
-
     terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
 
     terminal.writeln("\x1b[90m--- D3 Server Output ---\x1b[0m");
     terminal.writeln("\x1b[90mWaiting for server process...\x1b[0m");
 
-    // Handle window resize
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-    });
-    resizeObserver.observe(containerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-      terminal.dispose();
-    };
+    return dispose;
   }, []);
 
   // Subscribe to process output

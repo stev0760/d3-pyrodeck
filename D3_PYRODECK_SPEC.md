@@ -1,7 +1,7 @@
 # D3 Pyrodeck — Specification
 
-**Version:** 2.5
-**Date:** March 17, 2026
+**Version:** 2.7
+**Date:** July 2, 2026
 **Author:** stev0760
 **Repository:** `stev0760/d3-pyrodeck` (planned)
 **Engine Fork:** `stev0760/Descent3` branch `feature/multiplayer-bots`
@@ -145,7 +145,7 @@ These are the only additions made to the `stev0760/Descent3` engine fork that th
 
 **Response format:** Single line, no terminator required.
 ```
-SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.9.5 features=bots,roster,ships,difficulty
 ```
 
 **Current feature flags (version=1):**
@@ -164,7 +164,7 @@ SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,
 interface ServerCapabilities {
   version: number;           // 0 = vanilla/unknown
   fork: string;              // fork name (e.g., "Matcen"), empty on vanilla
-  forkVersion: string;       // fork version (e.g., "0.8.16"), empty on vanilla
+  forkVersion: string;       // fork version (e.g., "0.9.5"), empty on vanilla
   features: Set<string>;     // empty set on vanilla
 }
 
@@ -184,6 +184,36 @@ const VANILLA_CAPS: ServerCapabilities = { version: 0, fork: '', forkVersion: ''
 ```
 
 **Version field** enables future feature-gating without breaking older web admin clients.
+
+### 5.1.1 Command Stability Tiers — Contract vs. Diagnostics
+
+The fork's bot command surface is **two surfaces in one**: a stable management/handshake *contract*, and a
+*diagnostic* surface that churns continuously as bot AI and navigation are debugged. Pyrodeck must treat them
+differently or it will break on every fork bug-fix cycle. (Background: the 0.9.1 development cycle added, renamed,
+and **removed** several nav debug commands; treating them as a contract caused repeated parser drift.)
+
+**Anchor on `$servercaps`, never on command existence.** `$servercaps` is self-versioning (`version=`) and
+capability-enumerating (`features=`). Gate UI on the `features=` set — *not* on whether a particular command
+exists. Adding or removing a diagnostic command is invisible churn; a real capability change is reflected in
+`features=`. This is the one part of the surface guaranteed stable across fork versions.
+
+**Cardinal rule:**
+- **Listing** a command in operator help / `CommandReference` is safe for **any** tier — it is just type-able text.
+- **Parsing** a command's output or building a **UI panel/feature** against it is permitted **only for Tier 1.**
+
+| Tier | Commands | Pyrodeck may… |
+|------|----------|---------------|
+| **1 — Stable contract** | `$servercaps` (anchor), `$botlist`, `$addbot` / `$removebot` / `$removebots` / `$botdifficulty` (fire-and-forget verbs), `$botmode`, plus the vanilla `$scores` / player / team / settings commands in §5.3 | parse output, build UI, feature-gate |
+| **2 — Semi-stable** | `$botstat` *status* line (line 1 only), `$botobj` | expose as console/help text; avoid hard output parsers |
+| **3 — Volatile diagnostics (mid-flight)** | `$botstat` **nav: line** (`route:goal=… dijkstra=… boa=… gcost=…`), the `$nav` namespace (0.9.5: bare `$nav` = toggle table, `$nav <name> on|off`, `$nav dump [file]` = the nav-geometry JSON; flat pre-0.9.5 names `$navdump`/`$gridnav`/`$terrainsteer`/… remain hidden aliases), `$botmov` | reference as text only — **zero** output binding |
+
+**Tier 3 detail.** These commands exist to support active bot-AI/navigation debugging and change shape without
+notice. Do not write parsers against them; mark any `CommandReference` entries for them as "format unstable — do
+not parse." Skip the `$botstat` nav: line when parsing the status block (the status line is Tier 2).
+
+**Removed commands — never reference.** Deleted in the Phase 10 nav consolidation and confirmed absent in 0.9.1+:
+`$navrouting`, `$flowfield`, `$potentialfield`, `$botpathfind`, `$botdispersal`. If an older Pyrodeck build
+references any of these, strip them.
 
 ### 5.2 Bot Management Commands
 
@@ -221,15 +251,30 @@ Output per bot (all): `  Bot <N> '<name>' → <difficulty>` (2 leading spaces)
 Extra line when `all`: `Default difficulty set to <difficulty>`
 
 **`$botstat [index|all]`**
-Show bot status. Output format (timeout-based collection):
+Show bot status — **two lines per bot** (a status line and a navigation-diagnostic line). Output format (timeout-based collection):
 ```
-  Bot 0 'Phantom [BOT]' slot=2 state=COMBAT speed=10.3 vel=(0.0,-7.2,7.3) shields=100 target=Viper [BOT]
-  Bot 1 'Viper [BOT]' slot=3 state=EXPLORE speed=51.6 vel=(36.3,-2.5,36.5) shields=43 target=(none)
+  Bot 0 'Phantom [BOT]' slot=2 state=COMBAT role=Freelance lean=balanced speed=10.3 shields=100 target=Viper [BOT]
+      nav: dest_room=5 num_paths=1 path=0/3 mdir|0.98| ahead:WALL d=12.3 solid=0 portal=1 route:goal=19 dijkstra=3 boa=24 [DIVERGE] gcost=40
+  Bot 1 'Viper [BOT]' slot=3 state=EXPLORE role=Attack lean=attack speed=51.6 shields=43 target=(none)
+      nav: dest_room=7 num_paths=1 path=1/4 mdir|1.00| ahead:clear(>30u) route:goal=19 dijkstra=7 boa=7 gcost=0
 ```
-Fields: `slot=` (player slot index), `state=` (EXPLORE/HUNT/COMBAT/FLEE/EVADE), `speed=`, `vel=`, `shields=`, `target=`.
+Status-line fields: `slot=` (player slot index), `state=` (UPPERCASE: EXPLORE/HUNT/COMBAT/FLEE/EVADE), `role=` (squad role, TitleCase per `BotSquadRoleName()`), `lean=` (objective lean, lowercase: balanced/attack/defend), `speed=`, `shields=`, `target=` (`(none)`, a player name, or `(robot)`).
+
+Nav-line (Phase 11 router diagnostic): `dest_room=`, `num_paths=`/`path=`, `mdir|x|`, `ahead:` probe, and `route:goal=… dijkstra=… boa=… [DIVERGE] gcost=…`. **Phase 12:** while a via-point detour is committed, the line gains a trailing ` via:d=<dist-to-via> t=<commit-seconds-left>` (absent otherwise).
+> **Tier:** status line = Tier 2 (semi-stable, OK to surface as text); nav: line = **Tier 3 (volatile, mid-flight — do not parse)**. See §5.1.1. When parsing the status block, consume the status line and skip the nav: line.
+
+**`$nav` — navigation toggle/diagnostic namespace (0.9.5)**
+Single entry point for the nav diagnostic surface. Bare `$nav` prints the live toggle table; `$nav <name> on|off` flips one toggle; `$nav dump [file]` writes the nav-geometry JSON (default `navdump.json`, server working directory). Toggle names (0.9.5): `grid`, `bridge`, `route`, `terrain`, `bnodes`, `outdoorvia`, `outdoorgraph`, `softhop` — some are tagged `[legacy 0.9.3]` in the table and will be deleted with the fallback substrate. Flipping `bridge` invalidates cached roadmaps (build-time parameter). The pre-0.9.5 flat names (`$navdump`, `$gridnav`/`$navgrid`, `$gridbridge`, `$gridroute`, `$terrainsteer`, `$pseudobnodes`, `$outdoorvia`, `$outdoorgraph`, `$navbridge`) remain as **hidden aliases** — they work but are gone from `$bothelp`.
+> **Tier 3 (volatile, mid-flight).** The toggle set and JSON schema churn with nav development — list in the command reference but build zero output binding. See §5.1.1.
 
 **`$botmov on|off`**
-Toggle movement debug logging. No structured output.
+Toggle movement debug logging. No structured output. *(Tier 3 — diagnostic toggle; reference only.)*
+
+**`$botmode`**
+Print the detected game mode. Output: `Game mode: <MODE> (scriptname='<name>', teams=<n>)` — `<MODE>` is one of `Anarchy`/`TeamAnarchy`/`CTF`/`Hoard`/`HyperAnarchy`/`Monsterball`/`RoboAnarchy`/`Coop` (matches `BotGameModeName`). Useful for the web UI to confirm objective-mode detection before showing CTF/Hoard panels. *(Tier 1 — stable, OK to parse.)*
+
+**`$botobj`**
+Print the current objective state (CTF flag IDs and goal rooms, Hoard/Hyper orb IDs, per-team flag status). Prints a `Game mode: <MODE>` line plus any warnings; most detail goes to `server.log` at DEBUG. *(Tier 2 — diagnostic, not routine web display.)*
 
 **`$bothelp`**
 Print bot command reference. For display in the web UI help panel only.
@@ -550,7 +595,7 @@ Voting is chat-based — backwards-compatible with all D3 builds, no client mod 
     2 = Polaris
     3 = Entropy
    ```
-3. Players type `1`–`N` in chat during the `voteOpenSeconds` window (default: 60s). One vote per player; last vote wins ties
+3. Players type `1`–`N` in chat during the `voteOpenSeconds` window (default: 60s). One vote per player (a player's latest vote replaces their earlier one). When options tie, the lowest-numbered option wins (first-option-wins)
 4. If `"Ending level."` fires during voting, Pyrodeck immediately tallies and uses the winner
 5. Winner is announced: `say Next mission: <label>`. Rotation proceeds with winner as next entry
 

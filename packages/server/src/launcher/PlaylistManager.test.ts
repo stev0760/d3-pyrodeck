@@ -184,7 +184,7 @@ describe("PlaylistManager — rotation", () => {
     // timer from the cached limit rather than polling.
     const pl = await mgr.create("p", "sequential", sampleEntries);
     const send = vi.fn(
-      async () => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
+      async (_cmd: string) => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
     );
     mgr.sendCommandFn = send;
     await mgr.activate(pl.id); // activation → one $netgameinfo
@@ -203,7 +203,7 @@ describe("PlaylistManager — rotation", () => {
   it("re-queries $netgameinfo once when a new mission opens after rotation", async () => {
     const pl = await mgr.create("p", "sequential", sampleEntries);
     const send = vi.fn(
-      async () => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
+      async (_cmd: string) => "Time Left: 5:00\nTime Limit: 5 minutes\nGoal: None\n",
     );
     mgr.sendCommandFn = send;
     await mgr.activate(pl.id);

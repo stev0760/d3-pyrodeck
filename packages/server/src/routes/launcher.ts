@@ -333,6 +333,9 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 
 // Wire process events to WebSocket broadcasts
 processManager.on("stateChange", (state: string) => {
+  // Trailing output (e.g. the stderr lines explaining a crash) must reach
+  // clients before the state change that it caused.
+  flushProcessOutput();
   wsBroadcast("process_state", { state });
   // The loaded level is gone once the process is down; forget it so a stale
   // name isn't reported on the next connect. A restart re-populates it from
@@ -342,14 +345,46 @@ processManager.on("stateChange", (state: string) => {
   }
 });
 
+// Debug D3 builds can emit hundreds of stdout lines/sec (bot AI logging).
+// Forwarding every pipe chunk as its own WS message floods browsers — the
+// per-message overhead (JSON parse + xterm write) is what makes the UI laggy,
+// not the byte volume. Coalesce and flush on a short tick. Buffering as a list
+// of per-stream runs (not one buffer per stream) keeps stdout/stderr in true
+// arrival order, so a stderr crash message still renders where it happened.
+const OUTPUT_FLUSH_MS = 100;
+let pendingOutput: { stream: "stdout" | "stderr"; data: string }[] = [];
+let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushProcessOutput(): void {
+  if (outputFlushTimer) {
+    clearTimeout(outputFlushTimer);
+    outputFlushTimer = null;
+  }
+  const runs = pendingOutput;
+  pendingOutput = [];
+  for (const run of runs) {
+    wsBroadcast("process_output", run);
+  }
+}
+
+function queueProcessOutput(stream: "stdout" | "stderr", data: string): void {
+  const last = pendingOutput[pendingOutput.length - 1];
+  if (last && last.stream === stream) {
+    last.data += data;
+  } else {
+    pendingOutput.push({ stream, data });
+  }
+  outputFlushTimer ??= setTimeout(flushProcessOutput, OUTPUT_FLUSH_MS);
+}
+
 processManager.on("stdout", (data: string) => {
-  wsBroadcast("process_output", { stream: "stdout", data });
-  // Feed to playlist manager for level-end detection and vote parsing
+  queueProcessOutput("stdout", data);
+  // Feed to playlist manager unbatched — level-end detection stays immediate
   playlistManager.onStdoutChunk(data);
 });
 
 processManager.on("stderr", (data: string) => {
-  wsBroadcast("process_output", { stream: "stderr", data });
+  queueProcessOutput("stderr", data);
 });
 
 // Logging failed to materialize (bad/unwritable dir, stream error). Surface it

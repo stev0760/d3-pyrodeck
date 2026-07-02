@@ -1,11 +1,13 @@
 /**
- * Parser for $botstat output (Matcen 0.8.16–0.9.1).
+ * Parser for $botstat output (Matcen 0.8.16–0.9.5).
  *
  * As of 0.9.1 each bot emits TWO lines: the status line below plus a Phase 11
- * "nav:" router-diagnostic line. We parse the status line and intentionally
- * skip the nav line (diagnostic only — see D3_PYRODECK_SPEC.md). The status-line
- * format is unchanged from 0.8.16; field casing is fixed by the engine
- * (dedicated_server.cpp): state=UPPERCASE, role=TitleCase, lean=lowercase.
+ * "nav:" router-diagnostic line (Tier 3 — volatile; 0.9.5/Phase 12 may append
+ * " via:d=… t=…"). We parse the status line and intentionally skip the nav
+ * line by regex non-match (diagnostic only — see D3_PYRODECK_SPEC.md §5.1.1).
+ * The status-line format is unchanged from 0.8.16; field casing is fixed by
+ * the engine (dedicated_server.cpp): state=UPPERCASE, role=TitleCase,
+ * lean=lowercase.
  *
  * Example (0.9.1):
  *   Bot 0 'Phantom [BOT]' slot=2 state=COMBAT role=Freelance lean=balanced speed=10.3 shields=100 target=Viper [BOT]

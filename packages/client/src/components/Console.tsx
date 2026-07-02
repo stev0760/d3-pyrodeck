@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
+import { createManagedTerminal } from "@/lib/xtermRenderer";
 import "@xterm/xterm/css/xterm.css";
 
 interface ConsoleProps {
@@ -12,7 +12,6 @@ interface ConsoleProps {
 export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
   const inputBufferRef = useRef("");
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
@@ -24,7 +23,7 @@ export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const terminal = new Terminal({
+    const { terminal, dispose } = createManagedTerminal(containerRef.current, {
       theme: {
         background: "#09090b",
         foreground: "#d4d4d8",
@@ -37,13 +36,7 @@ export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
       scrollback: 5000,
     });
 
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
-    fitAddon.fit();
-
     terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
 
     terminal.writeln("\x1b[1;33mD3 Pyrodeck Console\x1b[0m");
     terminal.writeln("\x1b[90mType commands to send to the D3 server\x1b[0m");
@@ -104,16 +97,7 @@ export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
       }
     });
 
-    // Handle window resize
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-    });
-    resizeObserver.observe(containerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-      terminal.dispose();
-    };
+    return dispose;
   }, [disabled, onCommand, writePrompt]);
 
   // Subscribe to output from the server

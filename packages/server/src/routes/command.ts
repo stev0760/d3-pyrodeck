@@ -16,6 +16,9 @@ const wsClients = new Set<AliveWebSocket>();
 
 /** Broadcast a message to all connected WebSocket clients. */
 export function wsBroadcast(type: string, payload: Record<string, unknown>): void {
+  // No clients — skip the stringify (process output broadcasts run 10x/sec
+  // for the life of a launched server, watched or not).
+  if (wsClients.size === 0) return;
   const msg = JSON.stringify({ type, payload });
   for (const ws of wsClients) {
     if (ws.readyState === ws.OPEN) {

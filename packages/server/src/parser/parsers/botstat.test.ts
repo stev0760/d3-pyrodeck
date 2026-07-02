@@ -33,6 +33,18 @@ describe("parseBotstat", () => {
     expect(b1.lean).toBe("attack");
   });
 
+  it("skips the 0.9.5/Phase 12 nav line with a trailing via: suffix", () => {
+    const raw = [
+      "  Bot 0 'Phantom [BOT]' slot=2 state=HUNT role=Freelance lean=balanced speed=22.1 shields=90 target=(none)",
+      "      nav: dest_room=5 num_paths=1 path=0/3 mdir|0.98| ahead:clear(>30u) route:goal=19 dijkstra=3 boa=3 gcost=0 via:d=41.2 t=2.7",
+    ].join("\n");
+
+    const result = parseBotstat(raw);
+    expect(result).not.toBeNull();
+    expect(result!.bots).toHaveLength(1);
+    expect(result!.bots[0].state).toBe("HUNT");
+  });
+
   it('keeps a "(robot)" target as a non-null string', () => {
     const raw =
       "  Bot 0 'Hunter [BOT]' slot=4 state=HUNT role=Defend lean=defend speed=5.0 shields=75 target=(robot)";
