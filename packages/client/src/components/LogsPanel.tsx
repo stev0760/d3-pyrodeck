@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-
 interface LogFile {
   name: string;
   size: number;
@@ -116,6 +115,15 @@ export function LogsPanel() {
     }
   };
 
+  // Scroll the viewer to the top of the panel when it finishes loading so the
+  // user actually sees the result (otherwise it sits at the bottom of a long
+  // file list and the click feels like a no-op).
+  const viewerRef = useCallback((node: HTMLDivElement | null) => {
+    if (node && !viewLoading) {
+      node.scrollIntoView({ block: "start" });
+    }
+  }, [viewLoading]);
+
   const remove = async (name: string) => {
     if (confirmDelete !== name) {
       setConfirmDelete(name);
@@ -185,6 +193,29 @@ export function LogsPanel() {
         )}
       </div>
 
+      {/* Inline viewer — rendered above the file list so the user sees the
+          result of clicking View without scrolling past 100+ rows. The ref
+          scrolls it to the top of the panel once the fetch resolves. */}
+      {viewing && (
+        <div ref={viewerRef} className="border border-border rounded-md overflow-hidden">
+          <div className="flex items-center justify-between bg-muted px-2.5 py-1.5">
+            <p className="text-xs font-mono text-foreground truncate">{viewing}</p>
+            <button
+              onClick={() => {
+                setViewing(null);
+                setViewText("");
+              }}
+              className="text-xs font-score tracking-wide text-muted-foreground hover:text-foreground px-2"
+            >
+              Close
+            </button>
+          </div>
+          <pre className="text-[11px] leading-snug text-foreground/90 font-mono whitespace-pre-wrap break-words max-h-[50vh] overflow-auto p-2.5 bg-background">
+            {viewLoading ? "Loading…" : viewText}
+          </pre>
+        </div>
+      )}
+
       {/* File list */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-score tracking-wide text-muted-foreground">
@@ -253,27 +284,6 @@ export function LogsPanel() {
       )}
       {deleteError && (
         <p className="text-[11px] text-destructive">{deleteError}</p>
-      )}
-
-      {/* Inline viewer */}
-      {viewing && (
-        <div className="border border-border rounded-md overflow-hidden">
-          <div className="flex items-center justify-between bg-muted px-2.5 py-1.5">
-            <p className="text-xs font-mono text-foreground truncate">{viewing}</p>
-            <button
-              onClick={() => {
-                setViewing(null);
-                setViewText("");
-              }}
-              className="text-xs font-score tracking-wide text-muted-foreground hover:text-foreground px-2"
-            >
-              Close
-            </button>
-          </div>
-          <pre className="text-[11px] leading-snug text-foreground/90 font-mono whitespace-pre-wrap break-words max-h-[50vh] overflow-auto p-2.5 bg-background">
-            {viewLoading ? "Loading…" : viewText}
-          </pre>
-        </div>
       )}
     </div>
   );
