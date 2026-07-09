@@ -2,6 +2,17 @@ import net from "node:net";
 import type { ServerConnection } from "./ServerConnection.js";
 
 const RESPONSE_TIMEOUT_MS = 200;
+// How long to wait for the FIRST response chunk before giving up. D3 has no
+// response terminators, so once output starts flowing we use a short
+// inter-chunk silence (RESPONSE_TIMEOUT_MS) to detect the end. But a
+// freshly-started dedicated server mid level-load can take >200ms — often
+// ~1s on a heavy debug build — to service the first command after auth. A
+// 200ms initial wait races that and resolves with an empty buffer (the
+// $servercaps capability probe then falls back to "vanilla" and the Bots tab
+// disappears). The inter-chunk silence stays at 200ms; only the initial wait
+// is extended, and it's a one-time cost paid only when the server is slow to
+// start responding.
+const FIRST_RESPONSE_TIMEOUT_MS = 5000;
 const CONNECT_TIMEOUT_MS = 5000;
 const AUTH_TIMEOUT_MS = 5000;
 
@@ -260,11 +271,16 @@ export class TelnetConnection implements ServerConnection {
       // Send the command
       this.socket.write(command + "\r\n");
 
-      // Start initial silence timer in case there's no response at all
+      // Start the initial response timer. A server may take well over
+      // RESPONSE_TIMEOUT_MS to emit the first chunk (a busy dedicated server
+      // mid level-load can take ~1s to service the first command after auth),
+      // so we allow a longer first-chunk wait here. Once output starts, each
+      // chunk resets this down to RESPONSE_TIMEOUT_MS (inter-chunk silence)
+      // above, which detects end-of-response quickly in the common case.
       silenceTimer = setTimeout(() => {
         cleanup();
         resolve(this.stripEcho(command, responseBuffer));
-      }, RESPONSE_TIMEOUT_MS);
+      }, FIRST_RESPONSE_TIMEOUT_MS);
     });
   }
 
