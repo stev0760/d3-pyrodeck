@@ -913,4 +913,91 @@ These existing open-source projects serve as reference for parser logic and serv
 
 ---
 
+## Addendum A — Mission (.mn3) game-mode compatibility scanning (2026-07-12, implemented v0.4.17)
+
+Ported from the fork spec's Addendum A (`matcen-docs/D3_PYRODECK_SPEC.md`); implemented in
+`packages/server/src/gamefiles/Mn3Scanner.ts` and surfaced in the Config tab's structured form.
+
+**Goal:** Pyrodeck reads the server's `missions/` directory and shows, per mission, which game
+modes it supports and at how many teams — ending launch-and-pray mission selection. All data is
+author-declared text metadata inside the `.mn3`; the scan is a faithful port of the engine's own
+mission filter (`Descent3/Mission.cpp: MissionGetKeywords()`), so Pyrodeck's answer is exactly as
+trustworthy as the game's own mission list. Reference prototype: `tools/mn3info.py` in the engine
+fork (validated 2026-07-12 against a 102-mission library; the TS port matches it 1:1 on 111 missions).
+
+### A.1 Container: .mn3 is a HOG2 archive
+
+Little-endian throughout (`cfile/hogfile.h`):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `"HOG2"` |
+| 4 | 4 | `u32 nfiles` |
+| 8 | 4 | `u32 file_data_offset` |
+| 12 | 56 | padding (header is 68 bytes total) |
+| 68 | 48 × nfiles | file entries: `char name[36]` (NUL-terminated), `u32 flags`, `u32 len`, `u32 timestamp` |
+
+File payloads follow **sequentially in entry order** starting at `file_data_offset` (entry N's
+offset = `file_data_offset` + sum of `len` of entries 0..N-1). The scanner reads only the header,
+entry table, and the `.msn` blob — a few KB per file regardless of archive size.
+
+### A.2 Mission metadata: the `.msn` text file
+
+Extract the entry whose name ends in `.msn` (case-insensitive). It is line-oriented text; parse
+the first token of each line (whitespace-delimited, case-insensitive), remainder = operand:
+`NAME` (display name), `NUMLEVELS`, `MULTI`/`SINGLE`, `AUTHOR`/`DESCRIPTION`/`URL`, and
+`KEYWORDS` — **comma-separated compatibility tags, the payload**.
+
+### A.3 Mode requirements (from `netgames/*/` `options->requirements`, verified in source)
+
+| Mode (.d3m) | Requirements |
+|---|---|
+| Anarchy, Team Anarchy, Hyper-Anarchy | *(none — every mission qualifies)* |
+| CTF | `MINGOALS2,GOALPERTEAM` |
+| Hoard | `MINGOALS1` |
+| Entropy | `ENTROPY` |
+| Monsterball | `MINGOALS2,GOALPERTEAM,SPEC1` |
+| Co-op, Robo-Anarchy | `COOP` |
+
+### A.4 Matching semantics (port of `MissionGetKeywords`, returns max teams or INCOMPATIBLE)
+
+1. Parse mission `KEYWORDS` into tags (comma-separated, trim, case-insensitive). A tag
+   `GOALS<n>` sets `goals = n` (last one wins).
+2. For each mode-requirement token: `MINGOALS<n>` → set `goalsneeded = n`; `GOALPERTEAM` → set
+   `goal_per_team = true`; **any other token → INCOMPATIBLE unless it appears literally in the
+   mission tags** (this is how `ENTROPY`, `SPEC1`, `COOP` work).
+3. `teams = goal_per_team ? goals : MAX_NET_PLAYERS`; if `teams < goalsneeded` or
+   `goals < goalsneeded` → INCOMPATIBLE; else compatible at up to `teams` teams.
+
+Tolerances (all observed in the validation library): lowercase keywords, author typos
+(`GOALSPERTEAM`), duplicate tokens, and custom tags (`inferno`, `ASSAULT`) — unknown mission tags
+are harmless and ignored, exactly as the engine ignores them. Missions with no `KEYWORDS` line
+are anarchy-class only. **Caveat:** tags are author-declared; a mislabeled mission lies to the
+game and to Pyrodeck equally.
+
+### A.5 Pyrodeck implementation (v0.4.17)
+
+- **Scanner:** `packages/server/src/gamefiles/Mn3Scanner.ts` — `parseMn3Cached()` with a
+  module-level mtime+size cache; `scanMissionsDir()` for the whole directory. Per-file parse
+  errors land in an `error` field and never fail the scan. Mode keys are normalized `.d3m`
+  basenames (`"team anarchy.d3m"` → `teamanarchy`).
+- **API:** `GET /api/game-files/missions?profileId=…&details=1` adds a `details: Mn3Info[]`
+  array alongside the existing `missions` list (shape unchanged without the param).
+- **UI:** Config tab structured form — mission dropdown disables missions incompatible with the
+  selected Game Type (label suffix `— no <mode> support`); a details panel under the picker shows
+  display name, level count, and compatible-mode badges with team capacity (e.g. `CTF·4T`); a red
+  warning renders when the selected mission/script pairing is incompatible. Unknown custom
+  scripts and scan errors never block selection.
+- **Playlist validation** (`packages/server/src/gamefiles/playlistCompat.ts`): playlist entries
+  are checked against the rotation profile's `Scriptname=`. `POST /api/playlists/:id/activate`
+  (body may carry `profileId`; falls back to the most recently launched profile — the same
+  profile rotation uses) rejects with 400 and a per-entry reason list (`no <mode> support` /
+  `mission file not found`) when any entry is incompatible. The rotate handler re-validates each
+  entry just before restarting and **skips** incompatible ones (current mission keeps running,
+  WS warning broadcast) — guarding against Scriptname changes made after activation. The
+  PlaylistEditor shows per-entry ⚠ markers and a summary against the Launch panel's selected
+  profile. Validation is lenient: no/unknown script or unparseable missions never block.
+
+---
+
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*

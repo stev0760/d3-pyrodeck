@@ -1,4 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
+import {
+  MODE_LABELS,
+  MODE_LABEL_MAP,
+  scriptKey,
+  missionSupports,
+  type MissionDetails,
+} from "@/lib/missionCompat";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend DedicatedCfgData)
@@ -281,7 +288,7 @@ function SelectInput({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean }[];
 }) {
   return (
     <select
@@ -290,7 +297,7 @@ function SelectInput({
       className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground/90 focus:outline-none focus:ring-1 focus:ring-ring"
     >
       {options.map((o) => (
-        <option key={o.value} value={o.value}>
+        <option key={o.value} value={o.value} disabled={o.disabled}>
           {o.label}
         </option>
       ))}
@@ -312,6 +319,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
 
   const [missions, setMissions] = useState<string[]>([]);
   const [scripts, setScripts] = useState<string[]>([]);
+  const [missionDetails, setMissionDetails] = useState<Record<string, MissionDetails>>({});
 
   // Load config + missions + scripts in parallel
   const load = useCallback(async () => {
@@ -322,7 +330,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
         fetch(`/api/profiles/${encodeURIComponent(profileId)}/structured-config`, {
           credentials: "include",
         }),
-        fetch(`/api/game-files/missions?profileId=${encodeURIComponent(profileId)}`, { credentials: "include" }),
+        fetch(`/api/game-files/missions?profileId=${encodeURIComponent(profileId)}&details=1`, { credentials: "include" }),
         fetch(`/api/game-files/netgames?profileId=${encodeURIComponent(profileId)}`, { credentials: "include" }),
       ]);
 
@@ -345,6 +353,11 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
       };
       setData(normalized);
       setMissions(missionsData.missions ?? []);
+      const detailMap: Record<string, MissionDetails> = {};
+      for (const d of (missionsData.details ?? []) as MissionDetails[]) {
+        detailMap[d.file] = d;
+      }
+      setMissionDetails(detailMap);
       setScripts(scriptsData.scripts ?? []);
       setDirty(false);
     } catch {
@@ -406,13 +419,28 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
     return base;
   })();
 
+  // Mission options: incompatible missions (per the .mn3 scan) stay visible
+  // but disabled, labeled with the reason. Never disable the current value.
   const missionOptions = (() => {
-    const base = missions.map((m) => ({ value: m, label: m }));
+    const script = data?.scriptName ?? "";
+    const scriptName = MODE_LABEL_MAP[scriptKey(script)] ?? script.replace(/\.d3m$/i, "");
+    const base = missions.map((m) => {
+      const ok = missionSupports(missionDetails[m], script);
+      return {
+        value: m,
+        label: ok ? m : `${m} — no ${scriptName} support`,
+        disabled: !ok && m !== data?.missionName,
+      };
+    });
     if (data?.missionName && !missions.includes(data.missionName)) {
-      base.unshift({ value: data.missionName, label: data.missionName });
+      base.unshift({ value: data.missionName, label: data.missionName, disabled: false });
     }
     return base;
   })();
+
+  const selectedMission = data ? missionDetails[data.missionName] : undefined;
+  const selectedMissionIncompatible =
+    data != null && selectedMission != null && !missionSupports(selectedMission, data.scriptName);
 
   if (loading) {
     return (
@@ -515,6 +543,46 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
               )}
             </Field>
           </Row>
+          {selectedMission && !selectedMission.error && (
+            <div className="px-2 py-1.5 bg-background/50 border border-border rounded space-y-1">
+              <div className="text-xs text-foreground/80">
+                <span className="font-medium">{selectedMission.name ?? selectedMission.file}</span>
+                {selectedMission.numLevels != null && (
+                  <span className="ml-1.5 text-muted-foreground">
+                    {selectedMission.numLevels} level{selectedMission.numLevels === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {MODE_LABELS.filter(([key]) => selectedMission.modes[key]?.compatible).map(
+                  ([key, label]) => {
+                    const mode = selectedMission.modes[key];
+                    const current = key === scriptKey(data.scriptName);
+                    return (
+                      <span
+                        key={key}
+                        className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                          current
+                            ? "border-amber-400/60 text-amber-400 bg-amber-400/10"
+                            : "border-border text-muted-foreground"
+                        }`}
+                      >
+                        {label}
+                        {mode.maxTeams < 32 && `·${mode.maxTeams}T`}
+                      </span>
+                    );
+                  },
+                )}
+              </div>
+              {selectedMissionIncompatible && (
+                <div className="text-[10px] text-red-400">
+                  This mission does not support{" "}
+                  {MODE_LABEL_MAP[scriptKey(data.scriptName)] ?? data.scriptName} — the server
+                  will fail to start the game. Pick a compatible mission or game type.
+                </div>
+              )}
+            </div>
+          )}
           <Field label="Starting Level" hint="(1 = first level in mission)">
             <NumberInput
               value={data.startingLevel}

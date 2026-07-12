@@ -266,6 +266,26 @@ Automatic mission rotation triggered by level-end stdout detection.
 - [ ] Repeat `say` reminder announcements at intervals during vote window
 - [ ] Vote result toast / sidebar summary after tally
 
+**Mission mode-compatibility (v0.4.17) ✅:**
+- [x] `.mn3` scanner (`Mn3Scanner.ts`): HOG2 → `.msn` KEYWORDS → per-mode compat (spec Addendum A), mtime+size cache
+- [x] Config tab: mission picker disables incompatible missions, details panel with mode badges, incompatible-pairing warning
+- [x] Playlist validation: activation rejected (400 with per-entry reasons) when entries don't support the profile's Scriptname; rotate handler re-checks and skips incompatible entries instead of restarting into a failed game; PlaylistEditor shows per-entry ⚠ + summary against the selected profile
+
+**Playlist rotation limitations (roadmap — all Pyrodeck-side, no engine patches):**
+
+D3 has no native mission rotation: every playlist transition is a full server stop → config swap →
+relaunch. Inherent consequences and open workarounds:
+- [ ] Players must manually reconnect after every rotation — D3 clients have no server-initiated
+      reconnect. Possible mitigation: longer/louder pre-rotation `say` countdown so players expect
+      the drop, and clear "server restarting — reconnect in ~30s" messaging.
+- [ ] Restart is not 100% reliable (port rebind timing, slow level loads). Mitigations to explore:
+      post-restart health check (telnet reconnect + `$servercaps` within a timeout) with one
+      automatic retry, then a WS alert + playlist auto-pause instead of a silent dead server.
+- [ ] Rotation skip (compat guard) currently just advances past bad entries — consider a
+      "playlist health" line in PlaylistPanel showing skipped entries.
+- Smooth in-place mission transitions are **out of scope**: they would require engine changes
+  (project rule: the D3 server is a black box; unknown client compatibility fallout).
+
 **Config Wizard (deferred):**
 - [ ] "New Server Config" wizard: pick game type → form pre-fills sensible defaults for that mode
 - [ ] autoexec.dmfc editor: simple list of DMFC commands to run at server start

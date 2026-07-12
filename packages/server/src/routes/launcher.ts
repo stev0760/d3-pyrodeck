@@ -21,6 +21,7 @@ import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import type { PlaylistEntry } from "../launcher/PlaylistManager.js";
 import { playlistManager } from "../launcher/playlistInstance.js";
+import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 
 export { playlistManager };
 
@@ -197,38 +198,11 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 
   console.log(`[Playlist] Rotate triggered for entry: ${entry.label} (${entry.missionName})`);
 
-  // Announce rotation if server is running
-  if (playlistManager.sendCommandFn && processManager.isRunning()) {
-    try {
-      await playlistManager.sendCommandFn(`say Changing mission to: ${entry.label}`);
-      await new Promise((r) => setTimeout(r, 1000));
-    } catch { /* ignore */ }
-  }
-
-  // Close our telnet session cleanly before killing D3 — this sends a FIN
-  // from our side so the TCP 4-tuple closes through FIN_WAIT rather than
-  // lingering in TIME_WAIT with D3's local port as the sockname, which can
-  // interfere with the next D3 binding the same port.
-  //
-  // Rotation deliberately SKIPS the graceful `quit` path (unlike /stop):
-  // `quit` makes D3 close the connection from its side, parking the 4-tuple
-  // in TIME_WAIT on D3's port and forcing waitForPortFree() to delay the
-  // relaunch by up to a minute between missions.
-  const existingSession = sessionManager.getActive();
-  if (existingSession) {
-    sessionManager.remove(existingSession.id);
-  }
-  processManager.sendQuitFn = null;
-  playlistManager.sendCommandFn = null;
-
-  const launchStatus = processManager.getStatus();
-  if (launchStatus.state === "running" || launchStatus.state === "starting") {
-    await processManager.stop();
-  }
-
   // Resolve the active profile via profiles.json (profile records live in
   // CONFIG_DIR; we only need a valid gamePath for the ServerProfileManager's
   // file ops AFTER we pick the profile, so pass an empty string initially).
+  // Done BEFORE stopping the server so a compat failure can skip the rotation
+  // and leave the current mission running.
   const metadataManager = new ServerProfileManager(CONFIG_DIR, "");
   try {
     const profiles = await metadataManager.list();
@@ -258,6 +232,56 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
       });
       playlistManager.markRotationComplete();
       return;
+    }
+
+    // Guard: the profile's Scriptname may have changed since activation. If
+    // this entry's mission doesn't support it, skip the rotation instead of
+    // restarting into a server that can't start the game. The next
+    // "Ending level." rotates to the following entry.
+    const { scriptName, incompatible } = await findIncompatibleEntries(
+      gamePath,
+      activeProfile.configFile,
+      [entry],
+    );
+    if (incompatible.length > 0) {
+      const reason = incompatible[0].reason;
+      console.warn(
+        `[Playlist] Skipping rotation to ${entry.missionName}: ${reason} (Scriptname=${scriptName})`,
+      );
+      wsBroadcast("error", {
+        message: `Playlist skipped "${entry.label}" (${entry.missionName}): ${reason} for ${scriptName}. Current mission keeps running.`,
+      });
+      playlistManager.markRotationComplete();
+      return;
+    }
+
+    // Announce rotation if server is running
+    if (playlistManager.sendCommandFn && processManager.isRunning()) {
+      try {
+        await playlistManager.sendCommandFn(`say Changing mission to: ${entry.label}`);
+        await new Promise((r) => setTimeout(r, 1000));
+      } catch { /* ignore */ }
+    }
+
+    // Close our telnet session cleanly before killing D3 — this sends a FIN
+    // from our side so the TCP 4-tuple closes through FIN_WAIT rather than
+    // lingering in TIME_WAIT with D3's local port as the sockname, which can
+    // interfere with the next D3 binding the same port.
+    //
+    // Rotation deliberately SKIPS the graceful `quit` path (unlike /stop):
+    // `quit` makes D3 close the connection from its side, parking the 4-tuple
+    // in TIME_WAIT on D3's port and forcing waitForPortFree() to delay the
+    // relaunch by up to a minute between missions.
+    const existingSession = sessionManager.getActive();
+    if (existingSession) {
+      sessionManager.remove(existingSession.id);
+    }
+    processManager.sendQuitFn = null;
+    playlistManager.sendCommandFn = null;
+
+    const launchStatus = processManager.getStatus();
+    if (launchStatus.state === "running" || launchStatus.state === "starting") {
+      await processManager.stop();
     }
 
     // Re-bind the profile manager to the effective gamePath for file ops.

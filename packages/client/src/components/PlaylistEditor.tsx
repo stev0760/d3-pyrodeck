@@ -7,6 +7,11 @@ import type {
   PlaylistStatus,
   PlaylistVoting,
 } from "../hooks/usePlaylist.ts";
+import {
+  missionSupports,
+  scriptModeLabel,
+  type MissionDetails,
+} from "@/lib/missionCompat";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +27,8 @@ interface PlaylistEditorProps {
   onDeletePlaylist: (id: string) => Promise<boolean>;
   onActivate: (id: string) => void;
   onDeactivate: () => void;
+  /** Profile whose Scriptname entries are compat-checked against (Launch panel selection). */
+  selectedProfileId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +53,7 @@ function EntryRow({
   index,
   total,
   missionListId,
+  warning,
   onUpdate,
   onRemove,
   onMove,
@@ -54,12 +62,17 @@ function EntryRow({
   index: number;
   total: number;
   missionListId: string;
+  warning?: string | null;
   onUpdate: (updates: Partial<PlaylistEntry>) => void;
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 px-2 py-1.5 bg-muted/40 rounded border border-border/40">
+    <div
+      className={`flex items-center gap-2 px-2 py-1.5 bg-muted/40 rounded border ${
+        warning ? "border-red-500/40" : "border-border/40"
+      }`}
+    >
       {/* Reorder */}
       <div className="flex flex-col shrink-0">
         <button
@@ -101,6 +114,12 @@ function EntryRow({
         className="flex-1 min-w-0 px-2 py-1 bg-background border border-border rounded text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
       />
 
+      {warning && (
+        <span className="text-red-400 text-xs shrink-0" title={warning}>
+          ⚠
+        </span>
+      )}
+
       {/* Starting level */}
       <input
         type="number"
@@ -137,6 +156,8 @@ function PlaylistDetail({
   onActivate,
   onDeactivate,
   onBack,
+  selectedProfileId,
+  hookError,
 }: {
   playlist: Playlist;
   isActive: boolean;
@@ -145,6 +166,9 @@ function PlaylistDetail({
   onActivate: () => void;
   onDeactivate: () => void;
   onBack: () => void;
+  selectedProfileId?: string;
+  /** Hook-level error (e.g. activation rejected) — shown above the form. */
+  hookError?: string | null;
 }) {
   const [name, setName] = useState(playlist.name);
   const [mode, setMode] = useState<PlaylistMode>(playlist.mode);
@@ -160,27 +184,60 @@ function PlaylistDetail({
   const [newMission, setNewMission] = useState("");
   const [newLevel, setNewLevel] = useState("");
 
-  // Available mission files from gamePath/missions/
+  // Available mission files from gamePath/missions/ (+ mode-compat details)
   const [missions, setMissions] = useState<string[]>([]);
   const [missionsError, setMissionsError] = useState<string | null>(null);
+  const [missionDetails, setMissionDetails] = useState<Record<string, MissionDetails>>({});
+  // Scriptname of the selected profile — what rotation will run these missions under
+  const [profileScript, setProfileScript] = useState<string>("");
   const missionListId = `playlist-missions-${playlist.id}`;
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/game-files/missions", { credentials: "include" })
+    const profileQs = selectedProfileId
+      ? `profileId=${encodeURIComponent(selectedProfileId)}&`
+      : "";
+    fetch(`/api/game-files/missions?${profileQs}details=1`, { credentials: "include" })
       .then(async (r) => {
         const data = await r.json().catch(() => ({}));
         if (cancelled) return;
         if (r.ok && Array.isArray(data.missions)) {
           setMissions(data.missions);
+          const map: Record<string, MissionDetails> = {};
+          for (const d of (data.details ?? []) as MissionDetails[]) map[d.file] = d;
+          setMissionDetails(map);
           setMissionsError(null);
         } else {
           setMissionsError(data.error ?? "Could not list missions");
         }
       })
       .catch(() => { if (!cancelled) setMissionsError("Could not list missions"); });
+    if (selectedProfileId) {
+      fetch(`/api/profiles/${encodeURIComponent(selectedProfileId)}/structured-config`, {
+        credentials: "include",
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!cancelled && r.ok && typeof data.scriptName === "string") {
+            setProfileScript(data.scriptName);
+          }
+        })
+        .catch(() => { /* compat check degrades to "no warnings" */ });
+    }
     return () => { cancelled = true; };
-  }, []);
+  }, [selectedProfileId]);
+
+  const entryWarning = (missionName: string): string | null => {
+    if (!profileScript) return null;
+    if (!missions.includes(missionName)) {
+      return missions.length > 0 ? "Mission file not found in missions/" : null;
+    }
+    return missionSupports(missionDetails[missionName], profileScript)
+      ? null
+      : `No ${scriptModeLabel(profileScript)} support — rotation will skip this entry`;
+  };
+
+  const incompatibleCount = entries.filter((e) => entryWarning(e.missionName) !== null).length;
 
   const mark = () => { setDirty(true); setSaved(false); };
 
@@ -273,6 +330,10 @@ function PlaylistDetail({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
+        {hookError && (
+          <p className="text-xs text-destructive">{hookError}</p>
+        )}
+
         {/* Name + mode */}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -334,12 +395,21 @@ function PlaylistDetail({
                   index={i}
                   total={entries.length}
                   missionListId={missionListId}
+                  warning={entryWarning(entry.missionName)}
                   onUpdate={(updates) => updateEntry(i, updates)}
                   onRemove={() => removeEntry(i)}
                   onMove={(dir) => moveEntry(i, dir)}
                 />
               ))}
             </div>
+          )}
+
+          {incompatibleCount > 0 && (
+            <p className="text-[10px] text-red-400 mb-2">
+              {incompatibleCount} entr{incompatibleCount === 1 ? "y is" : "ies are"} incompatible
+              with the selected profile's game type ({scriptModeLabel(profileScript)}) — activation
+              will be rejected until they are removed or the game type changes. Hover ⚠ for details.
+            </p>
           )}
 
           {/* Add entry */}
@@ -487,6 +557,7 @@ export function PlaylistEditor({
   onDeletePlaylist,
   onActivate,
   onDeactivate,
+  selectedProfileId,
 }: PlaylistEditorProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -526,6 +597,8 @@ export function PlaylistEditor({
         onActivate={() => onActivate(selected.id)}
         onDeactivate={onDeactivate}
         onBack={() => setSelectedId(null)}
+        selectedProfileId={selectedProfileId}
+        hookError={error}
       />
     );
   }

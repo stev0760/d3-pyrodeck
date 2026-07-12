@@ -195,12 +195,16 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
     }
   }, [status.activePlaylistId]);
 
-  const activatePlaylist = useCallback(async (id: string): Promise<boolean> => {
+  const activatePlaylist = useCallback(async (id: string, profileId?: string): Promise<boolean> => {
     setError(null);
     try {
       const res = await fetch(`/api/playlists/${encodeURIComponent(id)}/activate`, {
         method: "POST",
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        // profileId lets the server validate mission/game-mode compatibility
+        // against the profile that will actually be rotated.
+        body: JSON.stringify(profileId ? { profileId } : {}),
       });
       const data = await res.json();
       if (!res.ok) {

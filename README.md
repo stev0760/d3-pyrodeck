@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.4.17** — Mission game-mode compatibility scanning. The server parses each `.mn3` in the game's `missions/` directory (HOG2 container → embedded `.msn` metadata) and computes which game modes it supports using a faithful TypeScript port of the engine's own mission filter (`MissionGetKeywords()`, spec Addendum A) — validated 1:1 against the fork's `mn3info.py` prototype across a 111-mission library. The Config tab's mission picker now shows a details panel (display name, level count, mode badges with team capacity like `CTF·4T`) and disables missions incompatible with the selected Game Type, with a warning when the current pairing would fail to start — ending launch-and-pray mission selection. Parsing reads only a few KB per file and results are cached by mtime+size, so full-library scans are milliseconds. Scan data rides on `GET /api/game-files/missions?details=1`; the endpoint is unchanged without the flag. The same scan validates playlists: activating a playlist whose entries don't support the profile's game type is rejected with per-entry reasons, mission rotation re-checks and skips incompatible entries instead of restarting into a server that can't start the game, and the playlist editor flags offending entries inline.
+
 **v0.4.14** — Matcen 0.9.5 command-surface sync, console performance overhaul, and log management. The command reference gains the fork's new `$nav` namespace (toggle table, per-channel on/off, nav dump), replacing the retired flat `$terrainsteer`/`$navdump` buttons; the spec now documents the fork's command stability tiers (§5.1.1) — Pyrodeck parses only Tier 1 output and lists diagnostics as type-able text. Performance: D3 process output is coalesced server-side into ~10 WebSocket messages/sec instead of one per pipe chunk (debug builds emit hundreds of lines/sec — the per-message overhead was making the UI laggy, especially in Firefox), both consoles now use xterm's GPU-accelerated WebGL renderer (DOM-renderer fallback where WebGL is unavailable), and the log viewer fetches only the last 256 KB of a log (`?tail=1`) instead of downloading multi-hundred-MB soak logs to the browser. Logs panel gains per-file delete with confirm (the active log of a running server is protected). Trailing process output is flushed before state-change broadcasts so crash diagnostics render before the "crashed" badge.
 
 **v0.4.13** — Auto-named per-launch logs, in-browser log viewer, tab overflow menu.
@@ -65,12 +67,14 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Timer anchoring: queries `$netgameinfo` once on activation and once per mission rotation (never on a timer — it leaks the engine text buffer and crashes dedicated servers). Mid-mission level changes re-anchor from the cached time limit; the countdown ticks down locally and is visible in the sidebar
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
+- Game-mode validation: activation is rejected (with per-entry reasons) when a playlist entry's mission doesn't support the profile's game type; rotation re-checks each entry and skips incompatible ones instead of restarting into a broken game; the editor flags offending entries with ⚠ inline
 
 ### Config Editor (Launch mode)
 - Server profile system — named configurations pointing at config files in the D3 game directory
 - Tabbed editor sections: Server Config, Ship Settings, Bot Roster, Startup Commands
 - **Structured form UI** (no .cfg editing required): server identity, network settings, rules, ship bans, powerup toggles, bot roster
 - Starting level (SetLevel) exposed in the identity section
+- **Mission mode-compatibility**: mission picker shows per-mission details (name, level count, mode badges with team capacity) parsed from each `.mn3`, disables missions that don't support the selected game type, and warns on incompatible pairings
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)

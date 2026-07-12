@@ -167,7 +167,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     },
     playlists: playlistHook.playlists,
     playlistStatus: playlistHook.status,
-    onActivatePlaylist: playlistHook.activatePlaylist,
+    onActivatePlaylist: (id: string) => playlistHook.activatePlaylist(id, launcher.selectedProfileId || undefined),
     onDeactivatePlaylist: playlistHook.deactivatePlaylist,
   };
 
@@ -396,8 +396,9 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               onCreatePlaylist={playlistHook.createPlaylist}
               onUpdatePlaylist={playlistHook.updatePlaylist}
               onDeletePlaylist={playlistHook.deletePlaylist}
-              onActivate={playlistHook.activatePlaylist}
+              onActivate={(id) => playlistHook.activatePlaylist(id, launcher.selectedProfileId || undefined)}
               onDeactivate={playlistHook.deactivatePlaylist}
+              selectedProfileId={launcher.selectedProfileId || undefined}
             />
           </TabsContent>
 

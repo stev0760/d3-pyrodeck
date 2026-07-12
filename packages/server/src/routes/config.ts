@@ -15,6 +15,7 @@ import {
   type BotRosterData,
 } from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
+import { scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
@@ -533,14 +534,19 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
    * GET /api/game-files/missions
    * List available .mn3 mission files from gamePath/missions/.
    * If `?profileId=xxx` is provided, uses that profile's gamePath override.
+   * With `?details=1`, also returns per-mission metadata and game-mode
+   * compatibility parsed from each .mn3's embedded .msn (spec Addendum A).
    */
   app.get("/api/game-files/missions", async (request, reply) => {
-    const { profileId } = request.query as { profileId?: string };
+    const { profileId, details } = request.query as { profileId?: string; details?: string };
     try {
       const gamePath = await resolveGamePath(profileId);
       const missionsDir = path.join(gamePath, "missions");
       const entries = await fs.readdir(missionsDir);
       const missions = entries.filter((f) => f.toLowerCase().endsWith(".mn3")).sort();
+      if (details === "1") {
+        return { missions, details: await scanMissionsDir(missionsDir) };
+      }
       return { missions };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to list missions";

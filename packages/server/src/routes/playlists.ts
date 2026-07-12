@@ -7,6 +7,39 @@ import type {
   PlaylistMode,
   PlaylistVoting,
 } from "../launcher/PlaylistManager.js";
+import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
+import { ServerProfileManager } from "../config/ServerProfile.js";
+import { pyrodeckConfig } from "./pyrodeck-config.js";
+
+const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
+
+/**
+ * Resolve the profile a playlist would rotate against: an explicit profileId
+ * if given, else the most recently launched (mirrors the rotate handler in
+ * launcher.ts). Returns null when nothing is resolvable — validation is then
+ * skipped rather than blocking activation.
+ */
+async function resolveRotationProfile(
+  profileId?: string,
+): Promise<{ gamePath: string; configFile: string } | null> {
+  const globalGamePath = pyrodeckConfig.get().gamePath;
+  const metadataManager = new ServerProfileManager(CONFIG_DIR, "");
+  try {
+    const profiles = await metadataManager.list();
+    if (profiles.length === 0) return null;
+    const profile =
+      (profileId && profiles.find((p) => p.id === profileId)) ||
+      profiles
+        .filter((p) => p.lastLaunchedAt)
+        .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""))[0] ||
+      profiles[0];
+    const gamePath = profile.gamePath ?? globalGamePath;
+    if (!gamePath) return null;
+    return { gamePath, configFile: profile.configFile };
+  } catch {
+    return null;
+  }
+}
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -135,10 +168,33 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // Activate a playlist
+  // Activate a playlist. Body may carry { profileId } — the profile whose
+  // Scriptname the entries are validated against (falls back to the most
+  // recently launched profile, which is what rotation itself uses).
   app.post("/api/playlists/:id/activate", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const profileId = typeof body.profileId === "string" ? body.profileId : undefined;
     try {
+      const playlist = await playlistManager.read(id);
+      const profile = await resolveRotationProfile(profileId);
+      if (profile) {
+        const { scriptName, incompatible } = await findIncompatibleEntries(
+          profile.gamePath,
+          profile.configFile,
+          playlist.entries,
+        );
+        if (incompatible.length > 0) {
+          const detail = incompatible
+            .map((e) => `${e.label} (${e.missionName}: ${e.reason})`)
+            .join(", ");
+          return reply.status(400).send({
+            error: `Playlist has ${incompatible.length} entr${incompatible.length === 1 ? "y" : "ies"} incompatible with ${scriptName}: ${detail}. Remove them or change the profile's game type.`,
+            incompatible,
+            scriptName,
+          });
+        }
+      }
       await playlistManager.activate(id);
       return { ok: true, status: playlistManager.getStatus() };
     } catch (err) {
