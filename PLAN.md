@@ -323,8 +323,12 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [ ] Best-effort rotation hardening: post-restart health check + auto-pause (see Phase 3 Step 6)
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
-- [ ] Go-public audit: secrets scan of full git history, `.gitignore` coverage check, repo
-      description + topics (see `release-workflow-notes.txt` Part 5)
+- [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no
+      `.env`/config/log files ever committed, no API keys or private keys, no hardcoded password
+      values (only D3's prompt-detection comment matches); `.gitignore` covers runtime config,
+      logs, screenshots, scratch notes; LICENSE (MIT 2026), default branch `main`, repo
+      description + topics set. Note: commit author email (77158740+stev0760@users.noreply.github.com) becomes public
+      with the repo — acceptable, no history rewrite needed.
 - [ ] Flip repo public, push first release tag, verify CI pipeline end-to-end
 - [ ] Smoke-test CI artifacts: Linux tarball on Ubuntu LTS (binary starts, SPA loads, auth works,
       launch mode spawns D3), Windows .exe on a real Windows box
