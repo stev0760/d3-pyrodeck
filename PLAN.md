@@ -80,7 +80,7 @@ This is a living document tracking the implementation roadmap. The spec (`D3_PYR
 - [x] WebSocket auto-reconnect with exponential backoff (1s to 30s max) + connection-lost banner
 - [x] Error toast notifications (bottom-right, auto-dismiss after 5s)
 - [x] PPS default fixed from 12 to 30
-- [ ] Web admin auth (deferred per CLAUDE.md — re-add when core is stable)
+- [x] Web admin auth (v0.4.0–v0.4.2: scrypt password hashing, cookie sessions, rate limiting, first-run setup)
 
 ### Step 13: Console Command Reference Drawer ✅
 - Collapsible, resizable drawer below the terminal with command categories (drag handle to resize, height persisted in localStorage)
@@ -139,9 +139,9 @@ Once connected, Console/Players/Bots all work identically.
 - [x] wireSessionToClients() made idempotent via wiredSessionId tracking
 - [x] $scores parser: handle D3's 19-char name truncation (colon lost on long names) with fallback text/number boundary detection
 
-### Not Yet Done
+### Follow-ups (since completed)
 - [x] Quit button should route through launcher stop for graceful shutdown (currently sends raw `quit`, Pyrodeck sees it as a crash)
-- [ ] Packaging as single executable (evaluate Bun `--compile` vs Node SEA)
+- [x] Packaging as single executable — Node SEA pipeline (`pnpm package:server` → `dist-server/pyrodeck-server`), Windows cross-compile via `--windows`; Tauri app-mode scaffold in `src-tauri/`
 
 ---
 
@@ -271,18 +271,19 @@ Automatic mission rotation triggered by level-end stdout detection.
 - [x] Config tab: mission picker disables incompatible missions, details panel with mode badges, incompatible-pairing warning
 - [x] Playlist validation: activation rejected (400 with per-entry reasons) when entries don't support the profile's Scriptname; rotate handler re-checks and skips incompatible entries instead of restarting into a failed game; PlaylistEditor shows per-entry ⚠ + summary against the selected profile
 
-**Playlist rotation limitations (roadmap — all Pyrodeck-side, no engine patches):**
+**Playlist rotation — best-effort stance (decided 2026-07):**
 
 D3 has no native mission rotation: every playlist transition is a full server stop → config swap →
-relaunch. Inherent consequences and open workarounds:
-- [ ] Players must manually reconnect after every rotation — D3 clients have no server-initiated
-      reconnect. Possible mitigation: longer/louder pre-rotation `say` countdown so players expect
-      the drop, and clear "server restarting — reconnect in ~30s" messaging.
-- [ ] Restart is not 100% reliable (port rebind timing, slow level loads). Mitigations to explore:
-      post-restart health check (telnet reconnect + `$servercaps` within a timeout) with one
-      automatic retry, then a WS alert + playlist auto-pause instead of a silent dead server.
-- [ ] Rotation skip (compat guard) currently just advances past bad entries — consider a
-      "playlist health" line in PlaylistPanel showing skipped entries.
+relaunch. This is inherently lossy — players must manually reconnect (D3 clients have no
+server-initiated reconnect) and restart timing is not 100% reliable (port rebind, slow level
+loads). **Rotation is officially best-effort**: we ship it as a convenience feature with clear
+messaging, not a guaranteed-uptime mechanism. Remaining mitigations, in priority order:
+- [ ] Post-restart health check: telnet reconnect + `$servercaps` within a timeout, one automatic
+      retry, then a WS alert + playlist auto-pause instead of a silent dead server. This is the
+      one item that turns a bad rotation from "dead server nobody notices" into "visible failure."
+- [ ] Pre-rotation `say` countdown with explicit "server restarting — reconnect in ~30s" messaging
+      so the disconnect is expected, not alarming.
+- [ ] "Playlist health" line in PlaylistPanel showing entries skipped by the compat guard.
 - Smooth in-place mission transitions are **out of scope**: they would require engine changes
   (project rule: the D3 server is a black box; unknown client compatibility fallout).
 
@@ -300,37 +301,66 @@ Settings that can't be set in cfg but Pyrodeck can apply after server launch:
 
 ---
 
-## Phase 4 — Docker & Deployment
+## Phase 4 — Production Release (current focus)
 
-**Goal:** One-command VPS deployment with game file management.
+**Goal:** First public release: repo public, tagged release with CI-built binaries, verified on
+target platforms. Rotation ships as best-effort (see Phase 3 Step 6); Windows binaries ship
+unsigned for now.
 
 **Platform note:** Pyrodeck is cross-platform (Node.js). Linux is the primary dev/test
 platform, but Windows is equally important — PiccuEngine servers are Windows-only currently.
 Connect mode works with all D3 builds everywhere (vanilla 1.5, Matcen, PiccuEngine).
 Launch mode works wherever the target D3 build runs. See DEVLOG for engine compatibility details.
 
-- [ ] Docker image (Alpine) with `docker-compose.yml`
-- [ ] Structured volumes: gamedata, config
-- [ ] Static file serving in production (Fastify serves client build)
-- [ ] Web file manager (upload .mn3 missions, manage game files)
-- [ ] Provisioning wizard (scan for required .hog files, validate, guide upload)
-- [ ] Web admin auth (password gate from env var, off by default for localhost)
-- [ ] Packaging as single executable (evaluate Bun `--compile` vs Node SEA)
+### Already done (shipped v0.4.0–v0.4.10)
+- [x] Static file serving in production (Fastify serves client build, `PYRODECK_STATIC_DIR` override)
+- [x] Web admin auth (scrypt hash, cookie sessions, rate limiting, first-run setup, localhost exempt)
+- [x] Packaging as single executable (Node SEA; Windows cross-compile; Tauri scaffold)
+- [x] Network hardening (env-gated `trustProxy`, same-origin CORS, localhost-only first-run setup)
+- [x] Release workflow (`.github/workflows/release.yml` — build-linux, build-windows, release jobs)
+
+### Release checklist
+- [ ] Best-effort rotation hardening: post-restart health check + auto-pause (see Phase 3 Step 6)
+- [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
+      (profile-path fix is code-complete but unverified on Windows)
+- [ ] Go-public audit: secrets scan of full git history, `.gitignore` coverage check, repo
+      description + topics (see `release-workflow-notes.txt` Part 5)
+- [ ] Flip repo public, push first release tag, verify CI pipeline end-to-end
+- [ ] Smoke-test CI artifacts: Linux tarball on Ubuntu LTS (binary starts, SPA loads, auth works,
+      launch mode spawns D3), Windows .exe on a real Windows box
+- [ ] Release notes: include SmartScreen "More info → Run anyway" instructions (binaries are
+      unsigned — signing via SignPath/Azure is out of reach for now, revisit post-release)
+- [ ] Issue template (`.github/ISSUE_TEMPLATE/bug_report.yml`): Pyrodeck version, OS/distro,
+      D3 build, repro steps, logs
 
 ---
 
-## Phase 5 — Polish & Advanced Features
+## Phase 5 — Docker & VPS Deployment
+
+**Goal:** One-command VPS deployment with game file management.
+
+- [ ] Docker image (Alpine) with `docker-compose.yml`
+- [ ] Structured volumes: gamedata, config
+- [ ] Web file manager (upload .mn3 missions, manage game files)
+- [ ] Provisioning wizard (scan for required .hog files, validate, guide upload)
+- [ ] Document systemd service setup for headless servers (draft in `release-workflow-notes.txt` Part 3)
+
+---
+
+## Phase 6 — Polish & Advanced Features
 
 **Goal:** Refined UX and power-user features.
 
+- [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels)
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [ ] IP access control UI (hosts.allow/deny editor + `$rehash`)
 - [ ] Scheduled auto-commands (D3Server3-style: run command every N minutes)
 - [ ] Dark/light theme toggle
-- [ ] Responsive layout for mobile
 - [ ] Multi-server UI (tabs or sidebar, multiple D3 instances)
 - [ ] Player list sorting/filtering
 - [ ] CodeMirror for raw config editor
+- [ ] Windows code signing (SignPath OSS or Azure Trusted Signing) — deferred, needs public repo
+      + application process; until then SmartScreen warning is documented
 
 ---
 
@@ -338,10 +368,11 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 
 | Layer | Choice |
 |-------|--------|
-| Runtime | Node.js 20 (evaluate Bun for packaging later) |
+| Runtime | Node.js 20+ (dev on 24 per `.nvmrc`; packaged via Node SEA) |
 | Backend | Fastify + TypeScript |
-| Frontend | React 19 + Vite 8 + TailwindCSS v4 |
-| Terminal | xterm.js |
-| Config editor | Textarea now, CodeMirror later |
+| Frontend | React 19 + Vite 8 + TailwindCSS v4 + shadcn/ui |
+| Terminal | xterm.js (WebGL renderer, DOM fallback) |
+| Config editor | Structured forms + raw textarea fallback (CodeMirror later) |
 | Package manager | pnpm (monorepo workspaces) |
 | Testing | Vitest |
+| Packaging | Node SEA binary (`scripts/package-server.mjs`), Tauri app-mode scaffold |

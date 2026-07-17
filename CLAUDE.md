@@ -25,7 +25,7 @@ pnpm monorepo:
   - **Engine layer** (bot commands): `$addbot`, `$removebot`, `$botlist`, `$servercaps` — always work from telnet
   - **DMFC layer** (game commands): `$kick`, `$ban`, `$scores`, `$endlevel` — go through game DLL
 - `$kick`/`$ban` don't work on bots via DMFC (`CheckPlayerNum` rejects synthetic players). Use `$removebot` for bots.
-- Web admin auth is currently disabled — D3 console password is sufficient for dev
+- Web admin auth exists (scrypt hash + cookie session) but is skipped automatically on localhost when no password is set — dev workflow needs no login
 
 ## UI Testing Pipeline
 
@@ -52,7 +52,7 @@ MCP tools load at session start — tools are available as `mcp__playwright__bro
 ## Guidelines
 
 - Start simple, prove it works, add complexity later
-- Don't add app-level auth or extra abstraction until core functionality is solid
+- Don't add extra abstraction until core functionality is solid
 - Output D3 server logs to project root for easy analysis (gitignored via `*.log`)
 - Test with empty server + add bots from web panel, not chaotic preset rosters
 - The spec (`D3_PYRODECK_SPEC.md`) defines what to build; `PLAN.md` tracks progress; `DEVLOG.md` (gitignored) is the working journal

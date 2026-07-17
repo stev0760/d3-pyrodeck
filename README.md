@@ -215,6 +215,7 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 
 ## Known Limitations
 
+- Playlist rotation is **best-effort**: D3 has no native mission rotation, so every transition is a full server stop → config swap → relaunch. Players must manually reconnect after each rotation (D3 clients cannot be told to reconnect), and the restart can occasionally fail. Treat rotation as a convenience feature, not a guaranteed-uptime mechanism
 - Single server connection only (multi-server support planned)
 - Bot team assignment in the add-bot form is not yet implemented (team assignment is available in the Bot Roster config editor for pre-launch setup)
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
