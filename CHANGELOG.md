@@ -2,6 +2,16 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.4.18] - 2026-07-18
+
+### Fixed
+- **Server profiles could not be edited or deleted while a server was running** — the profile selector and Edit button were hidden for the entire active session, and Delete only lived under Edit, so a running server made profile management unreachable. The selector and Edit now stay available; the live profile is marked `● running` in the picker and its own destructive actions are guarded (stop it first), while other profiles can be edited/deleted freely. The launcher now tracks which profile is live (`activeProfileId` in process status) to make this precise.
+- Delete affordances made consistent and discoverable across the app: profile Delete is now a visible button instead of a buried link; saved-server delete gained an always-visible control (was hover-only, invisible on touch) plus an inline confirm; and Bots "Remove All" now confirms before firing. All four flows share one inline-confirm pattern.
+
+### Security
+- **Auth now fails closed for remote peers when no admin password is set.** Previously an instance bound to a non-localhost address with no password left the entire API/WebSocket open to the network (startup only warned). Localhost stays open for the zero-config dev workflow, but non-loopback peers are refused until a password is configured.
+- Auth route matching is now boundary-aware, so a route like `/api/healthz` can no longer inherit `/api/health`'s auth bypass by prefix.
+
 ## [0.4.17] - 2026-07-12
 
 ### Added

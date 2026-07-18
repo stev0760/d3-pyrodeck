@@ -335,6 +335,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
           logPath,
           telnetPort: telnetCfg.port,
           telnetPassword: telnetCfg.password,
+          profileId: activeProfile.id,
         });
 
         wsBroadcast("playlist_rotate", {
@@ -572,6 +573,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         logPath,
         telnetPort,
         telnetPassword,
+        profileId: body.profileId,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

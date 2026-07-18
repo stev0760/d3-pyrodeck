@@ -17,6 +17,8 @@ export interface ProcessStatus {
   exitSignal: string | null;
   startedAt: string | null;
   stoppedAt: string | null;
+  /** Profile whose launch produced the current/last process, if any. */
+  activeProfileId: string | null;
 }
 
 export interface ServerProfile {

@@ -18,6 +18,8 @@ export function SavedServers({ onSelect }: SavedServersProps) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("2092");
+  // Id of the row awaiting delete confirmation (inline, matching PlaylistEditor).
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const fetchServers = useCallback(async () => {
     try {
@@ -51,6 +53,7 @@ export function SavedServers({ onSelect }: SavedServersProps) {
       method: "DELETE",
       credentials: "include",
     });
+    setConfirmId(null);
     fetchServers();
   };
 
@@ -117,29 +120,58 @@ export function SavedServers({ onSelect }: SavedServersProps) {
       )}
 
       <div className="space-y-1">
-        {servers.map((s) => (
-          <div
-            key={s.id}
-            className="flex items-center gap-2 p-1.5 bg-muted rounded-md hover:bg-accent group cursor-pointer transition-colors"
-            onClick={() => onSelect(s.host, s.port)}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-foreground truncate">{s.name}</div>
-              <div className="text-xs text-muted-foreground font-mono truncate">
-                {s.host}:{s.port}
-              </div>
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(s.id);
-              }}
-              className="text-muted-foreground hover:text-destructive text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+        {servers.map((s) =>
+          confirmId === s.id ? (
+            <div
+              key={s.id}
+              className="flex items-center gap-2 p-1.5 bg-muted rounded-md"
             >
-              x
-            </button>
-          </div>
-        ))}
+              <span className="flex-1 min-w-0 text-xs text-destructive truncate">
+                Remove <span className="font-medium">{s.name}</span>?
+              </span>
+              <Button
+                variant="destructive"
+                size="xs"
+                onClick={() => handleDelete(s.id)}
+                className="shrink-0"
+              >
+                Delete
+              </Button>
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => setConfirmId(null)}
+                className="shrink-0"
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div
+              key={s.id}
+              className="flex items-center gap-2 p-1.5 bg-muted rounded-md hover:bg-accent cursor-pointer transition-colors"
+              onClick={() => onSelect(s.host, s.port)}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-foreground truncate">{s.name}</div>
+                <div className="text-xs text-muted-foreground font-mono truncate">
+                  {s.host}:{s.port}
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label={`Remove ${s.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmId(s.id);
+                }}
+                className="shrink-0 px-1 text-muted-foreground hover:text-destructive text-sm transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );

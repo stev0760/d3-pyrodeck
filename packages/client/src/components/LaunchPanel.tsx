@@ -118,8 +118,20 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   const state = processStatus?.state ?? "stopped";
   const isActive = state === "running" || state === "starting" || state === "stopping";
 
+  // The profile whose launch produced the running process. Null when nothing is
+  // active, or when the live profile is unknown (e.g. a process started before
+  // this was tracked) — in that case we fall back to the old whole-panel lock.
+  const liveProfileId = isActive ? processStatus?.activeProfileId ?? null : null;
+  const selectedIsLive =
+    isActive && (liveProfileId === null || liveProfileId === selectedProfileId);
+  const otherServerRunning =
+    isActive && liveProfileId !== null && liveProfileId !== selectedProfileId;
+
   const selectedProfile: ServerProfile | undefined = profiles.find(
     (p: ServerProfile) => p.id === selectedProfileId,
+  );
+  const liveProfile: ServerProfile | undefined = profiles.find(
+    (p: ServerProfile) => p.id === liveProfileId,
   );
 
   // Effective paths: profile-specific fields, fall back to global config for old profiles
@@ -270,14 +282,22 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
         </div>
 
         {!isCreate && (
-          <Button
-            variant="link"
-            size="xs"
-            onClick={() => setMode("confirming-delete")}
-            className="w-full px-0 text-destructive/60 hover:text-destructive"
-          >
-            Delete this profile
-          </Button>
+          selectedIsLive ? (
+            <p className="text-[11px] text-muted-foreground border-t border-border pt-2">
+              This profile's server is running. Stop it to delete the profile.
+            </p>
+          ) : (
+            <div className="border-t border-border pt-2">
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setMode("confirming-delete")}
+                className="w-full font-score tracking-wide text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+              >
+                Delete Profile
+              </Button>
+            </div>
+          )
         )}
       </div>
     );
@@ -301,31 +321,28 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
         </div>
       ) : (
         <div className="space-y-2">
-          {/* Profile selector */}
-          {!isActive && (
-            <div className="flex gap-1">
-              <select
-                value={selectedProfileId}
-                onChange={(e) => setSelectedProfileId(e.target.value)}
-                className="flex-1 bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                {profiles.map((p: ServerProfile) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              {selectedProfile && (
-                <Button variant="outline" size="xs" onClick={startEditing} className="shrink-0 px-2 font-score tracking-wide">
-                  Edit
-                </Button>
-              )}
-            </div>
-          )}
-
-          {isActive && selectedProfile && (
-            <p className="text-xs text-foreground/70 font-medium">{selectedProfile.name}</p>
-          )}
+          {/* Profile selector — stays available while a server runs so profiles
+              can still be edited/deleted; the live profile is marked and its own
+              destructive actions are guarded. */}
+          <div className="flex gap-1">
+            <select
+              value={selectedProfileId}
+              onChange={(e) => setSelectedProfileId(e.target.value)}
+              className="flex-1 bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {profiles.map((p: ServerProfile) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {liveProfileId === p.id ? " ● running" : ""}
+                </option>
+              ))}
+            </select>
+            {selectedProfile && (
+              <Button variant="outline" size="xs" onClick={startEditing} className="shrink-0 px-2 font-score tracking-wide">
+                Edit
+              </Button>
+            )}
+          </div>
 
           {/* Selected profile paths */}
           {selectedProfile && (
@@ -373,8 +390,9 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             )}
           </div>
 
-          {/* Launch / Stop */}
-          {isActive ? (
+          {/* Launch / Stop — Stop targets the live profile; a different selection
+              shows Launch (disabled while another profile's server holds the port). */}
+          {selectedIsLive ? (
             <Button
               variant="destructive"
               onClick={stop}
@@ -386,23 +404,28 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           ) : (
             <Button
               onClick={handleLaunch}
-              disabled={!selectedProfileId || !profileHasPaths || launching}
+              disabled={!selectedProfileId || !profileHasPaths || launching || otherServerRunning}
               className="w-full font-score tracking-wide"
             >
               {launching ? "Starting..." : "Launch Server"}
             </Button>
           )}
 
-          {!isActive && (
-            <Button
-              variant="link"
-              size="xs"
-              onClick={startCreating}
-              className="w-full px-0 text-muted-foreground"
-            >
-              + New Profile
-            </Button>
+          {otherServerRunning && (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground/70">{liveProfile?.name ?? "Another profile"}</span> is
+              running. Stop it before launching this one.
+            </p>
           )}
+
+          <Button
+            variant="link"
+            size="xs"
+            onClick={startCreating}
+            className="w-full px-0 text-muted-foreground"
+          >
+            + New Profile
+          </Button>
         </div>
       )}
 

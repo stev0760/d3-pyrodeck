@@ -17,6 +17,8 @@ export interface ProcessStatus {
   exitSignal: string | null;
   startedAt: Date | null;
   stoppedAt: Date | null;
+  /** Profile whose launch produced the current/last process, if launched from a profile. */
+  activeProfileId: string | null;
 }
 
 export interface LaunchConfig {
@@ -28,6 +30,8 @@ export interface LaunchConfig {
   configFile: string;
   /** Extra CLI flags (e.g., -autoexec). */
   additionalArgs?: string[];
+  /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
+  profileId?: string;
   /** Optional path to write server log file. If set, stdout/stderr are written here. */
   logPath?: string;
   telnetPort: number;
@@ -77,6 +81,7 @@ export class ProcessManager extends EventEmitter {
     exitSignal: null,
     startedAt: null,
     stoppedAt: null,
+    activeProfileId: null,
   };
   private telnetProbeTimer: ReturnType<typeof setInterval> | null = null;
   private telnetReady = false;
@@ -142,6 +147,7 @@ export class ProcessManager extends EventEmitter {
     this.status.exitCode = null;
     this.status.exitSignal = null;
     this.status.stoppedAt = null;
+    this.status.activeProfileId = config.profileId ?? null;
 
     // Open log file if configured
     this.logPath = config.logPath ?? null;

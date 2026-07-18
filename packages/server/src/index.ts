@@ -70,8 +70,10 @@ async function main() {
     console.warn(
       "[Pyrodeck] WARNING: No admin password configured but server is binding to " +
         HOST +
-        ". Set PYRODECK_ADMIN_PASSWORD before exposing this server. Web-based setup " +
-        "is blocked from non-local clients unless PYRODECK_ALLOW_REMOTE_SETUP=1.",
+        ". Remote clients are refused until a password is set (requireAuth fails " +
+        "closed for non-loopback peers). Set PYRODECK_ADMIN_PASSWORD to enable " +
+        "remote access; web-based setup stays blocked from non-local clients " +
+        "unless PYRODECK_ALLOW_REMOTE_SETUP=1.",
     );
   }
 

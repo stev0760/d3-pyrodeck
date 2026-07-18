@@ -55,6 +55,7 @@ export function BotPanel({
   const [newName, setNewName] = useState("");
   const [newShip, setNewShip] = useState("pyro");
   const [newDifficulty, setNewDifficulty] = useState("hotshot");
+  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
 
   const refresh = useCallback(() => {
     sendCommand("$botlist");
@@ -188,17 +189,40 @@ export function BotPanel({
             Refresh
           </Button>
           {bots.length > 0 && (
-            <Button
-              variant="destructive"
-              size="xs"
-              onClick={() => {
-                sendCommand("$removebots");
-                setTimeout(refresh, 500);
-              }}
-              className="font-score tracking-wide"
-            >
-              Remove All
-            </Button>
+            confirmRemoveAll ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-destructive">Remove all bots?</span>
+                <Button
+                  variant="destructive"
+                  size="xs"
+                  onClick={() => {
+                    sendCommand("$removebots");
+                    setConfirmRemoveAll(false);
+                    setTimeout(refresh, 500);
+                  }}
+                  className="font-score tracking-wide"
+                >
+                  Remove All
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => setConfirmRemoveAll(false)}
+                  className="font-score tracking-wide"
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="destructive"
+                size="xs"
+                onClick={() => setConfirmRemoveAll(true)}
+                className="font-score tracking-wide"
+              >
+                Remove All
+              </Button>
+            )
           )}
         </div>
       </div>
