@@ -3,11 +3,11 @@ import { TelnetConnection } from "../connection/TelnetConnection.js";
 import { ResponseParser } from "../parser/ResponseParser.js";
 import {
   parseServercaps,
-  VANILLA_CAPS,
   type ServerCapabilities,
 } from "../parser/parsers/servercaps.js";
 import { SessionManager } from "../session/SessionManager.js";
-import { wireSessionToClients } from "./command.js";
+import { probeCapabilities } from "../session/probeCapabilities.js";
+import { wsBroadcast, wireSessionToClients } from "./command.js";
 
 export const sessionManager = new SessionManager();
 export const responseParser = new ResponseParser();
@@ -68,15 +68,11 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
 
       // Probe for capabilities
       sessionManager.updateState(session.id, "probing");
-      let capabilities: ServerCapabilities;
-      try {
-        const capsResponse = await connection.send("$servercaps");
-        const parsed = parseServercaps(capsResponse);
-        capabilities = parsed ?? { ...VANILLA_CAPS, features: new Set() };
-      } catch {
-        // Probe failure is non-fatal — treat as vanilla
-        capabilities = { ...VANILLA_CAPS, features: new Set() };
-      }
+      const capabilities = await probeCapabilities(connection, (late) => {
+        if (sessionManager.getActive()?.id !== session.id) return;
+        sessionManager.updateCapabilities(session.id, late);
+        wsBroadcast("capabilities", serializeCaps(late));
+      });
 
       sessionManager.updateCapabilities(session.id, capabilities);
       sessionManager.updateState(session.id, "ready");

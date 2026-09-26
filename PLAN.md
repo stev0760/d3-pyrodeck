@@ -327,12 +327,16 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       `.env`/config/log files ever committed, no API keys or private keys, no hardcoded password
       values (only D3's prompt-detection comment matches); `.gitignore` covers runtime config,
       logs, screenshots, scratch notes; LICENSE (MIT 2026), default branch `main`, repo
-      description + topics set. Note: commit author email (77158740+stev0760@users.noreply.github.com) becomes public
-      with the repo — acceptable, no history rewrite needed.
+      description + topics set.
+- [x] Release-readiness pass (2026-09-26, v0.4.19): release workflow fixed (had failed on every
+      run: unpinned pnpm), Linux SEA binary fixed (was a silent no-op), dependency audit 72 → 0,
+      Matcen 0.9.15 spec sync. Commit identity moved to the GitHub noreply address.
+- [ ] Rewrite history to the noreply author email before going public (all commits + v0.4.18 tag)
 - [ ] Flip repo public, push first release tag, verify CI pipeline end-to-end
+      (dry run first: Actions → Release → Run workflow)
 - [ ] Smoke-test CI artifacts: Linux tarball on Ubuntu LTS (binary starts, SPA loads, auth works,
       launch mode spawns D3), Windows .exe on a real Windows box
-- [ ] Release notes: include SmartScreen "More info → Run anyway" instructions (binaries are
+- [x] Release notes: include SmartScreen "More info → Run anyway" instructions (binaries are
       unsigned — signing via SignPath/Azure is out of reach for now, revisit post-release)
 - [ ] Issue template (`.github/ISSUE_TEMPLATE/bug_report.yml`): Pyrodeck version, OS/distro,
       D3 build, repro steps, logs

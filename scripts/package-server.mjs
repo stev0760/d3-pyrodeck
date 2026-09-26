@@ -15,13 +15,15 @@
  *   pnpm install already run
  *   esbuild in server devDependencies (already added)
  *   postject available via npx
- *   For --windows cross-compile: curl and unzip must be on PATH
+ *   Network access to nodejs.org (official node binary is downloaded + verified)
+ *   For --windows cross-compile: unzip must be on PATH; Linux: tar with xz
  */
 
 import { execSync, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import https from "node:https";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +70,7 @@ const bundleOut = path.join(OUT, "server.cjs");
 // esbuild is in server's node_modules — use its binary directly
 const esbuildBin = path.join(SERVER_PKG, "node_modules", ".bin", "esbuild");
 run(
-  `"${esbuildBin}" "${entryPoint}" --bundle --platform=node --format=cjs --target=node20 --outfile="${bundleOut}"`,
+  `"${esbuildBin}" "${entryPoint}" --bundle --platform=node --format=cjs --target=node24 --outfile="${bundleOut}"`,
   ROOT,
 );
 
@@ -97,59 +99,78 @@ const blobPath = path.join(OUT, "sea-prep.blob");
 const postjectSentinel =
   "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 
-if (targetWindows && !hostWin) {
-  // ── Cross-compile: download Windows node binary ────────────────────────
-  console.log(`  Downloading node v${nodeVer} for Windows x64...`);
-  const zipUrl = `https://nodejs.org/dist/v${nodeVer}/node-v${nodeVer}-win-x64.zip`;
-  const zipPath = path.join(OUT, "node-win.zip");
-
-  await new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(zipPath);
-    https.get(zipUrl, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        https.get(res.headers.location, (r) => r.pipe(file));
-      } else {
-        res.pipe(file);
+// Distro-packaged node binaries (e.g. Arch's /usr/bin/node) segfault when
+// injected, so Linux and Windows targets always use the official nodejs.org
+// build of the running node version, verified against SHASUMS256.txt.
+function download(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        res.resume();
+        return download(res.headers.location).then(resolve, reject);
       }
-      file.on("finish", () => { file.close(); resolve(); });
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`GET ${url} → HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
     }).on("error", reject);
   });
+}
 
-  console.log("  Extracting node.exe from zip...");
-  // Extract just node.exe from the zip (works on Linux with system unzip)
+async function fetchOfficialNode(windows) {
+  const base = `https://nodejs.org/dist/v${nodeVer}/`;
+  const dirName = `node-v${nodeVer}-${windows ? "win-x64" : "linux-x64"}`;
+  const archive = `${dirName}${windows ? ".zip" : ".tar.xz"}`;
+
+  console.log(`  Downloading ${archive}...`);
+  const sums = (await download(base + "SHASUMS256.txt")).toString("utf-8");
+  const expected = sums
+    .split("\n")
+    .find((line) => line.endsWith(`  ${archive}`))
+    ?.split(/\s+/)[0];
+  const data = await download(base + archive);
+  const actual = crypto.createHash("sha256").update(data).digest("hex");
+  if (!expected || actual !== expected) {
+    throw new Error(`Checksum mismatch for ${archive} (expected ${expected}, got ${actual})`);
+  }
+  console.log("  SHA-256 verified against SHASUMS256.txt");
+
+  const archivePath = path.join(OUT, archive);
+  fs.writeFileSync(archivePath, data);
+  if (windows && hostWin) {
+    // Windows' built-in tar (bsdtar) reads zip archives
+    run(`tar -xf "${archivePath}" -C "${OUT}" "${dirName}/node.exe"`);
+    fs.renameSync(path.join(OUT, dirName, "node.exe"), outBin);
+    fs.rmSync(path.join(OUT, dirName), { recursive: true, force: true });
+  } else if (windows) {
+    run(`unzip -j "${archivePath}" "${dirName}/node.exe" -d "${OUT}"`);
+    fs.renameSync(path.join(OUT, "node.exe"), outBin);
+  } else {
+    run(`tar -xJf "${archivePath}" -C "${OUT}" --strip-components=2 "${dirName}/bin/node"`);
+    fs.renameSync(path.join(OUT, "node"), outBin);
+    fs.chmodSync(outBin, 0o755);
+  }
+  fs.rmSync(archivePath, { force: true });
+}
+
+if (hostMac && !forceLinux && !forceWindows) {
+  // ── Native macOS: use current node binary, re-sign after injection ─────
+  fs.copyFileSync(process.execPath, outBin);
+  fs.chmodSync(outBin, 0o755);
+  run(`codesign --remove-signature "${outBin}"`);
   run(
-    `unzip -j "${zipPath}" "node-v${nodeVer}-win-x64/node.exe" -d "${OUT}"`,
+    `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel} --macho-segment-name NODE_SEA`,
   );
-  fs.renameSync(path.join(OUT, "node.exe"), outBin);
-  fs.rmSync(zipPath, { force: true });
-
-  console.log("  Injecting SEA blob into Windows binary...");
+  run(`codesign --sign - "${outBin}"`);
+} else {
+  await fetchOfficialNode(targetWindows);
+  console.log("  Injecting SEA blob...");
   run(
     `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel}`,
   );
-} else {
-  // ── Native: use current platform's node binary ─────────────────────────
-  fs.copyFileSync(process.execPath, outBin);
-  if (!hostWin) fs.chmodSync(outBin, 0o755);
-
-  if (hostMac) {
-    run(`codesign --remove-signature "${outBin}"`);
-    run(
-      `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel} --macho-segment-name NODE_SEA`,
-    );
-    run(`codesign --sign - "${outBin}"`);
-  } else if (hostWin) {
-    // Windows: postject handles PE format injection
-    run(
-      `npx postject "${outBin}" NODE_SEA_BLOB "${blobPath}" --sentinel-fuse ${postjectSentinel}`,
-    );
-  } else {
-    // Linux: objcopy is more reliable than postject for ELF injection
-    run(
-      `objcopy --add-section NODE_SEA_BLOB="${blobPath}" ` +
-        `--set-section-flags NODE_SEA_BLOB=noload,readonly "${outBin}"`,
-    );
-  }
 }
 
 // ── Done ──────────────────────────────────────────────────────────────────

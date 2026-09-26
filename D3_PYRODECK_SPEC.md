@@ -104,6 +104,18 @@ The Telnet implementation uses a **command queue with timeout-based response col
 
 `$servercaps` is an exception — it is single-line and collected on the first `\n` after the command echo.
 
+**Timing (Matcen spec, 2026-09-20).** The server prints the echo and the reply in the same call, so nothing can interleave between
+them; what CAN happen is a late reply. The console is serviced once per server frame, and builds before Matcen 0.9.15
+could stop running frames for seconds at a level start (9.5 s observed on Tower of Isengard, 100 s on HAVOC's DownTown)
+while navigation data was built — a probe sent in that window timed out and the version was never read. 0.9.15 removes
+the stalls, but the client should still not treat one timeout as "vanilla server": retry the probe a few times over
+~30 s before disabling fork features, and accept a `SERVERCAPS` line whenever it arrives.
+
+*Pyrodeck implementation (0.4.19, `session/probeCapabilities.ts`):* the first probe decides the connect result. A
+non-empty reply without `SERVERCAPS` is a vanilla answer (no retries). An empty reply starts up to 5 background
+re-probes (~30 s with the 5 s first-chunk wait); if fork caps arrive, the session is upgraded and a `capabilities`
+WS message re-enables fork features without reconnecting.
+
 ### 3.4 Response Parsing
 
 All console output parsing is handled by a `ResponseParser` module, separate from transport and UI logic. Parsers are registered per command and convert raw text into structured objects.
@@ -205,15 +217,16 @@ exists. Adding or removing a diagnostic command is invisible churn; a real capab
 |------|----------|---------------|
 | **1 — Stable contract** | `$servercaps` (anchor), `$botlist`, `$addbot` / `$removebot` / `$removebots` / `$botdifficulty` (fire-and-forget verbs), `$botmode`, plus the vanilla `$scores` / player / team / settings commands in §5.3 | parse output, build UI, feature-gate |
 | **2 — Semi-stable** | `$botstat` *status* line (line 1 only), `$botobj` | expose as console/help text; avoid hard output parsers |
-| **3 — Volatile diagnostics (mid-flight)** | `$botstat` **nav: line** (`route:goal=… dijkstra=… boa=… gcost=…`), the `$nav` namespace (0.9.5: bare `$nav` = toggle table, `$nav <name> on|off`, `$nav dump [file]` = the nav-geometry JSON; flat pre-0.9.5 names `$navdump`/`$gridnav`/`$terrainsteer`/… remain hidden aliases), `$botmov` | reference as text only — **zero** output binding |
+| **3 — Volatile diagnostics (mid-flight)** | `$botstat` **nav: line** (`route:goal=… dijkstra=… boa=… gcost=… intent:room=… owner=… held=…`), the `$nav` namespace (bare `$nav` = toggle table, `$nav <name> on|off`, `$nav dump [file]` = nav-geometry JSON; flat aliases may be added or retired), `$botmov` | reference as text only — **zero** output binding |
 
 **Tier 3 detail.** These commands exist to support active bot-AI/navigation debugging and change shape without
 notice. Do not write parsers against them; mark any `CommandReference` entries for them as "format unstable — do
 not parse." Skip the `$botstat` nav: line when parsing the status block (the status line is Tier 2).
 
-**Removed commands — never reference.** Deleted in the Phase 10 nav consolidation and confirmed absent in 0.9.1+:
-`$navrouting`, `$flowfield`, `$potentialfield`, `$botpathfind`, `$botdispersal`. If an older Pyrodeck build
-references any of these, strip them.
+**Removed commands — never reference.** `$navrouting`, `$flowfield`, `$potentialfield`, `$botpathfind`,
+and `$botdispersal` were deleted in the earlier nav consolidation. The 0.9.11 retirement audit also
+removed `$nav gridall`, `$nav outroute`, `$nav replan` and flat aliases `$gridall`, `$outdoorroute`,
+`$stallreplan`. If an older Pyrodeck build references any of these, strip them.
 
 ### 5.2 Bot Management Commands
 
@@ -264,7 +277,7 @@ Nav-line (Phase 11 router diagnostic): `dest_room=`, `num_paths=`/`path=`, `mdir
 > **Tier:** status line = Tier 2 (semi-stable, OK to surface as text); nav: line = **Tier 3 (volatile, mid-flight — do not parse)**. See §5.1.1. When parsing the status block, consume the status line and skip the nav: line.
 
 **`$nav` — navigation toggle/diagnostic namespace (0.9.5)**
-Single entry point for the nav diagnostic surface. Bare `$nav` prints the live toggle table; `$nav <name> on|off` flips one toggle; `$nav dump [file]` writes the nav-geometry JSON (default `navdump.json`, server working directory). Toggle names (0.9.5): `grid`, `bridge`, `route`, `terrain`, `bnodes`, `outdoorvia`, `outdoorgraph`, `softhop` — some are tagged `[legacy 0.9.3]` in the table and will be deleted with the fallback substrate. Flipping `bridge` invalidates cached roadmaps (build-time parameter). The pre-0.9.5 flat names (`$navdump`, `$gridnav`/`$navgrid`, `$gridbridge`, `$gridroute`, `$terrainsteer`, `$pseudobnodes`, `$outdoorvia`, `$outdoorgraph`, `$navbridge`) remain as **hidden aliases** — they work but are gone from `$bothelp`.
+Single entry point for the nav diagnostic surface. Bare `$nav` prints the live toggle table; `$nav <name> on|off` flips one toggle; `$nav dump [file]` writes the nav-geometry JSON (default `navdump.json`, server working directory). Toggle names churn every build (0.9.5 had 8; the 0.9.15+ table has ~26, e.g. `grid`, `bridge`, `grate`, `terrain`, `troute`, `mball`, `outdoorvia`; `route`, `bnodes` and `softhop` are gone) — Pyrodeck's Command Reference therefore takes the toggle name as free text and relies on bare `$nav` for the live list. Some sub-commands take values rather than on/off (e.g. `$nav mtenure <seconds>`, `$nav contend [index|all]`). Flipping `bridge` invalidates cached roadmaps (build-time parameter). Flat pre-0.9.5 names may remain as **hidden aliases** but can be retired without notice.
 > **Tier 3 (volatile, mid-flight).** The toggle set and JSON schema churn with nav development — list in the command reference but build zero output binding. See §5.1.1.
 
 **`$botmov on|off`**
@@ -295,7 +308,8 @@ Phantom [BOT]:       0      0 8 0 0
 *Reaper [BOT]:       0      0 0 0 ---
 ```
 - `*` prefix = observer/disconnected slot — exclude from active count
-- Bot players identified by `[BOT]` suffix in name
+- Bot players identified by `[BOT]` suffix in name — match on `[BOT]` alone: Matcen 0.9.16 emits it with **no** leading space (`Viper[BOT]`, verified live 2026-09-26) although examples here and in the fork docs still show `Viper [BOT]`
+- Hyper Anarchy formats score columns as `total[level]` (e.g. `1[1]`); parse the leading integer
 - Ping `---` = no network connection (bots always show this)
 - First line is the header; skip for data parsing
 - Column layout varies by game type (anarchy shown above). Team anarchy, CTF, etc. have different columns. Parser should handle variable column counts gracefully.

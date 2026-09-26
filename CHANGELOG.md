@@ -2,6 +2,21 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.4.19] - 2026-09-26
+
+### Fixed
+- **Linux release binary never started the server.** The SEA packager injected the blob with `objcopy` but never flipped Node's SEA fuse, so the "binary" was a renamed `node` that exited silently; flipping the fuse alone then segfaulted, because an `objcopy` section isn't mapped the way Node reads the blob, and distro-packaged node binaries can't be injected at all. Packaging now downloads the official nodejs.org binary for the running Node version, verifies it against `SHASUMS256.txt` (the Windows download was previously unverified), and injects with a pinned `postject`. Both Linux and Windows (under Wine) artifacts verified to serve the API + SPA.
+- **Release workflow failed on every run** ("No pnpm version is specified"). pnpm is now pinned via `packageManager`, CI builds on Node 24 from `.nvmrc` (Node 20 is EOL), actions moved to current majors, tests run before packaging, and a manual `workflow_dispatch` dry run builds artifacts without publishing.
+- Release no longer depends on the SignPath signing job (signing is deferred), and the release notes no longer claim the Windows binary is signed.
+
+### Changed
+- **`$servercaps` probe survives slow level starts** (Matcen spec §3.3, 2026-09-20): a silent first probe no longer permanently means "vanilla". Pyrodeck re-probes in the background for ~30s and, if fork capabilities arrive, upgrades the session and re-enables fork features live, with no reconnect. Vanilla servers (which answer immediately) are unaffected.
+- Command Reference `$nav` "Nav Set" takes the toggle name as free text; the fork's toggle table churns every build (Tier 3) and the old dropdown listed retired channels (`route`, `bnodes`, `softhop`).
+- Spec synced to Matcen 0.9.15+ (probe timing, 0.9.11 removed-command list, `$nav` toggle churn).
+
+### Security
+- Dependency refresh: `fastify` 5.12, `@fastify/static` 10 (path-traversal/route-guard-bypass fixes), `@fastify/websocket` 11.3 (`ws` DoS fixes), plus minor bumps across client and server. `pnpm audit` goes from 72 advisories to 0. `shadcn` (a code-gen CLI) moved to devDependencies.
+
 ## [0.4.18] - 2026-07-18
 
 ### Fixed

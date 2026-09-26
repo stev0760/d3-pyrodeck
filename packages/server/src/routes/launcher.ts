@@ -9,11 +9,7 @@ import {
   extractTelnetConfig,
 } from "../launcher/ConfigGenerator.js";
 import { TelnetConnection } from "../connection/TelnetConnection.js";
-import {
-  parseServercaps,
-  VANILLA_CAPS,
-  type ServerCapabilities,
-} from "../parser/parsers/servercaps.js";
+import { probeCapabilities } from "../session/probeCapabilities.js";
 import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 import { sessionManager, serializeCaps } from "./server.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
@@ -139,14 +135,11 @@ function registerAutoConnect(telnetPassword: string): void {
 
       // Probe capabilities
       sessionManager.updateState(session.id, "probing");
-      let capabilities: ServerCapabilities;
-      try {
-        const capsResponse = await connection.send("$servercaps");
-        const parsed = parseServercaps(capsResponse);
-        capabilities = parsed ?? { ...VANILLA_CAPS, features: new Set() };
-      } catch {
-        capabilities = { ...VANILLA_CAPS, features: new Set() };
-      }
+      const capabilities = await probeCapabilities(connection, (late) => {
+        if (sessionManager.getActive()?.id !== session.id) return;
+        sessionManager.updateCapabilities(session.id, late);
+        wsBroadcast("capabilities", serializeCaps(late));
+      });
 
       sessionManager.updateCapabilities(session.id, capabilities);
       sessionManager.updateState(session.id, "ready");

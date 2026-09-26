@@ -3,90 +3,66 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual dry run: builds + uploads artifacts, skips the GitHub Release.
+  workflow_dispatch:
 
 jobs:
   # ── Linux binary ──────────────────────────────────────────────────────
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
       - run: node scripts/package-server.mjs --linux
       - name: Package Linux release
         run: |
           cd dist-server
           tar -czf ../pyrodeck-${{ github.ref_name }}-linux-x64.tar.gz \
             pyrodeck-server resources/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-release
           path: pyrodeck-${{ github.ref_name }}-linux-x64.tar.gz
 
-  # ── Windows binary (cross-compiled from Linux) ────────────────────────
+  # ── Windows binary (cross-compiled from Linux, unsigned) ──────────────
+  # Code signing (SignPath/Azure) is deferred — see PLAN.md Phase 6.
   build-windows:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: node scripts/package-server.mjs --windows
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-unsigned
-          path: |
-            dist-server/pyrodeck-server.exe
-            dist-server/resources/
-
-  # ── Sign Windows binary via SignPath (OSS free tier) ──────────────────
-  # Remove or skip this job until SignPath OSS approval is confirmed.
-  # Replace build-windows with windows-unsigned in the release job below.
-  sign-windows:
-    needs: build-windows
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-unsigned
-          path: unsigned/
-      - uses: signpath/github-action-submit-signing-request@v1
-        with:
-          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '${{ secrets.SIGNPATH_ORG_ID }}'
-          project-slug: pyrodeck
-          signing-policy-slug: release-signing
-          github-artifact-id: windows-unsigned
-          output-artifact-directory: signed/
-      - name: Package signed Windows release
+      - name: Package Windows release
         run: |
-          cp -r unsigned/resources signed/
-          cd signed
+          cd dist-server
           zip -r ../pyrodeck-${{ github.ref_name }}-windows-x64.zip \
             pyrodeck-server.exe resources/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-release
           path: pyrodeck-${{ github.ref_name }}-windows-x64.zip
 
   # ── Create GitHub Release ─────────────────────────────────────────────
   release:
-    needs: [build-linux, sign-windows]
-    # Swap the line above for the line below while SignPath isn't set up:
-    # needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v8
+      - uses: softprops/action-gh-release@v3
         with:
           draft: false
           generate_release_notes: true
@@ -96,12 +72,10 @@ jobs:
             **Linux x64** — extract the `.tar.gz`, run `./pyrodeck-server`
 
             **Windows x64** — extract the `.zip`, run `pyrodeck-server.exe`
-            > SmartScreen may warn on first run. Click **More info → Run anyway**.
-            > The binary is signed by the Pyrodeck project.
+            > The Windows binary is not code-signed yet, so SmartScreen will warn on first run.
+            > Click **More info → Run anyway**.
 
             See [README](https://github.com/${{ github.repository }}#readme) for configuration and auth setup.
           files: |
             linux-release/*.tar.gz
             windows-release/*.zip
-          # While unsigned, swap the line above for:
-          # windows-unsigned/*.exe

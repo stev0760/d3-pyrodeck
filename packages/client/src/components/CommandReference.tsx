@@ -293,22 +293,12 @@ const CATEGORIES: CommandCategory[] = [
       { cmd: "$botobj", label: "Objective State" },
       { cmd: "$nav", label: "Nav Toggles" },
       {
+        // Toggle names churn every Matcen build (Tier 3, spec §2.7) — free
+        // text instead of a list; "Nav Toggles" above prints the live table.
         cmd: "$nav",
         label: "Nav Set",
+        args: [{ name: "toggle", placeholder: "toggle (see Nav Toggles)", type: "text" }],
         select: [
-          {
-            name: "channel",
-            options: [
-              { value: "grid", label: "Grid roadmap" },
-              { value: "bridge", label: "Corner bridge" },
-              { value: "route", label: "Grid routing" },
-              { value: "terrain", label: "Terrain steer" },
-              { value: "bnodes", label: "Pseudo-BNodes" },
-              { value: "outdoorvia", label: "Outdoor via" },
-              { value: "outdoorgraph", label: "Outdoor graph" },
-              { value: "softhop", label: "Soft-hop" },
-            ],
-          },
           {
             name: "state",
             options: [
