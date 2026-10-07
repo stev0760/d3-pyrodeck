@@ -1,5 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  DEFAULT_MISSION_HOST_SETTINGS,
+  sanitizeStoredMissionHost,
+  type MissionHostSettings,
+} from "../gamefiles/missionHostSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -18,6 +23,8 @@ export interface PyrodeckConfig {
   preferredMode: "connect" | "launch";
   /** Scrypt hash of admin password ("salt:hash" hex). Null = no password set via config. */
   adminPasswordHash: string | null;
+  /** Mission download listener (gamefiles/MissionHost.ts). Set via /api/mission-host only. */
+  missionHost: MissionHostSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -36,6 +43,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   defaultTelnetPort: 2092,
   preferredMode: "connect",
   adminPasswordHash: null,
+  missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
 };
 
 /**
@@ -89,6 +97,9 @@ function migrateConfig(
   }
   if ("adminPasswordHash" in raw && typeof raw.adminPasswordHash === "string") {
     migrated.adminPasswordHash = raw.adminPasswordHash;
+  }
+  if ("missionHost" in raw) {
+    migrated.missionHost = sanitizeStoredMissionHost(raw.missionHost);
   }
 
   return migrated;

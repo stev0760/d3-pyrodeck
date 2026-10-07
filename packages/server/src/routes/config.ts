@@ -25,6 +25,8 @@ import {
   setMissionUrl,
   validateMissionUrl,
 } from "../gamefiles/Mn3UrlRewriter.js";
+import { buildHostedMissionUrl } from "../gamefiles/missionHostSettings.js";
+import { hostedLinkFor, missionHost, missionHostMissionsDir } from "./mission-host.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
@@ -563,11 +565,16 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       if (details === "1") {
         // urlBackup: Pyrodeck has rewritten this mission's download link and
         // holds the original (restorable). Not cached: it changes on rewrite.
+        // hostUrl/hostError: what the mission host would serve it at (host on).
         const backups = new Set(entries.filter((f) => f.endsWith(BACKUP_SUFFIX)));
         const scanned = await scanMissionsDir(missionsDir);
         return {
           missions,
-          details: scanned.map((d) => ({ ...d, urlBackup: backups.has(d.file + BACKUP_SUFFIX) })),
+          details: scanned.map((d) => ({
+            ...d,
+            urlBackup: backups.has(d.file + BACKUP_SUFFIX),
+            ...hostedLinkFor(d.file, missionsDir),
+          })),
         };
       }
       return { missions };
@@ -621,7 +628,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         urls: result.urls,
         backupCreated: result.backupCreated,
         warnings: validation.warnings,
-        info: { ...info, urlBackup: true },
+        info: { ...info, urlBackup: true, ...hostedLinkFor(file, path.dirname(resolved.filePath)) },
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to rewrite mission";
@@ -643,9 +650,60 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
       const result = await restoreMissionUrl(resolved.filePath);
       const info = await parseMn3Cached(resolved.filePath);
-      return { ok: true, urls: result.urls, info: { ...info, urlBackup: false } };
+      return {
+        ok: true,
+        urls: result.urls,
+        info: { ...info, urlBackup: false, ...hostedLinkFor(file, path.dirname(resolved.filePath)) },
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to restore mission";
+      return reply.status(err instanceof Mn3Error ? 400 : 500).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/game-files/missions/:file/download-url/host  { profileId? }
+   * Point the mission's download link at Pyrodeck's own mission host:
+   * <publicBaseUrl>/missions/<file>, through the same rewrite as a typed link.
+   */
+  app.post("/api/game-files/missions/:file/download-url/host", async (request, reply) => {
+    const { file } = request.params as { file: string };
+    const body = (request.body ?? {}) as { profileId?: unknown };
+    const profileId = typeof body.profileId === "string" ? body.profileId : undefined;
+    const settings = pyrodeckConfig.get().missionHost;
+    if (!settings.enabled || !settings.publicBaseUrl) {
+      return reply.status(409).send({ error: "Turn the mission host on (with a public base URL) first." });
+    }
+    try {
+      const resolved = await resolveMissionFile(file, profileId);
+      if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
+      const missionsDir = path.dirname(resolved.filePath);
+      const hostDir = missionHostMissionsDir();
+      if (!hostDir || path.resolve(hostDir) !== path.resolve(missionsDir)) {
+        return reply.status(400).send({
+          error: `The mission host serves ${hostDir ?? "nothing (no game path set)"}, not this profile's missions directory (${missionsDir}).`,
+        });
+      }
+      const built = buildHostedMissionUrl(settings.publicBaseUrl, file);
+      if (!("url" in built)) return reply.status(400).send({ error: built.error });
+
+      const result = await setMissionUrl(resolved.filePath, built.url);
+      const info = await parseMn3Cached(resolved.filePath);
+      const status = missionHost.getStatus();
+      const warnings = validateMissionUrl(built.url).warnings;
+      if (!status.bound) {
+        warnings.push(`The mission host is not listening${status.error ? ` (${status.error})` : ""}; downloads fail until it is.`);
+      }
+      return {
+        ok: true,
+        url: built.url,
+        urls: result.urls,
+        backupCreated: result.backupCreated,
+        warnings,
+        info: { ...info, urlBackup: true, hostUrl: built.url },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to rewrite mission";
       return reply.status(err instanceof Mn3Error ? 400 : 500).send({ error: message });
     }
   });

@@ -23,6 +23,7 @@ import {
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
+import { missionHost } from "./mission-host.js";
 
 export { playlistManager };
 
@@ -779,7 +780,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/launcher/status", async () => {
-    return processManager.getStatus();
+    return { ...processManager.getStatus(), missionHost: missionHost.getStatus() };
   });
 
   app.get("/api/launcher/detect", async (_request, reply) => {

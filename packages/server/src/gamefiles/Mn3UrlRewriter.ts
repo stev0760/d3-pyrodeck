@@ -63,7 +63,7 @@ export const BACKUP_SUFFIX = ".pyrodeck-orig";
 const TEMP_SUFFIX = ".pyrodeck-tmp";
 
 /** Retail missions: the fork never advertises download links for these. */
-const RETAIL_MISSIONS = new Set(["d3.mn3", "d3_2.mn3", "training.mn3", "merc.mn3"]);
+export const RETAIL_MISSIONS: ReadonlySet<string> = new Set(["d3.mn3", "d3_2.mn3", "training.mn3", "merc.mn3"]);
 
 interface HogEntry {
   name: string;
