@@ -15,7 +15,15 @@ import {
   type BotRosterData,
 } from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
-import { scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
+import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
+import {
+  BACKUP_SUFFIX,
+  Mn3Error,
+  checkMissionFilename,
+  restoreMissionUrl,
+  setMissionUrl,
+  validateMissionUrl,
+} from "../gamefiles/Mn3UrlRewriter.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
@@ -545,12 +553,92 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const entries = await fs.readdir(missionsDir);
       const missions = entries.filter((f) => f.toLowerCase().endsWith(".mn3")).sort();
       if (details === "1") {
-        return { missions, details: await scanMissionsDir(missionsDir) };
+        // urlBackup: Pyrodeck has rewritten this mission's download link and
+        // holds the original (restorable). Not cached: it changes on rewrite.
+        const backups = new Set(entries.filter((f) => f.endsWith(BACKUP_SUFFIX)));
+        const scanned = await scanMissionsDir(missionsDir);
+        return {
+          missions,
+          details: scanned.map((d) => ({ ...d, urlBackup: backups.has(d.file + BACKUP_SUFFIX) })),
+        };
       }
       return { missions };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to list missions";
       return reply.status(400).send({ error: message });
+    }
+  });
+
+  /**
+   * Resolve a mission named in a URL param to its path in gamePath/missions,
+   * accepting only a file that is listed there (no traversal, exact name).
+   */
+  async function resolveMissionFile(
+    file: string,
+    profileId?: string,
+  ): Promise<{ filePath: string } | { status: number; error: string }> {
+    const nameError = checkMissionFilename(file);
+    if (nameError) return { status: 400, error: nameError };
+    const missionsDir = path.join(await resolveGamePath(profileId), "missions");
+    const entries = await fs.readdir(missionsDir);
+    if (!entries.includes(file)) return { status: 404, error: `Mission not found: ${file}` };
+    return { filePath: path.join(missionsDir, file) };
+  }
+
+  /**
+   * PUT /api/game-files/missions/:file/download-url  { url, profileId? }
+   * Rewrite the mission's URL lines (the download links the server offers
+   * clients that lack the mission) to one link. The untouched .mn3 is kept as
+   * <file>.pyrodeck-orig on the first rewrite. Takes effect the next time the
+   * server loads the mission.
+   */
+  app.put("/api/game-files/missions/:file/download-url", async (request, reply) => {
+    const { file } = request.params as { file: string };
+    const body = (request.body ?? {}) as { url?: unknown; profileId?: unknown };
+    const profileId = typeof body.profileId === "string" ? body.profileId : undefined;
+    if (typeof body.url !== "string") {
+      return reply.status(400).send({ error: "url is required" });
+    }
+    const validation = validateMissionUrl(body.url);
+    if (!validation.valid) {
+      return reply.status(400).send({ error: validation.errors.join(" "), errors: validation.errors });
+    }
+    try {
+      const resolved = await resolveMissionFile(file, profileId);
+      if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
+      const result = await setMissionUrl(resolved.filePath, body.url);
+      const info = await parseMn3Cached(resolved.filePath);
+      return {
+        ok: true,
+        urls: result.urls,
+        backupCreated: result.backupCreated,
+        warnings: validation.warnings,
+        info: { ...info, urlBackup: true },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to rewrite mission";
+      return reply.status(err instanceof Mn3Error ? 400 : 500).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/game-files/missions/:file/download-url/restore  { profileId? }
+   * Put the original .mn3 back from its .pyrodeck-orig backup and delete the
+   * backup. Refused when the mission was replaced since the backup was made.
+   */
+  app.post("/api/game-files/missions/:file/download-url/restore", async (request, reply) => {
+    const { file } = request.params as { file: string };
+    const body = (request.body ?? {}) as { profileId?: unknown };
+    const profileId = typeof body.profileId === "string" ? body.profileId : undefined;
+    try {
+      const resolved = await resolveMissionFile(file, profileId);
+      if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
+      const result = await restoreMissionUrl(resolved.filePath);
+      const info = await parseMn3Cached(resolved.filePath);
+      return { ok: true, urls: result.urls, info: { ...info, urlBackup: false } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to restore mission";
+      return reply.status(err instanceof Mn3Error ? 400 : 500).send({ error: message });
     }
   });
 

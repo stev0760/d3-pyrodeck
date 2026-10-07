@@ -15,6 +15,10 @@ export interface MissionDetails {
   numLevels: number | null;
   keywords: string;
   multi: boolean;
+  /** Mission-level URL lines: the download links offered to clients that lack the mission. */
+  urls?: string[];
+  /** Pyrodeck rewrote the links and holds the original .mn3 (restorable). */
+  urlBackup?: boolean;
   error?: string;
   modes: Record<string, ModeSupport>;
 }

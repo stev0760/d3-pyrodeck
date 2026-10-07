@@ -732,6 +732,14 @@ All commands flow through WebSocket for real-time streaming. The REST endpoint i
 `PlaylistVoting: { enabled, preAnnounceSeconds, voteOpenSeconds, optionCount }`
 `Playlist: { id, name, mode ("sequential"|"shuffle"|"weighted"), entries[], voting, createdAt, updatedAt }`
 
+### 8.4.1 Game Files: missions
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/game-files/missions?profileId=&details=1` | `.mn3` list; with `details=1`, per-mission metadata, mode compatibility, `urls` and `urlBackup` (Addenda A, B) |
+| `PUT` | `/api/game-files/missions/:file/download-url` | Body `{ url, profileId? }`: rewrite the mission's download link (Addendum B) |
+| `POST` | `/api/game-files/missions/:file/download-url/restore` | Body `{ profileId? }`: put the original `.mn3` back and delete the backup |
+
 ### 8.5 Config Files (Phase 1)
 
 Phase 1 uses a simplified config file API scoped to the config directory only. Phase 3 replaces this with the full file manager (Section 8.5) but this endpoint remains for backwards compatibility.
@@ -1035,6 +1043,70 @@ game and to Pyrodeck equally.
   WS warning broadcast) — guarding against Scriptname changes made after activation. The
   PlaylistEditor shows per-entry ⚠ markers and a summary against the Launch panel's selected
   profile. Validation is lenient: no/unknown script or unparseable missions never block.
+
+---
+
+## Addendum B — Mission download links (2026-10-07, implemented v0.4.20)
+
+**Goal:** a player who joins without the server's mission is offered a working download link.
+D3 does this natively: the client asks the server for links (`MP_ASK_FOR_URL`) and the server
+answers with the `URL` lines of the loaded mission's `.msn`. Most custom missions carry dead
+1999-era links, and the engine has no setting to override them (a `MissionURL` cvar was drafted in
+the fork and reverted on 2026-07-19: the decision is that Pyrodeck rewrites the URL lines inside
+the server's copy of the `.mn3`). Matcen registry item REL7.
+
+### B.1 Engine facts (Matcen `Descent3/Mission.cpp`, `mission_download.cpp`, `cfile/`)
+
+- The engine opens `<mission stem>.msn` inside the `.mn3` (`d3_2` maps to `d3`). Lines are read
+  into a 128-byte buffer; the command is the first token, the operand is the rest of the line cut
+  to 95 characters (`char operand[96]`).
+- `URL <link>` is a mission-level command: one after the first `LEVEL` line is a load error. Any
+  unknown command is a load error too, so Pyrodeck writes nothing but URL lines.
+- Up to 5 links are kept (`MAX_MISSION_URL_COUNT`) and offered to the client as a list.
+- Clients download only `http://` and `https://` links. A link whose last path segment ends in
+  `.zip` is unzipped into `missions/`; any other body is saved as the mission file itself.
+- The fork never advertises links for the retail missions (`d3.mn3`, `d3_2.mn3`, `training.mn3`,
+  `merc.mn3`).
+- The join checksum covers level geometry and ship physics, not the `.msn`, so clients holding the
+  original mission still join a server whose copy was rewritten.
+- The engine reads the links when it loads the mission, so a rewrite takes effect at the next
+  mission load (server restart or playlist rotation).
+
+### B.2 Rewrite (`packages/server/src/gamefiles/Mn3UrlRewriter.ts`)
+
+1. Validate the file: a plain `*.mn3` name listed in `gamePath/missions/`, not retail; HOG2 magic,
+   a plausible entry count, a data offset after the entry table, payloads that end inside the
+   file, and a `.msn` entry.
+2. Validate the link: `http(s)`, printable ASCII without spaces, at most 95 characters, a host, a
+   final path segment (a link not ending in `.zip`/`.mn3` is allowed with a warning).
+3. Back up once: copy the untouched file to `<name>.mn3.pyrodeck-orig` with an exclusive create, so
+   later rewrites never replace the true original. (D3 and the mission scanner list only `*.mn3`,
+   so the backup is invisible to both.)
+4. Edit the `.msn` text byte-exactly (latin1): the first mission-level `URL` line becomes
+   `URL<its own whitespace><link>`, other mission-level `URL` lines are removed; with none, a
+   `URL <link>` line goes just before the first `LEVEL` line. Every other byte and each line's own
+   ending (CRLF in all 112 missions surveyed) is kept.
+5. Write a new archive to `<name>.mn3.pyrodeck-tmp`: the header, entry table and any gap copied
+   with only the `.msn` length patched, the payloads before the `.msn` copied, the new `.msn`, the
+   payloads after it copied. Entry order (the engine requires sorted names) and timestamps are
+   kept. Read the temp file back and compare the `.msn`, then rename it over the mission.
+6. Restore copies the backup back the same way and deletes it, but only when the current file's
+   entry names and non-`.msn` lengths still match the backup; a mission replaced by another
+   version is never overwritten by a stale backup.
+
+On Linux the rename is safe while a server has the mission open (the running process keeps the old
+file). On Windows the rename fails while the file is open; the API reports "stop the server that
+has this mission loaded".
+
+**Verified 2026-10-07:** all 108 non-retail missions of a 112-mission library rewritten and
+restored (non-`.msn` payloads and the mode scan unchanged; restore byte-identical); a Matcen
+0.9.17-dev dedicated server loaded a rewritten `2fast2.mn3` and logged exactly the new link
+(`Found a Mission URL: …`).
+
+### B.3 UI
+
+Config tab, mission details panel: the current links, **Set link / Change** (one link replaces all
+of them), and **Restore original** while a backup exists.
 
 ---
 

@@ -6,6 +6,7 @@ import {
   missionSupports,
   type MissionDetails,
 } from "@/lib/missionCompat";
+import { MissionUrlEditor } from "./MissionUrlEditor";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend DedicatedCfgData)
@@ -581,6 +582,13 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                   will fail to start the game. Pick a compatible mission or game type.
                 </div>
               )}
+              <MissionUrlEditor
+                profileId={profileId}
+                mission={selectedMission}
+                onUpdated={(info) =>
+                  setMissionDetails((prev) => ({ ...prev, [info.file]: info }))
+                }
+              />
             </div>
           )}
           <Field label="Starting Level" hint="(1 = first level in mission)">

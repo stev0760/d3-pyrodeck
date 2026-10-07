@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readMsnUrls } from "./Mn3UrlRewriter.js";
 
 /**
  * Mission (.mn3) game-mode compatibility scanner.
@@ -26,6 +27,8 @@ export interface Mn3Info {
   /** Raw comma-separated KEYWORDS value ("" when the line is absent). */
   keywords: string;
   multi: boolean;
+  /** Mission-level URL lines: the download links the server offers clients (max 5). */
+  urls: string[];
   /** Set when the file could not be parsed (bad magic, no .msn, I/O error). */
   error?: string;
   /** Keyed by normalized script basename ("ctf", "teamanarchy", ...). */
@@ -153,6 +156,7 @@ export async function parseMn3(filePath: string): Promise<Mn3Info> {
         numLevels: null,
         keywords: "",
         multi: false,
+        urls: [],
         error: "no .msn file in archive",
         modes: {},
       };
@@ -176,7 +180,15 @@ export async function parseMn3(filePath: string): Promise<Mn3Info> {
       else if (token === "MULTI") multi = true;
     }
 
-    return { file, name, numLevels, keywords, multi, modes: computeModeSupport(keywords) };
+    return {
+      file,
+      name,
+      numLevels,
+      keywords,
+      multi,
+      urls: readMsnUrls(text),
+      modes: computeModeSupport(keywords),
+    };
   } catch (err) {
     return {
       file,
@@ -184,6 +196,7 @@ export async function parseMn3(filePath: string): Promise<Mn3Info> {
       numLevels: null,
       keywords: "",
       multi: false,
+      urls: [],
       error: err instanceof Error ? err.message : "failed to parse",
       modes: {},
     };
@@ -212,6 +225,7 @@ export async function parseMn3Cached(filePath: string): Promise<Mn3Info> {
       numLevels: null,
       keywords: "",
       multi: false,
+      urls: [],
       error: err instanceof Error ? err.message : "stat failed",
       modes: {},
     };
