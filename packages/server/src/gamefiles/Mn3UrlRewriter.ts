@@ -24,6 +24,15 @@ import path from "node:path";
  * - Any unknown command is a load error, so nothing but URL lines is written.
  * - Clients download only http:// and https:// links. A link ending in .zip is
  *   unzipped; any other body is saved as the mission file.
+ * - The client's download screen formats "Downloading: %s" into a 100-byte
+ *   stack buffer (mission_download.cpp, msn_DownloadWithStatus: char
+ *   fmturl[MSN_MAX_STRING_LEN]; sprintf), the same in the 1999 source. A link
+ *   longer than 86 characters overflows it, so 86 is the limit written here,
+ *   not the 95 the .msn parser keeps.
+ * - https is not dependable: the client's HTTP client (cpp-httplib, built
+ *   without OpenSSL from the fork's vcpkg manifest) throws on an https link
+ *   and nothing catches it, and the 1999-era client rejects it. Allowed, with
+ *   a warning, for client builds that do have TLS.
  * - The join checksum covers level geometry and ships, not the .msn, so a
  *   rewritten .msn does not stop clients that hold the original mission from
  *   joining.
@@ -43,6 +52,11 @@ const COPY_CHUNK = 1 << 20;
 
 /** Longest URL the engine reads back intact (char operand[96]). */
 export const MSN_URL_MAX = 95;
+/**
+ * Longest URL Pyrodeck writes: sprintf(fmturl[100], "Downloading: %s", url)
+ * on the client needs 13 + length + 1 <= 100.
+ */
+export const MISSION_URL_MAX = 86;
 /** URL lines the engine keeps (MAX_MISSION_URL_COUNT). */
 export const MSN_URL_COUNT = 5;
 export const BACKUP_SUFFIX = ".pyrodeck-orig";
@@ -215,8 +229,10 @@ export function validateMissionUrl(raw: string): UrlValidation {
   if (!/^[\x21-\x7e]+$/.test(url)) {
     errors.push("The link must be plain ASCII with no spaces.");
   }
-  if (url.length > MSN_URL_MAX) {
-    errors.push(`The link is ${url.length} characters; the engine reads at most ${MSN_URL_MAX}.`);
+  if (url.length > MISSION_URL_MAX) {
+    errors.push(
+      `The link is ${url.length} characters; clients handle at most ${MISSION_URL_MAX} (a longer one overflows the download screen's text buffer).`,
+    );
   }
   let parsed: URL | null = null;
   try {
@@ -227,6 +243,14 @@ export function validateMissionUrl(raw: string): UrlValidation {
   if (parsed) {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       errors.push("Clients only download http:// and https:// links.");
+    } else if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      // The client's HTTP library matches the scheme in lower case only.
+      errors.push("Write the scheme in lower case (http://).");
+    }
+    if (parsed.protocol === "https:") {
+      warnings.push(
+        "Many clients cannot fetch https:// links: 1999-era clients refuse them and current builds without TLS crash on them. Prefer http://.",
+      );
     }
     if (!parsed.hostname) errors.push("The link has no host.");
     const last = url.split("?")[0].split("/").pop() ?? "";

@@ -7,8 +7,11 @@ interface MissionUrlEditorProps {
   onUpdated: (info: MissionDetails) => void;
 }
 
-/** Longest link the engine reads back from a .msn URL line (char operand[96]). */
-const URL_MAX = 95;
+/**
+ * Longest link a client can take: the download screen formats
+ * "Downloading: <link>" into a 100-byte buffer (the server's MISSION_URL_MAX).
+ */
+const URL_MAX = 86;
 
 /**
  * Download link for a mission: the URL line(s) inside the .mn3 that the server
@@ -142,13 +145,14 @@ export function MissionUrlEditor({ profileId, mission, onUpdated }: MissionUrlEd
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             maxLength={URL_MAX}
-            placeholder="https://example.org/missions/mymission.zip"
+            placeholder="http://example.org/missions/mymission.zip"
             className="w-full px-2 py-1 bg-input border border-border rounded text-[11px] font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             onKeyDown={(e) => e.key === "Enter" && draft.trim() && save()}
             autoFocus
           />
           <p className="text-[10px] text-muted-foreground">
-            One http(s) link to a .zip holding the mission or to the .mn3 itself, at most {URL_MAX} characters.
+            One http:// link to a .zip holding the mission or to the .mn3 itself, at most {URL_MAX} characters
+            (https only reaches clients built with TLS).
             Replaces {urls.length > 1 ? `all ${urls.length} links` : "the link"} in the server's copy of the
             mission; the original file is kept and can be restored.
           </p>

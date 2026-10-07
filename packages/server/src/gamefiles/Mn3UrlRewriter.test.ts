@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   BACKUP_SUFFIX,
+  MISSION_URL_MAX,
   MSN_URL_MAX,
   readMn3Msn,
   readMsnUrls,
@@ -84,8 +85,8 @@ describe("rewriteMsnUrls / readMsnUrls", () => {
 });
 
 describe("validateMissionUrl", () => {
-  it("accepts http(s) links to a .zip or .mn3", () => {
-    expect(validateMissionUrl("https://example.org/m/test.zip")).toEqual({
+  it("accepts http links to a .zip or .mn3", () => {
+    expect(validateMissionUrl("http://example.org/m/test.zip")).toEqual({
       valid: true,
       errors: [],
       warnings: [],
@@ -93,8 +94,28 @@ describe("validateMissionUrl", () => {
     expect(validateMissionUrl("http://example.org/test.MN3").valid).toBe(true);
   });
 
+  it("accepts https with a warning (clients without TLS cannot use it)", () => {
+    const v = validateMissionUrl("https://example.org/m/test.zip");
+    expect(v.valid).toBe(true);
+    expect(v.warnings.join(" ")).toMatch(/https/);
+  });
+
+  it("caps links at the client's 86-character display buffer", () => {
+    const head = "http://example.org/";
+    const at = (n: number) => `${head}${"a".repeat(n - head.length - 4)}.zip`;
+    expect(at(MISSION_URL_MAX)).toHaveLength(86);
+    expect(validateMissionUrl(at(MISSION_URL_MAX)).valid).toBe(true);
+    const over = validateMissionUrl(at(MISSION_URL_MAX + 1));
+    expect(over.valid).toBe(false);
+    expect(over.errors.join(" ")).toMatch(/87 characters.*at most 86/);
+  });
+
+  it("refuses an upper-case scheme (the client's HTTP library matches lower case only)", () => {
+    expect(validateMissionUrl("HTTP://example.org/test.zip").valid).toBe(false);
+  });
+
   it("warns, without refusing, on a link that is neither .zip nor .mn3", () => {
-    const v = validateMissionUrl("https://example.org/download.php");
+    const v = validateMissionUrl("http://example.org/download.php");
     expect(v.valid).toBe(true);
     expect(v.warnings).toHaveLength(1);
   });
