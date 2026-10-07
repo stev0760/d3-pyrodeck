@@ -5,6 +5,11 @@ import {
   sanitizeStoredMissionHost,
   type MissionHostSettings,
 } from "../gamefiles/missionHostSettings.js";
+import {
+  DEFAULT_PLAYER_SETTINGS,
+  sanitizeStoredPlayerSettings,
+  type PlayerSettings,
+} from "../players/playerSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -25,6 +30,8 @@ export interface PyrodeckConfig {
   adminPasswordHash: string | null;
   /** Mission download listener (gamefiles/MissionHost.ts). Set via /api/mission-host only. */
   missionHost: MissionHostSettings;
+  /** Player history, bans and join rules (players/playerSettings.ts). Set via /api/players/settings only. */
+  players: PlayerSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -44,6 +51,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   preferredMode: "connect",
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
+  players: { ...DEFAULT_PLAYER_SETTINGS },
 };
 
 /**
@@ -100,6 +108,9 @@ function migrateConfig(
   }
   if ("missionHost" in raw) {
     migrated.missionHost = sanitizeStoredMissionHost(raw.missionHost);
+  }
+  if ("players" in raw) {
+    migrated.players = sanitizeStoredPlayerSettings(raw.players);
   }
 
   return migrated;

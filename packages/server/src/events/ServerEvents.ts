@@ -29,6 +29,12 @@ export interface ServerEventMap {
   "player.banned": { profileId: string; name?: string; ip?: string; reason: string; until?: string };
   /** A chat line from a player, as the server printed it. */
   "player.chat": { profileId: string; name: string; text: string };
+  /**
+   * A human player's new session, once Pyrodeck has looked up the slot
+   * ($players) and, when allowed, the address ($playerinfo). Not sent for
+   * bots or for level re-entries.
+   */
+  "player.identified": { profileId: string; name: string; slot?: number; ip?: string };
 }
 
 export type ServerEventName = keyof ServerEventMap;

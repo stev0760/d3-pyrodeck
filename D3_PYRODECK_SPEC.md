@@ -827,6 +827,58 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
 
+### 8.7 Players: history and addresses
+
+Pyrodeck reads every console session it opens (Connect and Launch mode) and keeps, per server
+profile, the joins and leaves it sees: `<config dir>/players/<profile>.json`, 5,000 rows, oldest
+dropped first, plus a name/address index of up to 5,000 pairs. A Connect-mode server's profile id is
+`connect:<host>:<port>`. A join while the player is already in the game is a level re-entry (every
+player re-enters each level) and adds no row. For a human's new session Pyrodeck sends `$players`
+for the slot and one `$playerinfo <slot>` for the address, never polled; see §8.7.1.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/players/profiles` | `{ active, profiles: [{ profileId, label, rows, lastEventAt }] }`: profiles with a history; `active` is the open console's profile |
+| `GET` | `/api/players/history?profileId=&q=&limit=&before=` | `{ profileId, rows, total }`: join/leave rows newest first (`id, time, event, name, slot?, ip?, bot?, reason?`); `q` matches name or address; `before` pages by row id. `profileId` defaults to the open console's |
+| `GET` | `/api/players/sessions?profileId=&from=&to=&q=` | "Who was on": `{ sessions: [{ name, slot?, ip?, bot?, joinedAt, leftAt, reason? }] }` overlapping `from`..`to` (ISO; default the last 24 h) |
+| `GET` | `/api/players/addresses?profileId=&q=` | `{ entries: [{ name, ip, firstSeen, lastSeen, count }] }`, most recent first |
+| `GET` | `/api/players/present` | `{ profileId, players: [{ name, slot?, ip?, bot }] }`: who Pyrodeck tracks as in the game |
+| `GET` | `/api/players/settings` | `{ settings, lookup: { profileId, used, unlimited } }` |
+| `PUT` | `/api/players/settings` | Body: any of the settings below; 400 with `errors` on a bad value |
+
+Settings (`pyrodeck.json` → `players`): `ipLookup` (default `true`), `ipLookupBudget` (0-30,
+default 20).
+
+#### 8.7.1 Engine facts
+
+- **Lines read** (all printed through `PrintDedicatedMessage`, so they reach every console
+  session; a HUD message prints as `*<text>`, `hudmessage.cpp:425`). Join: each game DLL's
+  `OnClientPlayerEntersGame` line, e.g. `*Bob has joined the Anarchy`, `*Bob has joined CTF`,
+  `*Bob has joined the Red Team`, `*Bob Has Joined The Blue Team` (Monsterball, Entropy). Leave:
+  `*Bob has left the game` (`multi.cpp:3635`) and `*Bob disconnected!` (`multi_server.cpp:1108`;
+  time-outs, kicks and bans). Bots: `Bot '<name>' added in slot <n> (...)`
+  (`dedicated_server.cpp:905`) after the join line, `  Bot '<name>' spawned (..., slot=<n>)`
+  (`bot.cpp:9983`), `Removing bot '<name>' from slot <n>` (`dedicated_server.cpp:918`; a removed
+  bot prints no leave line), `All bots removed`. Chat: `*<name> says: <text>` (`TXT_HUDSAY`). Level:
+  `Opening level '<file>'...` (`LoadLevel.cpp:3688`). Emitted on the event bus as `player.joined`,
+  `player.left`, `player.chat`, `level.started`; `player.identified` follows a human's new session
+  once the slot and address are looked up.
+- **`$players`** lists `NN: <name>` for every player that passes `CheckPlayerNum` (connected and in
+  the level), the server (`00: -Server-`) and bots included (`dmfcinputcommand.cpp:394`).
+- **`$playerinfo <slot>`** prints the callsign, `PlayerNum: <n>`, `IP: <a.b.c.d>:<port>`
+  (`networking.cpp:825`) and the ship. For a slot not in the game it prints the previously shown
+  player if that one is still in, so Pyrodeck keeps an answer only when it names the slot and the
+  player asked about. The command queues its text twice with `DLLgrtext_Printf`, even headless
+  (`dmfcmenu.cpp:1138`, `dmfcinputcommand.cpp:261`), about 400 bytes per query into a 16 KB buffer a
+  dedicated server never flushes (`grtext.h:115`): the same defect as `$netgameinfo` (v0.4.11), so a
+  retail or upstream server dies after roughly 40 queries. Matcen clears the buffer every frame from
+  0.9.3 (`GameLoop.cpp:2591`). Pyrodeck therefore sends at most `ipLookupBudget` queries per server
+  run to anything but Matcen 0.9.3+, and none for a name containing `%` (the callsign line is passed
+  to `DLLgrtext_Printf` as the format string, `dmfcbase.cpp:1654`).
+- After each level start, a player who has neither re-entered nor appears in `$players` within
+  120 s gets a leave row ("not back after a level change"); `server.started`, `server.stopped` and
+  `server.crashed` end every open session.
+
 ---
 
 ## 9. Project Structure

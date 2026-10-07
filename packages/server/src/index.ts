@@ -18,6 +18,7 @@ import { launcherRoutes } from "./routes/launcher.js";
 import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
+import { playersRoutes } from "./routes/players.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { startConsoleEvents } from "./events/consoleEventHub.js";
 
@@ -113,6 +114,7 @@ async function main() {
   await app.register(launcherRoutes);
   await app.register(logsRoutes);
   await app.register(playlistRoutes);
+  await app.register(playersRoutes);
 
   app.get("/api/health", async () => ({ status: "ok" }));
 
