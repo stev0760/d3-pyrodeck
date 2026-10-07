@@ -5,6 +5,11 @@ import {
   sanitizeStoredMissionHost,
   type MissionHostSettings,
 } from "../gamefiles/missionHostSettings.js";
+import {
+  DEFAULT_SUPERVISOR_SETTINGS,
+  sanitizeStoredSupervisor,
+  type SupervisorSettings,
+} from "../launcher/supervisorSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -25,6 +30,8 @@ export interface PyrodeckConfig {
   adminPasswordHash: string | null;
   /** Mission download listener (gamefiles/MissionHost.ts). Set via /api/mission-host only. */
   missionHost: MissionHostSettings;
+  /** Crash relaunch, hang check, restart when empty (launcher/Supervisor.ts). Set via /api/launcher/supervisor only. */
+  supervisor: SupervisorSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -44,6 +51,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   preferredMode: "connect",
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
+  supervisor: { ...DEFAULT_SUPERVISOR_SETTINGS },
 };
 
 /**
@@ -100,6 +108,9 @@ function migrateConfig(
   }
   if ("missionHost" in raw) {
     migrated.missionHost = sanitizeStoredMissionHost(raw.missionHost);
+  }
+  if ("supervisor" in raw) {
+    migrated.supervisor = sanitizeStoredSupervisor(raw.supervisor);
   }
 
   return migrated;

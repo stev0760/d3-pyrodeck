@@ -45,6 +45,12 @@ export interface ProcessStatus {
   activeProfileId: string | null;
   /** Log file health for the current/last launch (stays "failed" until the next launch). */
   log: LogHealth;
+  /**
+   * Why the last process stopped: the reason Pyrodeck passed to stop(),
+   * "console" for a `quit` typed at the remote console, null while it runs
+   * and after a crash.
+   */
+  stopReason: StopReason | "console" | null;
 }
 
 export interface ProcessManagerOptions {
@@ -169,6 +175,7 @@ export class ProcessManager extends EventEmitter {
     stoppedAt: null,
     activeProfileId: null,
     log: { path: null, state: "none", message: null },
+    stopReason: null,
   };
   private telnetProbeTimer: ReturnType<typeof setInterval> | null = null;
   private telnetReady = false;
@@ -204,6 +211,11 @@ export class ProcessManager extends EventEmitter {
   /** Why the current/last process was started. */
   getStartReason(): StartReason {
     return this.startReason;
+  }
+
+  /** The launch that produced the current/last process (for a relaunch). */
+  getLaunchConfig(): LaunchConfig | null {
+    return this.launchConfig ? { ...this.launchConfig } : null;
   }
 
   /**
@@ -265,6 +277,7 @@ export class ProcessManager extends EventEmitter {
     this.status.exitSignal = null;
     this.status.stoppedAt = null;
     this.status.activeProfileId = config.profileId ?? null;
+    this.status.stopReason = null;
 
     // Open log file if configured
     this.logPath = config.logPath ?? null;
@@ -411,11 +424,13 @@ export class ProcessManager extends EventEmitter {
   private onProcessExit(pid: number | null, code: number | null, signal: string | null): void {
     const profileId = this.status.activeProfileId ?? "";
     if (this.status.state === "stopping") {
+      this.status.stopReason = this.stopReason;
       this.setState("stopped");
       if (pid !== null && this.stopReason !== "hang") {
         this.events.emitEvent("server.stopped", { profileId, pid, reason: this.stopReason });
       }
     } else if (this.consoleQuitAt > 0 && Date.now() - this.consoleQuitAt < CONSOLE_QUIT_WINDOW_MS) {
+      this.status.stopReason = "console";
       this.setState("stopped");
       if (pid !== null) {
         this.events.emitEvent("server.stopped", { profileId, pid, reason: "manual", via: "console" });

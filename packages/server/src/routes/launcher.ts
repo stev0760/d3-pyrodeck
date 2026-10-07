@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ProcessManager, type LaunchConfig } from "../launcher/ProcessManager.js";
+import { ProcessManager, type LaunchConfig, type StopReason } from "../launcher/ProcessManager.js";
 import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
@@ -26,6 +26,8 @@ import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { ServerLineMonitor } from "../launcher/ServerLineMonitor.js";
+import { Supervisor } from "../launcher/Supervisor.js";
+import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
 
 export { playlistManager };
 
@@ -146,7 +148,7 @@ async function applyPostStartSettings(connection: ServerConnection): Promise<voi
 
 /**
  * Register a one-shot telnetReady handler so auto-connect fires after (re)start.
- * Called from POST /start and from the playlist rotate handler.
+ * Called from POST /start, the playlist rotate handler and the supervisor.
  *
  * `healthToken` is set for a playlist restart: the result is then reported to
  * the rotation health check (healthy once `$servercaps` gets an answer, or a
@@ -156,89 +158,114 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
   // Remove any stale once-handler from a launch that crashed before telnet was ready
   processManager.removeAllListeners("telnetReady");
 
-  processManager.once("telnetReady", async (port: number) => {
+  processManager.once("telnetReady", (port: number) => {
     console.log(`[Pyrodeck] D3 telnet ready on port ${port}, auto-connecting...`);
-
-    try {
-      // Disconnect any stale session
-      const existing = sessionManager.getActive();
-      if (existing) {
-        sessionManager.remove(existing.id);
-      }
-
-      const connection = new TelnetConnection();
-      const session = sessionManager.create(
-        connection,
-        "localhost",
-        port,
-        telnetPassword,
-      );
-
-      sessionManager.updateState(session.id, "connecting");
-      await connection.connect("localhost", port, telnetPassword);
-
-      // Probe capabilities
-      sessionManager.updateState(session.id, "probing");
-      const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
-        if (healthToken !== undefined) rotationHealth.healthy(healthToken);
-        if (sessionManager.getActive()?.id !== session.id) return;
-        sessionManager.updateCapabilities(session.id, late);
-        wsBroadcast("capabilities", serializeCaps(late));
-      });
-
-      sessionManager.updateCapabilities(session.id, capabilities);
-      sessionManager.updateState(session.id, "ready");
-      wireSessionToClients();
-
-      // Wire up graceful quit
-      processManager.sendQuitFn = async () => {
-        try { await connection.send("quit"); } catch { /* connection may be dead */ }
-      };
-
-      // Wire playlist manager's command sender
-      playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
-
-      if (healthToken === undefined) {
-        // User-started launch: nothing to verify. (Also unsticks a playlist
-        // left "restarting" by a rotation the operator took over by hand.)
-        playlistManager.markRotationComplete();
-      } else if (answered) {
-        // Playlist restart: the console answered $servercaps, the server is up.
-        // A silent first probe waits for the background re-probe (above) or
-        // the health check's deadline.
-        rotationHealth.healthy(healthToken);
-      }
-
-      // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
-      // one command at a time, so these never interleave with other replies.
-      void applyPostStartSettings(connection);
-
-      // Anchor playlist timer if a playlist is active
-      if (playlistManager.isActive()) {
-        playlistManager.anchorTimer().catch(() => {});
-      }
-
-      // Broadcast to WS clients
-      wsBroadcast("connection_state", { state: "ready" });
-      wsBroadcast("capabilities", serializeCaps(capabilities));
-
-      // Broadcast current playlist status
-      if (playlistManager.getStatus().activePlaylistId) {
-        wsBroadcast("playlist_status", playlistStatusPayload());
-      }
-
-      console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
-      wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
-      if (healthToken === undefined) {
-        playlistManager.markRotationComplete();
-      } else {
-        rotationHealth.failure(`remote console login failed (${message})`, healthToken);
-      }
-    }
+    void connectConsole(port, telnetPassword, { healthToken }).catch(() => {});
   });
+}
+
+interface ConsoleConnectOptions {
+  /** Playlist restart health token (see registerAutoConnect). */
+  healthToken?: number;
+  /**
+   * Log in again to a server that has been up for a while (the console link
+   * dropped, or Pyrodeck re-attached to it): no post-start settings, no toast
+   * on failure. Throws on failure so the caller can retry.
+   */
+  again?: boolean;
+  /**
+   * Anchor an active playlist's timer even when logging in again (after a
+   * re-attach). Each anchor costs a `$netgameinfo`, which leaks engine
+   * memory, so a plain reconnect keeps the timer it has.
+   */
+  anchorPlaylist?: boolean;
+}
+
+/** Log in to the launched server's remote console and make it the active session. */
+async function connectConsole(port: number, telnetPassword: string, opts: ConsoleConnectOptions = {}): Promise<void> {
+  const { healthToken, again = false, anchorPlaylist = !again } = opts;
+  try {
+    // Disconnect any stale session
+    const existing = sessionManager.getActive();
+    if (existing) {
+      sessionManager.remove(existing.id);
+    }
+
+    const connection = new TelnetConnection();
+    const session = sessionManager.create(
+      connection,
+      "localhost",
+      port,
+      telnetPassword,
+    );
+
+    sessionManager.updateState(session.id, "connecting");
+    await connection.connect("localhost", port, telnetPassword);
+
+    // Probe capabilities
+    sessionManager.updateState(session.id, "probing");
+    const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
+      if (healthToken !== undefined) rotationHealth.healthy(healthToken);
+      if (sessionManager.getActive()?.id !== session.id) return;
+      sessionManager.updateCapabilities(session.id, late);
+      wsBroadcast("capabilities", serializeCaps(late));
+    });
+
+    sessionManager.updateCapabilities(session.id, capabilities);
+    sessionManager.updateState(session.id, "ready");
+    wireSessionToClients();
+
+    // Wire up graceful quit
+    processManager.sendQuitFn = async () => {
+      try { await connection.send("quit"); } catch { /* connection may be dead */ }
+    };
+
+    // Wire playlist manager's command sender
+    playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
+
+    if (healthToken === undefined) {
+      // User-started launch: nothing to verify. (Also unsticks a playlist
+      // left "restarting" by a rotation the operator took over by hand.)
+      playlistManager.markRotationComplete();
+    } else if (answered) {
+      // Playlist restart: the console answered $servercaps, the server is up.
+      // A silent first probe waits for the background re-probe (above) or
+      // the health check's deadline.
+      rotationHealth.healthy(healthToken);
+    }
+
+    // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
+    // one command at a time, so these never interleave with other replies.
+    if (!again) void applyPostStartSettings(connection);
+
+    watchConsole(connection, port, telnetPassword);
+
+    // Anchor playlist timer if a playlist is active
+    if (playlistManager.isActive() && anchorPlaylist) {
+      playlistManager.anchorTimer().catch(() => {});
+    }
+
+    // Broadcast to WS clients
+    wsBroadcast("connection_state", { state: "ready" });
+    wsBroadcast("capabilities", serializeCaps(capabilities));
+
+    // Broadcast current playlist status
+    if (playlistManager.getStatus().activePlaylistId) {
+      wsBroadcast("playlist_status", playlistStatusPayload());
+    }
+
+    console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
+    if (again) throw err;
+    wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
+    if (healthToken === undefined) {
+      playlistManager.markRotationComplete();
+    } else {
+      rotationHealth.failure(`remote console login failed (${message})`, healthToken);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +550,119 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Supervisor (D3Server3 parity): relaunch after a crash, kill and relaunch a
+// hung server, restart an empty one after an uptime limit. Settings are global
+// (pyrodeck.json); see launcher/Supervisor.ts for the rules.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stop the launched server on request and drop its console session. The
+ * Launch panel's Stop, the supervisor and the scheduler go through here.
+ *
+ * `quit` over the console is sent only for a manual stop. Otherwise the
+ * session is closed first and the process is signalled, as a playlist
+ * rotation does: closing from our side keeps the console port out of
+ * TIME_WAIT, so a relaunch need not wait for the port (waitForPortFree).
+ */
+export async function stopServer(reason: StopReason, options: { kill?: boolean } = {}): Promise<void> {
+  takeOverFromRotation();
+  playlistManager.sendCommandFn = null;
+  if (reason !== "manual") dropConsoleSession();
+  await processManager.stop(reason, options);
+  dropConsoleSession();
+  wsBroadcast("connection_state", { state: "disconnected" });
+}
+
+function dropConsoleSession(): void {
+  processManager.sendQuitFn = null;
+  const session = sessionManager.getActive();
+  if (session) sessionManager.remove(session.id);
+}
+
+/** Start the last launch again, into a new log file next to the last one. */
+async function relaunchLast(): Promise<void> {
+  const last = processManager.getLaunchConfig();
+  if (!last) throw new Error("there is no launch to repeat");
+  if (processManager.isRunning()) return;
+
+  let logPath = last.logPath;
+  if (logPath) {
+    let label = path.basename(last.configFile, path.extname(last.configFile));
+    if (last.profileId) {
+      try {
+        label = (await new ServerProfileManager(CONFIG_DIR, "").read(last.profileId)).name;
+      } catch {
+        // profile deleted since launch: keep the config name
+      }
+    }
+    const fresh = path.join(path.dirname(logPath), buildLogFilename(label));
+    const logError = await prepareLogFile(fresh);
+    if (logError) {
+      wsBroadcast("error", { message: `Relaunch: ${logError} The server restarts without a log.` });
+      logPath = undefined;
+    } else {
+      logPath = fresh;
+    }
+  }
+
+  dropConsoleSession();
+  registerAutoConnect(last.telnetPassword);
+  await processManager.start({ ...last, logPath }, "relaunch");
+}
+
+export const supervisor = new Supervisor({
+  relaunch: relaunchLast,
+  stop: (reason, options) => stopServer(reason, options),
+  command: async (cmd) => {
+    const session = sessionManager.getActive();
+    if (!session || session.state !== "ready" || !session.connection.isConnected()) {
+      throw new Error("no console");
+    }
+    return session.connection.send(cmd);
+  },
+  isRunning: () => processManager.isRunning(),
+  rotationPending: () => rotationHealth.isPending(),
+  notify: (message, level) => {
+    if (level === "error") {
+      console.warn(`[Supervisor] ${message}`);
+      wsBroadcast("error", { message });
+    } else {
+      console.log(`[Supervisor] ${message}`);
+    }
+  },
+});
+
+/** Feed a logged-in console to the supervisor, and log in again if the link drops while the server runs. */
+function watchConsole(connection: ServerConnection, port: number, telnetPassword: string): void {
+  connection.onData(() => supervisor.consoleActivity());
+  connection.onDisconnect(() => scheduleConsoleReconnect(port, telnetPassword));
+  stopConsoleReconnect();
+  supervisor.consoleReady();
+}
+
+// D3Server3 logs in again 5 s after its console link drops.
+const CONSOLE_RECONNECT_MS = 5_000;
+let consoleReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleConsoleReconnect(port: number, telnetPassword: string): void {
+  if (consoleReconnectTimer || processManager.getStatus().state !== "running") return;
+  consoleReconnectTimer = setTimeout(async () => {
+    consoleReconnectTimer = null;
+    if (processManager.getStatus().state !== "running") return;
+    try {
+      await connectConsole(port, telnetPassword, { again: true });
+    } catch {
+      scheduleConsoleReconnect(port, telnetPassword);
+    }
+  }, CONSOLE_RECONNECT_MS);
+}
+
+function stopConsoleReconnect(): void {
+  if (consoleReconnectTimer) clearTimeout(consoleReconnectTimer);
+  consoleReconnectTimer = null;
+}
+
 // Wire process events to WebSocket broadcasts
 processManager.on("stateChange", (state: string) => {
   // Trailing output (e.g. the stderr lines explaining a crash) must reach
@@ -535,6 +675,9 @@ processManager.on("stateChange", (state: string) => {
   if (state === "stopped" || state === "crashed") {
     playlistManager.clearCurrentLevel();
   }
+  // Read before the health check reacts below: once it gives up it is idle,
+  // and the supervisor must still know the crash was the rotation's.
+  const rotationOwned = rotationHealth.isPending();
   // A playlist restart that dies before it answers fails its health check now,
   // not at the deadline. Only while armed ("waiting"): the old process being
   // stopped for a retry is not this attempt's crash.
@@ -544,6 +687,17 @@ processManager.on("stateChange", (state: string) => {
       `server exited during startup (${exitSignal ? `signal ${exitSignal}` : `exit code ${exitCode}`})`,
       rotationHealth.token(),
     );
+  }
+  if (state === "stopped" || state === "crashed") {
+    stopConsoleReconnect();
+    const { exitCode, exitSignal, stopReason } = processManager.getStatus();
+    supervisor.processDown({
+      crashed: state === "crashed",
+      stopReason,
+      rotationOwned,
+      code: exitCode,
+      signal: exitSignal,
+    });
   }
 });
 
@@ -598,6 +752,10 @@ processManager.on("logWarning", (message: string) => {
 });
 
 export async function launcherRoutes(app: FastifyInstance): Promise<void> {
+  // pyrodeck.json is loaded by now (it was not when this module was evaluated).
+  supervisor.applySettings(pyrodeckConfig.get().supervisor);
+  app.addHook("onClose", async () => supervisor.dispose());
+
   app.post("/api/launcher/start", async (request, reply) => {
     if (processManager.isRunning()) {
       return reply.status(409).send({ error: "Server is already running" });
@@ -767,29 +925,47 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: "Server is not running" });
     }
 
-    takeOverFromRotation();
-    playlistManager.sendCommandFn = null;
-
     // Stop while the telnet session is still wired so ProcessManager can try
     // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
     // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
     // absorbs that on the next launch.
-    await processManager.stop("manual");
-
-    // Clean up session after the process is down
-    processManager.sendQuitFn = null;
-    const session = sessionManager.getActive();
-    if (session) {
-      sessionManager.remove(session.id);
-    }
-
-    wsBroadcast("connection_state", { state: "disconnected" });
+    await stopServer("manual");
 
     return { ok: true, status: processManager.getStatus() };
   });
 
   app.get("/api/launcher/status", async () => {
-    return { ...processManager.getStatus(), missionHost: missionHost.getStatus() };
+    return {
+      ...processManager.getStatus(),
+      missionHost: missionHost.getStatus(),
+      supervisor: supervisor.snapshot(),
+    };
+  });
+
+  /** GET /api/launcher/supervisor: the saved settings and the live state. */
+  app.get("/api/launcher/supervisor", async () => supervisor.snapshot());
+
+  /**
+   * PUT /api/launcher/supervisor  { relaunchOnCrash, hangCheck, hangProbeAfterSec,
+   *   hangRestartAfterSec, emptyRestart, emptyRestartAfterHours, emptyRestartGraceSec }
+   * Fields left out keep their saved value. Applies at once.
+   */
+  app.put("/api/launcher/supervisor", async (request, reply) => {
+    const check = validateSupervisorSettings(request.body, pyrodeckConfig.get().supervisor);
+    if (check.errors.length > 0) {
+      return reply.status(400).send({ error: check.errors.join(" "), errors: check.errors });
+    }
+    await pyrodeckConfig.save({ supervisor: check.settings });
+    supervisor.applySettings(check.settings);
+    return supervisor.snapshot();
+  });
+
+  /** POST /api/launcher/supervisor/cancel-relaunch: leave a crashed server down. */
+  app.post("/api/launcher/supervisor/cancel-relaunch", async (_request, reply) => {
+    if (!supervisor.cancelRelaunch()) {
+      return reply.status(409).send({ error: "No relaunch is pending" });
+    }
+    return supervisor.snapshot();
   });
 
   app.get("/api/launcher/detect", async (_request, reply) => {

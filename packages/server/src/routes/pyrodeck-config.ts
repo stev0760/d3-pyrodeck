@@ -25,8 +25,9 @@ export async function pyrodeckConfigRoutes(
   });
 
   app.put("/api/pyrodeck/config", async (request, reply) => {
-    // The mission host has its own route (validation, listener restart).
-    const { adminPasswordHash: _, missionHost: _host, ...updates } =
+    // The mission host and the supervisor have their own routes (validation,
+    // applying the change to what runs).
+    const { adminPasswordHash: _, missionHost: _host, supervisor: _supervisor, ...updates } =
       request.body as Partial<PyrodeckConfig>;
 
     // Validate gamePath if being changed

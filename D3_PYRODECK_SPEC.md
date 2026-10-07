@@ -813,8 +813,11 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 |--------|------|-------------|
 | `POST` | `/api/launcher/start` | Start local D3 dedicated server process |
 | `POST` | `/api/launcher/stop` | Stop local server (graceful) |
-| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed) |
+| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost` and `supervisor` (Addendum D) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
+| `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum D) |
+| `PUT` | `/api/launcher/supervisor` | Save supervisor settings (fields left out keep their value); applies at once |
+| `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
 
 **Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
 auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the
@@ -1257,6 +1260,74 @@ Chat is matched before joins and leaves, so typed text cannot pose as one. A HUD
 level-load status (`... 100 Percent Complete*X has joined CTF`; the status is printed without a
 newline, Mission.cpp) is still read. A server running other string tables prints other words and is
 not read. No line carries the player's address.
+
+### D.2 Relaunch after a crash
+
+`launcher/Supervisor.ts`, wired in `routes/launcher.ts`. A process that exits in state `crashed`
+(no `stop()` and no console `quit`, D.1) is relaunched with the same `LaunchConfig` (same profile,
+config file, executable and arguments; a new log file next to the last one) and
+`server.started{reason:"relaunch"}`. The wait is 5 s, doubling per failure to 2 min; failures older
+than 30 minutes are forgotten; the seventh failure inside 30 minutes gives up (`gaveUp` in the
+status, an error toast) until the next launch by hand. A relaunch that cannot spawn counts as a
+failure. Launching by hand cancels a pending relaunch and resets the count;
+`POST .../cancel-relaunch` drops it without launching.
+
+Left alone: a stop on request (`server.stopped`: the Stop button, a rotation, the scheduler, a
+console `quit`), and a crash while the rotation health check (`RotationHealthMonitor`) is pending.
+That crash belongs to the rotation, which retries once and then pauses the playlist; the launcher
+reads `rotationHealth.isPending()` before the health check reacts to the crash, because the check is
+idle once it gives up.
+
+`stopServer(reason, {kill})` in `routes/launcher.ts` is the one stop path (Stop button, supervisor;
+the scheduler should use it with `"schedule"`). Only a manual stop sends `quit`; the others close
+Pyrodeck's console session first and signal the process, as a rotation does, so the console port
+is not left in TIME_WAIT on the server's side.
+
+### D.3 Hang check
+
+`launcher/HangWatch.ts`. The engine services the remote console once per server frame
+(`DoDedicatedServerFrame` → `DedicatedReadTelnet`, dedicated_server.cpp) and echoes each line it
+reads before running it, so any console output proves the main loop turns and any command makes
+it print. Once the console is logged in, every chunk of console output resets the silence. After
+`hangProbeAfterSec` (default 59) of silence it sends `$players`
+(`DMFCInputCommand_Players`, dmfcinputcommand.cpp: a header and one line per player, printed with
+`DPrintf` = `PrintDedicatedMessage`, Game2DLL.cpp; vanilla and Matcen alike, and it refreshes the
+player count for D.4). With no output for `hangRestartAfterSec` (default 120) in all it emits
+`server.hung`, kills the process (SIGKILL, no `quit`: a stuck loop never runs it, and the engine's
+SIGTERM handler runs shutdown code in the same stuck process, sdlmain.cpp `fatal_signal_handler`)
+and relaunches it with the D.2 backoff. No `server.stopped` or `server.crashed` follows the kill.
+
+Level loads: no probe and no kill for 120 s after `level.started`. 3202 loads in the Matcen soak
+lab's logs took at most 0.98 s from `Opening level` to the end of the load, and the end of a level
+to the next `Opening level` about 1 s; builds before 0.9.15 stopped running frames for up to 48 s
+after a load (lab log, lazy navigation build on the main thread) and 100 s on DownTown (§3.3). A
+server that hangs during a load is found 120 s + 61 s after the load began.
+
+If the console link drops while the process runs, Pyrodeck logs in again every 5 s (D3Server3
+does the same); the silence keeps counting, so a server that accepts the TCP connection but never
+prompts for the password is still found hung.
+
+### D.4 Restart when empty
+
+Off by default. Checked every 15 s (D3Server3's timer): uptime above `emptyRestartAfterHours`
+(default 24), no human on the server, and at least `emptyRestartGraceSec` (default 130, D3Server3's
+value) since the last one left (since the start if nobody joined). Humans are counted from
+`player.joined`/`player.left` (D.1; `[BOT]` callsigns never count) and from every `$players` reply
+(slot 0 is the server itself). Before restarting, `$players` is sent once more and the restart
+happens only if its reply parses and lists no human. Then `server.stopped{reason:"empty-restart"}`
+and an immediate relaunch (`server.started{reason:"relaunch"}`), not counted as a failure. Not
+during a rotation. A re-attached server (D.5) counts as unknown until its first `$players` reply.
+
+Settings are global (`pyrodeck.json` → `supervisor`, validated like `missionHost`):
+`relaunchOnCrash` (true), `hangCheck` (true), `hangProbeAfterSec` (59, 10..3600),
+`hangRestartAfterSec` (120, at least probe + 10, up to 7200), `emptyRestart` (false),
+`emptyRestartAfterHours` (24, 0.1..8760), `emptyRestartGraceSec` (130, 0..3600).
+
+`supervisor` in `GET /api/launcher/status`: `settings`, `enabled`, `relaunchCount`,
+`recentFailures`, `pendingRelaunch {at, cause}`, `gaveUp {at, reason}`, `lastCrash {at, code,
+signal}`, `lastHang {at, silentForMs}`, `hang {state: off|listening|probing|loading, silentForMs,
+probeAt, restartAt}`, `uptimeMs`, `humans` (null = unknown), `emptySince`, `emptyRestart` (why not
+yet, null when off), `adopted`. The process status also carries `stopReason`.
 
 ---
 
