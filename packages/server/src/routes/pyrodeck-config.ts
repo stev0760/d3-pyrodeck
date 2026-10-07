@@ -5,6 +5,7 @@ import {
   validateExecutable,
   type PyrodeckConfig,
 } from "../config/PyrodeckConfig.js";
+import { validateLogDir } from "../launcher/logPaths.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 export const pyrodeckConfig = new PyrodeckConfigManager(CONFIG_DIR);
@@ -48,6 +49,20 @@ export async function pyrodeckConfigRoutes(
           details: result.errors,
         });
       }
+    }
+
+    // Validate logDir when one is set (blank/null means "next to the executable")
+    if (typeof updates.logDir === "string" && updates.logDir.trim()) {
+      const result = await validateLogDir(updates.logDir);
+      if (!result.valid) {
+        return reply.status(400).send({
+          error: result.errors.join(" "),
+          details: result.errors,
+        });
+      }
+      updates.logDir = updates.logDir.trim();
+    } else if (updates.logDir !== undefined) {
+      updates.logDir = null;
     }
 
     const saved = await pyrodeckConfig.save(updates);

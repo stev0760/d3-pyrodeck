@@ -784,6 +784,17 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 | `GET` | `/api/launcher/status` | Process state (running / stopped / crashed) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
 
+**Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
+auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the
+executable). Saving a Log Directory requires an absolute path that is, or can be created under, a
+writable directory. Before a launch, Pyrodeck creates the directory and the log file itself; a
+failure refuses the user-started launch (400) and is announced on a playlist restart (which still
+restarts the server). After launch, `GET /api/launcher/status` carries
+`log: { path, state: "none"|"pending"|"ok"|"failed", message }`: `ok` once the file holds output
+(first check about 8 s after launch), `failed` on a stream error, an empty or missing file, or a
+file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
+raises an error toast; the Launch panel keeps it on screen until the next launch.
+
 ---
 
 ## 9. Project Structure

@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 /**
@@ -34,4 +36,59 @@ export function buildLogFilename(label: string, now: Date = new Date()): string 
   // 2026-06-17T22:20:31.434Z → 2026-06-17T22-20-31
   const ts = now.toISOString().slice(0, 19).replace(/:/g, "-");
   return `${slug}-${ts}.log`;
+}
+
+/**
+ * Check a user-entered log directory when it is saved, before any launch.
+ * It must be absolute (a relative path would resolve against Pyrodeck's own
+ * working directory, not the game's), and it must be a writable directory or
+ * not exist yet under a writable directory (launch creates it).
+ */
+export async function validateLogDir(dir: string): Promise<{ valid: boolean; errors: string[] }> {
+  const trimmed = dir.trim();
+  if (!path.isAbsolute(trimmed)) {
+    return {
+      valid: false,
+      errors: [`Log directory must be an absolute path (got "${trimmed}"); "~" is not expanded.`],
+    };
+  }
+  // Walk up to the nearest path that exists.
+  let probe = path.resolve(trimmed);
+  for (;;) {
+    try {
+      const st = await fs.stat(probe);
+      if (!st.isDirectory()) {
+        return { valid: false, errors: [`${probe} exists and is not a directory.`] };
+      }
+      break;
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return { valid: false, errors: [`No part of ${trimmed} exists.`] };
+      probe = parent;
+    }
+  }
+  try {
+    await fs.access(probe, fsConstants.W_OK);
+  } catch {
+    return { valid: false, errors: [`${probe} is not writable by Pyrodeck.`] };
+  }
+  return { valid: true, errors: [] };
+}
+
+/**
+ * Make sure a launch's log file can really be written: create the directory,
+ * then create (append-open) the file itself. Opening the actual file is a
+ * stronger test than an access() check, which can pass on filesystems and ACL
+ * setups that still refuse the write. Returns an error message, or null.
+ */
+export async function prepareLogFile(logPath: string): Promise<string | null> {
+  try {
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    const handle = await fs.open(logPath, "a");
+    await handle.close();
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `Cannot write the server log ${logPath} (${message}).`;
+  }
 }

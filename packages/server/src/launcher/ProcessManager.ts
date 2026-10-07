@@ -10,6 +10,19 @@ export type ProcessState =
   | "stopping"
   | "crashed";
 
+/**
+ * Whether the current launch's output is reaching its log file.
+ * - none: no log for this launch
+ * - pending: launched, first write check not yet run
+ * - ok: the file exists and holds what was written to it
+ * - failed: output is NOT being saved; `message` says why
+ */
+export interface LogHealth {
+  path: string | null;
+  state: "none" | "pending" | "ok" | "failed";
+  message: string | null;
+}
+
 export interface ProcessStatus {
   state: ProcessState;
   pid: number | null;
@@ -19,6 +32,15 @@ export interface ProcessStatus {
   stoppedAt: Date | null;
   /** Profile whose launch produced the current/last process, if launched from a profile. */
   activeProfileId: string | null;
+  /** Log file health for the current/last launch (stays "failed" until the next launch). */
+  log: LogHealth;
+}
+
+export interface ProcessManagerOptions {
+  /** Delay before the first log write check (default LOG_WRITE_CHECK_MS). */
+  logCheckDelayMs?: number;
+  /** Interval of the log re-checks while the process runs (default LOG_RECHECK_MS). */
+  logRecheckMs?: number;
 }
 
 export interface LaunchConfig {
@@ -60,6 +82,10 @@ const WINDOWS_TIME_WAIT_MS = 120_000;
 // almost immediately; if it's still empty (or the stream errored) past this
 // window, logging silently failed and we raise a loud warning.
 const LOG_WRITE_CHECK_MS = 8000;
+// While the server runs, re-check the log this often: a log file deleted or
+// moved away mid-run (cleanup scripts, a mis-aimed rm) keeps "working" from
+// the writer's side while the output goes to an unlinked inode.
+const LOG_RECHECK_MS = 30_000;
 
 /**
  * Manages the D3 dedicated server process lifecycle.
@@ -82,6 +108,7 @@ export class ProcessManager extends EventEmitter {
     startedAt: null,
     stoppedAt: null,
     activeProfileId: null,
+    log: { path: null, state: "none", message: null },
   };
   private telnetProbeTimer: ReturnType<typeof setInterval> | null = null;
   private telnetReady = false;
@@ -90,6 +117,11 @@ export class ProcessManager extends EventEmitter {
   private logPath: string | null = null;
   private logStreamFailed = false;
   private writeCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private logRecheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** Inode of the log file at the first check; a different one later means it was replaced. */
+  private logIno: number | null = null;
+  private readonly logCheckDelayMs: number;
+  private readonly logRecheckMs: number;
   // Track the last D3 exit so we only apply port-release waits when needed.
   private lastExitedPort: number | null = null;
   private lastExitedAt: number = 0;
@@ -97,8 +129,14 @@ export class ProcessManager extends EventEmitter {
   /** Send a quit command over telnet for graceful shutdown. Set externally. */
   sendQuitFn: (() => Promise<void>) | null = null;
 
+  constructor(options: ProcessManagerOptions = {}) {
+    super();
+    this.logCheckDelayMs = options.logCheckDelayMs ?? LOG_WRITE_CHECK_MS;
+    this.logRecheckMs = options.logRecheckMs ?? LOG_RECHECK_MS;
+  }
+
   getStatus(): ProcessStatus {
-    return { ...this.status };
+    return { ...this.status, log: { ...this.status.log } };
   }
 
   /** Log file the current launch is writing, or null when no child is alive. */
@@ -152,6 +190,12 @@ export class ProcessManager extends EventEmitter {
     // Open log file if configured
     this.logPath = config.logPath ?? null;
     this.logStreamFailed = false;
+    this.logIno = null;
+    this.status.log = {
+      path: this.logPath,
+      state: this.logPath ? "pending" : "none",
+      message: null,
+    };
     if (config.logPath) {
       const logPath = config.logPath;
       try {
@@ -161,10 +205,7 @@ export class ProcessManager extends EventEmitter {
         // it — flag the failure and raise a warning so the run isn't logging
         // silently into the void.
         this.logStream.on("error", (err) => {
-          if (this.logStreamFailed) return;
-          this.logStreamFailed = true;
-          this.emit(
-            "logWarning",
+          this.failLog(
             `Logging failed: cannot write ${logPath} (${err.message}). Server is running but its output is NOT being saved.`,
           );
         });
@@ -177,10 +218,8 @@ export class ProcessManager extends EventEmitter {
       } catch (err) {
         // Log file is optional — don't fail the launch, but don't hide it either.
         this.logStream = null;
-        this.logStreamFailed = true;
         const message = err instanceof Error ? err.message : String(err);
-        this.emit(
-          "logWarning",
+        this.failLog(
           `Logging failed: cannot open ${logPath} (${message}). Server is running but its output is NOT being saved.`,
         );
       }
@@ -276,16 +315,39 @@ export class ProcessManager extends EventEmitter {
     this.emit("stateChange", state);
   }
 
+  /** Record a logging failure once: persistent in status, plus a logWarning event. */
+  private failLog(message: string): void {
+    if (this.logStreamFailed) return;
+    this.logStreamFailed = true;
+    this.status.log = { path: this.logPath, state: "failed", message };
+    this.stopLogChecks();
+    this.emit("logWarning", message);
+  }
+
+  private stopLogChecks(): void {
+    if (this.writeCheckTimer) {
+      clearTimeout(this.writeCheckTimer);
+      this.writeCheckTimer = null;
+    }
+    if (this.logRecheckTimer) {
+      clearInterval(this.logRecheckTimer);
+      this.logRecheckTimer = null;
+    }
+  }
+
   /**
    * Backstop for the log stream's async 'error': a short while after launch,
    * confirm the log file actually exists and has received bytes. If it's still
    * empty (or the stream already errored), logging silently failed — raise a
    * loud warning so it's caught in seconds rather than after an overnight soak.
+   * After a pass, keep re-checking while the server runs, so a log deleted,
+   * moved or replaced mid-run is reported too.
    */
   private startLogWriteCheck(): void {
-    if (this.writeCheckTimer) clearTimeout(this.writeCheckTimer);
+    this.stopLogChecks();
     const logPath = this.logPath;
     if (!logPath) return;
+    const secs = Math.round(this.logCheckDelayMs / 1000);
     this.writeCheckTimer = setTimeout(() => {
       this.writeCheckTimer = null;
       // Stream error path already warned; don't double-report.
@@ -293,23 +355,47 @@ export class ProcessManager extends EventEmitter {
       fs.promises
         .stat(logPath)
         .then((st) => {
+          if (this.logStreamFailed || this.logPath !== logPath) return;
           if (st.size === 0) {
-            this.logStreamFailed = true;
-            this.emit(
-              "logWarning",
-              `Logging failed: ${logPath} exists but is empty ${LOG_WRITE_CHECK_MS / 1000}s after launch. Server output is NOT being saved.`,
+            this.failLog(
+              `Logging failed: ${logPath} exists but is empty ${secs}s after launch. Server output is NOT being saved.`,
             );
+            return;
+          }
+          this.logIno = st.ino;
+          this.status.log = { path: logPath, state: "ok", message: null };
+          if (this.child) {
+            this.logRecheckTimer = setInterval(() => this.recheckLog(logPath), this.logRecheckMs);
           }
         })
         .catch((err) => {
-          this.logStreamFailed = true;
           const message = err instanceof Error ? err.message : String(err);
-          this.emit(
-            "logWarning",
-            `Logging failed: ${logPath} not found ${LOG_WRITE_CHECK_MS / 1000}s after launch (${message}). Server output is NOT being saved.`,
+          this.failLog(
+            `Logging failed: ${logPath} not found ${secs}s after launch (${message}). Server output is NOT being saved.`,
           );
         });
-    }, LOG_WRITE_CHECK_MS);
+    }, this.logCheckDelayMs);
+  }
+
+  /** Periodic check: the log file is still the one being written. */
+  private recheckLog(logPath: string): void {
+    if (this.logStreamFailed || this.logPath !== logPath) return;
+    fs.promises
+      .stat(logPath)
+      .then((st) => {
+        if (this.logStreamFailed || this.logPath !== logPath) return;
+        if (this.logIno !== null && st.ino !== this.logIno) {
+          this.failLog(
+            `Logging failed: ${logPath} was replaced by another file; server output is going to the old one and is NOT being saved where expected.`,
+          );
+        }
+      })
+      .catch(() => {
+        if (this.logStreamFailed || this.logPath !== logPath) return;
+        this.failLog(
+          `Logging failed: ${logPath} was deleted or moved while the server runs. Server output is NOT being saved.`,
+        );
+      });
   }
 
   /**
@@ -409,10 +495,7 @@ export class ProcessManager extends EventEmitter {
 
   private cleanup(): void {
     this.stopTelnetProbe();
-    if (this.writeCheckTimer) {
-      clearTimeout(this.writeCheckTimer);
-      this.writeCheckTimer = null;
-    }
+    this.stopLogChecks();
     // Record exit so waitForPortFree() can skip the delay on first-ever launch.
     if (this.launchConfig) {
       this.lastExitedPort = this.launchConfig.telnetPort;

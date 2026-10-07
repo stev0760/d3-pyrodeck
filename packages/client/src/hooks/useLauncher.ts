@@ -19,6 +19,12 @@ export interface ProcessStatus {
   stoppedAt: string | null;
   /** Profile whose launch produced the current/last process, if any. */
   activeProfileId: string | null;
+  /** Whether the launch's output reaches its log file (server-side checks). */
+  log?: {
+    path: string | null;
+    state: "none" | "pending" | "ok" | "failed";
+    message: string | null;
+  };
 }
 
 export interface ServerProfile {

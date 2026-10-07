@@ -390,6 +390,23 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             )}
           </div>
 
+          {/* Log health: a failed log stays on screen (the toast alone is gone
+              in seconds, and a soak that logs nowhere is lost for good). */}
+          {processStatus?.log?.state === "failed" && (
+            <div className="text-xs text-destructive bg-destructive/10 border border-destructive/40 rounded-md px-2 py-1.5 break-words">
+              <span className="font-medium">Log not being written.</span> {processStatus.log.message}
+            </div>
+          )}
+          {isActive && processStatus?.log?.path && processStatus.log.state !== "failed" && (
+            <p
+              className="text-[10px] text-muted-foreground break-all font-mono"
+              title={processStatus.log.path}
+            >
+              Log: {processStatus.log.path.split(/[\\/]/).pop()}
+              {processStatus.log.state === "pending" ? " (checking…)" : ""}
+            </p>
+          )}
+
           {/* Launch / Stop — Stop targets the live profile; a different selection
               shows Launch (disabled while another profile's server holds the port). */}
           {selectedIsLive ? (

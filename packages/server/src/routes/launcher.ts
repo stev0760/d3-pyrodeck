@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { ProcessManager } from "../launcher/ProcessManager.js";
-import { resolveLogDir, buildLogFilename } from "../launcher/logPaths.js";
+import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
   extractTelnetConfig,
@@ -307,15 +306,16 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
           executablePath = path.join(gamePath, executablePath);
         }
         // Auto-name the rotation's log in the configured dir (default: next to
-        // the executable), creating it if needed. Mirrors POST /start.
+        // the executable) and create it, as POST /start does. A rotation still
+        // restarts the server when the log can't be written (players matter
+        // more than the log), but says so; ProcessManager then marks the
+        // launch's log as failed in the status the Launch panel shows.
         const logDir = resolveLogDir(config.logDir, executablePath);
-        try {
-          await fs.mkdir(logDir, { recursive: true });
-        } catch {
-          // Non-fatal for rotation — ProcessManager surfaces a write-check
-          // warning if logging then fails to materialize.
-        }
         const logPath = path.join(logDir, buildLogFilename(activeProfile.name));
+        const logError = await prepareLogFile(logPath);
+        if (logError) {
+          wsBroadcast("error", { message: `Playlist rotation: ${logError} The server restarts without a log.` });
+        }
 
         // Register auto-connect handler BEFORE calling start()
         registerAutoConnect(telnetCfg.password);
@@ -508,20 +508,17 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Log file: auto-named per launch in the configured log directory (default:
-    // next to the executable). Validate/create the directory BEFORE launch so a
-    // missing or unwritable target fails loudly instead of silently logging into
-    // the void for hours.
+    // next to the executable). Create the directory and the file itself BEFORE
+    // launch so a missing or unwritable target fails loudly instead of silently
+    // logging into the void for hours.
     const logDir = resolveLogDir(config.logDir, executablePath);
-    try {
-      await fs.mkdir(logDir, { recursive: true });
-      await fs.access(logDir, fsConstants.W_OK);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    const logPath = path.join(logDir, buildLogFilename(logLabel));
+    const logError = await prepareLogFile(logPath);
+    if (logError) {
       return reply.status(400).send({
-        error: `Log directory is not writable: ${logDir} (${message}). Set a valid Log Directory in the Logs panel.`,
+        error: `${logError} Set a valid Log Directory in the Logs panel.`,
       });
     }
-    const logPath = path.join(logDir, buildLogFilename(logLabel));
 
     // If a playlist is active and hasn't been synced to a server yet, override
     // the profile's MissionName/SetLevel with the playlist's current entry
