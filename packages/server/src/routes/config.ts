@@ -15,6 +15,7 @@ import {
   type BotRosterData,
 } from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
+import { sanitizePostStart } from "../launcher/postStartSettings.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -181,12 +182,19 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
   /** Update profile metadata. */
   app.patch("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const updates = request.body as {
+    const body = (request.body ?? {}) as {
       name?: string;
       description?: string;
       logPath?: string | null;
       gamePath?: string | null;
       executablePath?: string | null;
+      postStart?: unknown;
+    };
+    const { postStart, ...rest } = body;
+    const updates = {
+      ...rest,
+      // Whitelisted values only; null or nothing valid clears the settings.
+      ...(postStart !== undefined ? { postStart: sanitizePostStart(postStart) } : {}),
     };
 
     try {

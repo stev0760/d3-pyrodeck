@@ -21,6 +21,8 @@ import {
   rotationHealth,
 } from "../launcher/playlistInstance.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
+import { buildPostStartCommands } from "../launcher/postStartSettings.js";
+import type { ServerConnection } from "../connection/ServerConnection.js";
 
 export { playlistManager };
 
@@ -108,6 +110,32 @@ playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
 });
 
 /**
+ * Send the launched profile's post-start settings (PLAN Phase 3 Step 7) over
+ * the new console session. Best-effort: a failure is reported, never fatal.
+ */
+async function applyPostStartSettings(connection: ServerConnection): Promise<void> {
+  const profileId = processManager.getStatus().activeProfileId;
+  if (!profileId) return;
+  let commands: string[];
+  try {
+    const profile = await new ServerProfileManager(CONFIG_DIR, "").read(profileId);
+    commands = buildPostStartCommands(profile.postStart);
+  } catch {
+    return; // profile deleted since launch
+  }
+  for (const cmd of commands) {
+    try {
+      await connection.send(cmd);
+      console.log(`[Pyrodeck] Post-start: ${cmd}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      wsBroadcast("error", { message: `Post-start setting "${cmd}" failed: ${message}` });
+      return;
+    }
+  }
+}
+
+/**
  * Register a one-shot telnetReady handler so auto-connect fires after (re)start.
  * Called from POST /start and from the playlist rotate handler.
  *
@@ -171,6 +199,10 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
         // the health check's deadline.
         rotationHealth.healthy(healthToken);
       }
+
+      // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
+      // one command at a time, so these never interleave with other replies.
+      void applyPostStartSettings(connection);
 
       // Anchor playlist timer if a playlist is active
       if (playlistManager.isActive()) {

@@ -27,6 +27,14 @@ export interface ProcessStatus {
   };
 }
 
+/** DMFC options sent over the console after each launch (unset = server default). */
+export interface PostStartSettings {
+  hudNames?: "full" | "team" | "none";
+  killMsgFilter?: "full" | "simple" | "none";
+  autoSaveLevel?: boolean;
+  autoSaveDisconnect?: boolean;
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -36,6 +44,8 @@ export interface ServerProfile {
   gamePath?: string;
   /** Per-profile D3 executable override (inherits global if omitted). */
   executablePath?: string;
+  /** Applied over the console after every launch and playlist restart. */
+  postStart?: PostStartSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -210,7 +220,13 @@ export function useLauncher() {
   const updateProfile = useCallback(
     async (
       id: string,
-      updates: { name?: string; gamePath?: string | null; executablePath?: string | null; description?: string | null },
+      updates: {
+        name?: string;
+        gamePath?: string | null;
+        executablePath?: string | null;
+        description?: string | null;
+        postStart?: PostStartSettings | null;
+      },
     ): Promise<ServerProfile | null> => {
       setError(null);
       try {

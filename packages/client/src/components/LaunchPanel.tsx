@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { useLauncher, ServerProfile } from "../hooks/useLauncher.ts";
+import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/useLauncher.ts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -24,6 +24,96 @@ interface PathFormState {
   name: string;
   gamePath: string;
   executablePath: string;
+  postStart: PostStartSettings;
+}
+
+type OnOff = "default" | "on" | "off";
+const toOnOff = (v: boolean | undefined): OnOff => (v === undefined ? "default" : v ? "on" : "off");
+const fromOnOff = (v: OnOff): boolean | undefined => (v === "default" ? undefined : v === "on");
+
+const SELECT_CLASS =
+  "w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+
+/**
+ * DMFC options dedicated.cfg cannot hold. Pyrodeck sends them over the
+ * console after each launch and playlist restart of this profile.
+ */
+function PostStartFields({
+  values,
+  onChange,
+}: {
+  values: PostStartSettings;
+  onChange: (v: PostStartSettings) => void;
+}) {
+  const set = (patch: Partial<PostStartSettings>) => {
+    const next: PostStartSettings = { ...values, ...patch };
+    for (const k of Object.keys(next) as (keyof PostStartSettings)[]) {
+      if (next[k] === undefined) delete next[k];
+    }
+    onChange(next);
+  };
+  return (
+    <div className="space-y-1.5 border-t border-border pt-2">
+      <p className="text-sm font-score tracking-wide text-muted-foreground">After Launch</p>
+      <p className="text-[10px] text-muted-foreground">
+        Sent over the console after every launch and playlist restart. "Server default" sends nothing.
+      </p>
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="text-[11px] text-muted-foreground">
+          HUD names
+          <select
+            value={values.hudNames ?? ""}
+            onChange={(e) => set({ hudNames: (e.target.value || undefined) as PostStartSettings["hudNames"] })}
+            className={SELECT_CLASS}
+          >
+            <option value="">Server default</option>
+            <option value="full">Full</option>
+            <option value="team">Team only</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label className="text-[11px] text-muted-foreground">
+          Kill messages
+          <select
+            value={values.killMsgFilter ?? ""}
+            onChange={(e) =>
+              set({ killMsgFilter: (e.target.value || undefined) as PostStartSettings["killMsgFilter"] })
+            }
+            className={SELECT_CLASS}
+          >
+            <option value="">Server default</option>
+            <option value="full">Full</option>
+            <option value="simple">Simple</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label className="text-[11px] text-muted-foreground">
+          Save stats at level end
+          <select
+            value={toOnOff(values.autoSaveLevel)}
+            onChange={(e) => set({ autoSaveLevel: fromOnOff(e.target.value as OnOff) })}
+            className={SELECT_CLASS}
+          >
+            <option value="default">Server default</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label className="text-[11px] text-muted-foreground">
+          Save stats on disconnect
+          <select
+            value={toOnOff(values.autoSaveDisconnect)}
+            onChange={(e) => set({ autoSaveDisconnect: fromOnOff(e.target.value as OnOff) })}
+            className={SELECT_CLASS}
+          >
+            <option value="default">Server default</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  );
 }
 
 function PathFormFields({
@@ -101,7 +191,12 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   } = launcher;
 
   const [mode, setMode] = useState<PanelMode>("listing");
-  const [form, setForm] = useState<PathFormState>({ name: "", gamePath: "", executablePath: "" });
+  const [form, setForm] = useState<PathFormState>({
+    name: "",
+    gamePath: "",
+    executablePath: "",
+    postStart: {},
+  });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -145,13 +240,14 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       name: selectedProfile.name,
       gamePath: selectedProfile.gamePath ?? config?.gamePath ?? "",
       executablePath: selectedProfile.executablePath ?? config?.executablePath ?? "",
+      postStart: { ...(selectedProfile.postStart ?? {}) },
     });
     setValidationErrors([]);
     setMode("editing");
   };
 
   const startCreating = () => {
-    setForm({ name: "", gamePath: "", executablePath: "" });
+    setForm({ name: "", gamePath: "", executablePath: "", postStart: {} });
     setValidationErrors([]);
     setMode("creating");
   };
@@ -209,6 +305,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       name: form.name.trim(),
       gamePath: form.gamePath.trim() || null,
       executablePath: form.executablePath.trim() || null,
+      postStart: Object.keys(form.postStart).length > 0 ? form.postStart : null,
     });
     setSaving(false);
     if (updated) setMode("listing");
@@ -261,6 +358,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           values={form}
           onChange={(f) => setForm((prev) => ({ ...prev, ...f }))}
         />
+
+        {!isCreate && (
+          <PostStartFields
+            values={form.postStart}
+            onChange={(postStart) => setForm((prev) => ({ ...prev, postStart }))}
+          />
+        )}
 
         {validationErrors.length > 0 && (
           <div className="text-xs text-destructive space-y-0.5">

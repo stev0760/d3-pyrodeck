@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { generateDedicatedCfg, type DedicatedCfgDefaults } from "../launcher/ConfigGenerator.js";
+import type { PostStartSettings } from "../launcher/postStartSettings.js";
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -31,6 +32,12 @@ export interface ServerProfile {
    * If omitted, inherits executablePath from pyrodeck.json.
    */
   executablePath?: string;
+  /**
+   * DMFC options dedicated.cfg cannot hold ($serverhudnames, $killmsgfilter,
+   * $autosavelevel, $autosavedisconnect), sent over the console after every
+   * launch and playlist restart of this profile. Unset = server default.
+   */
+  postStart?: PostStartSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -249,6 +256,8 @@ export class ServerProfileManager {
       logPath?: string | null;
       gamePath?: string | null;
       executablePath?: string | null;
+      /** Already sanitized; null clears the settings. */
+      postStart?: PostStartSettings | null;
     },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
@@ -276,6 +285,13 @@ export class ServerProfileManager {
         delete profile.executablePath;
       } else {
         profile.executablePath = updates.executablePath;
+      }
+    }
+    if (updates.postStart !== undefined) {
+      if (updates.postStart === null) {
+        delete profile.postStart;
+      } else {
+        profile.postStart = updates.postStart;
       }
     }
 
@@ -335,9 +351,10 @@ export class ServerProfileManager {
       configFile: newCfgFile,
       createdAt: new Date().toISOString(),
     };
-    // Inherit the source profile's path overrides
+    // Inherit the source profile's path overrides and post-start settings
     if (source.gamePath) profile.gamePath = source.gamePath;
     if (source.executablePath) profile.executablePath = source.executablePath;
+    if (source.postStart) profile.postStart = { ...source.postStart };
 
     profiles.push(profile);
     await this.saveProfiles(profiles);

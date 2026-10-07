@@ -375,6 +375,18 @@ Detailed info for a player by player number (from `$players`): IP address, port,
 **`Quit`** — Graceful server shutdown. **Note: this is a CVar command, NOT a `$`-prefixed command.** Sent without the `$` prefix.
 **`$help`** — Show built-in command list.
 
+#### Post-start settings (v0.4.20)
+
+Four DMFC options cannot be set in `dedicated.cfg`. Each server profile can store them in
+`profiles.json` (`postStart: { hudNames?, killMsgFilter?, autoSaveLevel?, autoSaveDisconnect? }`,
+edited under the profile's **After Launch** fields), and Pyrodeck sends them over the console after
+every launch and playlist restart of that profile: `$serverhudnames full|team|none`,
+`$killmsgfilter full|simple|none`, `$autosavelevel on|off`, `$autosavedisconnect on|off`. An unset
+option sends nothing (the server keeps its default). Verified 2026-10-07 on a Matcen dedicated
+server: each command is acknowledged (`*Server Max HUD Name Level: Team Only`,
+`*Kill Message Filter: Simple`, `*AutoSave Stats on Level End: Off`,
+`*AutoSave Stats on Disconnect: On`).
+
 #### Additional DMFC Commands (not all need UI controls)
 
 These exist in all D3 builds via the DMFC framework. Listed for completeness — the web admin may expose some of these in future phases:
