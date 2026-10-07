@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import type { MissionHostStatus } from "@/lib/missionHost";
 
 export interface PyrodeckConfig {
   gamePath: string | null;
@@ -25,6 +26,8 @@ export interface ProcessStatus {
     state: "none" | "pending" | "ok" | "failed";
     message: string | null;
   };
+  /** Mission download listener (GET /api/launcher/status only). */
+  missionHost?: MissionHostStatus;
 }
 
 /** DMFC options sent over the console after each launch (unset = server default). */

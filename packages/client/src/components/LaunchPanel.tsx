@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/useLauncher.ts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { MissionHostSettings } from "./MissionHostSettings";
 import { Separator } from "@/components/ui/separator";
 
 type LauncherState = ReturnType<typeof useLauncher>;
@@ -555,6 +556,9 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           {error}
         </p>
       )}
+
+      <Separator />
+      <MissionHostSettings />
     </div>
   );
 }
