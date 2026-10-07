@@ -117,6 +117,32 @@ export class PlayerTracker {
     return this.profiles.get(profileId)?.present.get(name.toLowerCase())?.ip;
   }
 
+  /**
+   * The address of a player in the game: the one already known, else one
+   * `$playerinfo` if the rationing allows it. Recorded in the history.
+   */
+  async lookupAddress(profileId: string, name: string, slot: number): Promise<string | undefined> {
+    const s = this.state(profileId);
+    const entry = s.present.get(name.toLowerCase());
+    if (entry?.ip) return entry.ip;
+    const link = this.opts.console(profileId);
+    if (!link) return undefined;
+    const decision = decideIpLookup(this.opts.ipLookup(), link.capabilities, name, s.lookups);
+    if (!decision.allowed) {
+      this.log(`No address lookup for ${JSON.stringify(name)}: ${decision.reason}`);
+      return undefined;
+    }
+    s.lookups++;
+    const info = await queryPlayerinfo(link, slot, name).catch(() => null);
+    if (!info?.ip) return undefined;
+    if (entry) {
+      entry.ip = info.ip;
+      entry.slot = slot;
+      (await this.history(profileId)).update(entry.rowId, { slot, ip: info.ip });
+    }
+    return info.ip;
+  }
+
   /** Lookups used this run, for the settings page. */
   lookupsUsed(profileId: string): number {
     return this.profiles.get(profileId)?.lookups ?? 0;

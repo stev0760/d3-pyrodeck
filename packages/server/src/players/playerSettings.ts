@@ -1,3 +1,5 @@
+import path from "node:path";
+
 /**
  * Player settings stored in pyrodeck.json under `players`.
  */
@@ -10,11 +12,17 @@ export interface PlayerSettings {
    * clears its text buffer (anything but Matcen 0.9.3+; see consoleLink.ts).
    */
   ipLookupBudget: number;
+  /** Full path of the hosts.deny Pyrodeck edits; null = the server's writable directory (BanStore). */
+  hostsDenyPath: string | null;
+  /** Send `$rehash` at every level start so hosts.deny edits take effect without a restart. */
+  rehashOnLevelStart: boolean;
 }
 
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   ipLookup: true,
   ipLookupBudget: 20,
+  hostsDenyPath: null,
+  rehashOnLevelStart: true,
 };
 
 export const MAX_IP_LOOKUP_BUDGET = 30;
@@ -42,6 +50,19 @@ export function validatePlayerSettings(raw: unknown, current: PlayerSettings): P
       errors.push(`The lookup limit must be a whole number from 0 to ${MAX_IP_LOOKUP_BUDGET}.`);
     }
   }
+  if (r.hostsDenyPath !== undefined) {
+    if (r.hostsDenyPath === null || (typeof r.hostsDenyPath === "string" && !r.hostsDenyPath.trim())) {
+      settings.hostsDenyPath = null;
+    } else if (typeof r.hostsDenyPath === "string" && path.isAbsolute(r.hostsDenyPath.trim())) {
+      settings.hostsDenyPath = r.hostsDenyPath.trim();
+    } else {
+      errors.push("The hosts.deny path must be absolute (or empty for the server's default).");
+    }
+  }
+  if (r.rehashOnLevelStart !== undefined) {
+    if (typeof r.rehashOnLevelStart === "boolean") settings.rehashOnLevelStart = r.rehashOnLevelStart;
+    else errors.push("rehashOnLevelStart must be true or false.");
+  }
   return { settings, errors };
 }
 
@@ -54,5 +75,7 @@ export function sanitizeStoredPlayerSettings(raw: unknown): PlayerSettings {
   if (typeof budget === "number" && Number.isInteger(budget) && budget >= 0 && budget <= MAX_IP_LOOKUP_BUDGET) {
     out.ipLookupBudget = budget;
   }
+  if (typeof r.hostsDenyPath === "string" && path.isAbsolute(r.hostsDenyPath)) out.hostsDenyPath = r.hostsDenyPath;
+  if (typeof r.rehashOnLevelStart === "boolean") out.rehashOnLevelStart = r.rehashOnLevelStart;
   return out;
 }
