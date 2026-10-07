@@ -278,9 +278,11 @@ relaunch. This is inherently lossy — players must manually reconnect (D3 clien
 server-initiated reconnect) and restart timing is not 100% reliable (port rebind, slow level
 loads). **Rotation is officially best-effort**: we ship it as a convenience feature with clear
 messaging, not a guaranteed-uptime mechanism. Remaining mitigations, in priority order:
-- [ ] Post-restart health check: telnet reconnect + `$servercaps` within a timeout, one automatic
+- [x] Post-restart health check: telnet reconnect + `$servercaps` within a timeout, one automatic
       retry, then a WS alert + playlist auto-pause instead of a silent dead server. This is the
       one item that turns a bad rotation from "dead server nobody notices" into "visible failure."
+      (v0.4.20: 120 s deadline, crash or failed spawn fails at once, paused status with reason +
+      Resume; spec "Rotation Sequence" step 8.)
 - [ ] Pre-rotation `say` countdown with explicit "server restarting — reconnect in ~30s" messaging
       so the disconnect is expected, not alarming.
 - [ ] "Playlist health" line in PlaylistPanel showing entries skipped by the compat guard.
@@ -291,13 +293,14 @@ messaging, not a guaranteed-uptime mechanism. Remaining mitigations, in priority
 - [ ] "New Server Config" wizard: pick game type → form pre-fills sensible defaults for that mode
 - [ ] autoexec.dmfc editor: simple list of DMFC commands to run at server start
 
-### Step 7: Post-Start Settings
+### Step 7: Post-Start Settings ✅ (v0.4.20)
 
 Settings that can't be set in cfg but Pyrodeck can apply after server launch:
-- [ ] Server HUD names (full/team/none) — send `$serverhudnames` after start
-- [ ] Kill message filter (full/simple/none) — send `$killmsgfilter` after start
-- [ ] Auto-save stats toggles — send `$autosavelevel`/`$autosavedisconnect` after start
-- [ ] Store these in Pyrodeck's own config per server profile, apply automatically on launch
+- [x] Server HUD names (full/team/none) — send `$serverhudnames` after start
+- [x] Kill message filter (full/simple/none) — send `$killmsgfilter` after start
+- [x] Auto-save stats toggles — send `$autosavelevel`/`$autosavedisconnect` after start
+- [x] Store these in Pyrodeck's own config per server profile, apply automatically on launch
+      (`profiles.json` `postStart`; applied after every launch and playlist restart)
 
 ---
 
@@ -320,7 +323,17 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [x] Release workflow (`.github/workflows/release.yml` — build-linux, build-windows, release jobs)
 
 ### Release checklist
-- [ ] Best-effort rotation hardening: post-restart health check + auto-pause (see Phase 3 Step 6)
+- [x] Best-effort rotation hardening: post-restart health check + auto-pause (see Phase 3 Step 6;
+      v0.4.20, verified live against a Matcen server: healthy rotation, and a crashing restart that
+      retried once and paused)
+- [x] Matcen contract sync (Matcen registry REL8, v0.4.20): parsers, tests and spec v2.8 match
+      `PYRODECK_CONTRACT.md` §4; `$servercaps` keeps unknown feature flags (`teams`,
+      `squad_orders`, `population`); Bots tab team choice gated on `teams`. A population panel waits
+      for the fork's POP1 controls.
+- [x] Mission download link refresh (Matcen registry REL7, v0.4.20): rewrite the `URL` lines
+      inside a `.mn3`, backup once, restore; spec Addendum B
+- [x] Server log path hardening (Matcen registry REL9, v0.4.20): absolute Log Directory validated on
+      save, directory and file created before every launch, log re-checked while the server runs
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no
@@ -338,8 +351,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       launch mode spawns D3), Windows .exe on a real Windows box
 - [x] Release notes: include SmartScreen "More info → Run anyway" instructions (binaries are
       unsigned — signing via SignPath/Azure is out of reach for now, revisit post-release)
-- [ ] Issue template (`.github/ISSUE_TEMPLATE/bug_report.yml`): Pyrodeck version, OS/distro,
-      D3 build, repro steps, logs
+- [x] Issue template (`.github/ISSUE_TEMPLATE/bug_report.yml`): Pyrodeck version, OS/distro,
+      D3 build, repro steps, logs (v0.4.20; blank issues disabled)
 
 ---
 

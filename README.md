@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.4.20** — Matcen contract sync and rotation hardening. Parsers and the spec now match the fork's `PYRODECK_CONTRACT.md`: callsigns are `Name[BOT]`, `$addbot` takes a team and reports failures as a toast, `$botmode` names are exact, and a dead bot's `shields=-1` no longer drops it from `$botstat`. The `$servercaps` parser keeps feature flags it doesn't know (the fork is adding `teams`, `squad_orders` and `population`); the Bots tab offers a team when the server advertises `teams` and the game has teams. Mission download links: Pyrodeck can rewrite the `URL` lines inside a mission's `.mn3`, the links a server offers players who lack the mission, keeping the original for one-click restore. Every playlist restart is now health-checked (console login and `$servercaps` within 120 s); a failed restart retries once and then pauses the playlist with the reason on screen, instead of leaving a dead server behind it. Server logs are validated before launch (absolute Log Directory, the file itself created) and re-checked while the server runs, with a failure kept on screen. Profiles can carry post-start settings (HUD names, kill message filter, stat autosaves) that Pyrodeck applies after every launch.
+
 **v0.4.19** — Release-readiness pass. The Linux release binary was silently broken (a renamed `node` that exited without starting the server); SEA packaging now uses the official, checksum-verified nodejs.org binary and both Linux and Windows artifacts are verified to run. The release workflow, which had failed on every run, is fixed (pinned pnpm, Node 24, current actions, tests before packaging) and no longer waits on code signing. Dependencies refreshed (`pnpm audit` 72 → 0, including `@fastify/static` path-traversal fixes). Synced to the Matcen 0.9.15+ spec: the `$servercaps` probe now retries in the background for ~30s so a slow level start no longer hides the Bots tab.
 
 **v0.4.18** — UX and auth-hardening pass. Server profiles can now be edited and deleted while a server is running — previously the whole profile selector was hidden for the entire active session, so on a box that stays up you could never delete a profile. The picker marks the live profile (`● running`) and guards only its own destructive actions. Delete affordances are now consistent and discoverable across the app (profiles, saved servers, bots "Remove All") — all share one inline-confirm pattern, and the saved-server delete is no longer a hover-only control that was invisible on touch. Security: auth now fails closed for remote peers when no admin password is set (an instance exposed with no password is refused from the network instead of served wide open; localhost stays open for local dev), and route matching is boundary-aware so a route can't inherit another's auth bypass by prefix.
@@ -22,7 +24,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 **v0.4.9** — Timer reliability: the Time Left countdown resets on `$warp`, `$endlevel`, and mission rotations instead of running off a stale anchor, and re-syncs with the server every 30s. Launch mode broadcasts a `level_changed` signal (from D3's `Opening level` stdout) so the UI drops the old timer the instant a new level loads, and the Server panel shows the actual loaded level (e.g. `TheCore`), not just the mission file. Also fixed: playlist vote ties resolve to the first option, drift correction survives rotations/reconnects, WebSocket keep-alive pings are visible to browsers (iOS Safari reconnect works), and dead WS clients are culled.
 
-Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+ (protocol synced to fork 0.9.15; newer fork-only commands are harmless no-ops on older builds). Two operating modes:
+Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+ (protocol synced to the fork's contract as of 0.9.17; newer fork-only commands are harmless no-ops on older builds). Two operating modes:
 
 - **Connect mode:** Remote admin — connect to any running D3 server via its TCP console (port 2092)
 - **Launch mode:** Full server manager — configure, launch, and manage a local D3 dedicated server process
@@ -43,7 +45,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Log directory is configurable; defaults to the directory containing the D3 executable
 - Logs panel lists runs (newest first) with in-browser view, download, and delete (two-step confirm; the active log of a running server can't be deleted)
 - The in-browser viewer fetches only the last 256 KB of large logs; Download always saves the complete file
-- Pre-launch validation refuses to start if the log directory isn't writable, and a post-launch write-check raises a loud warning if output isn't being saved
+- The Log Directory must be an absolute path; before each launch Pyrodeck creates the directory and the log file itself and refuses to start if it can't
+- After launch the log is checked (about 8 s in, then every 30 s): a log that stays empty, errors, or is deleted, moved or replaced mid-run raises an error and stays flagged in the Launch panel until the next launch
 
 ### Players
 - Auto-refreshing scoreboard from `$scores` (name, points, kills, deaths, suicides, ping)
@@ -52,7 +55,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 
 ### Bots (Matcen fork only)
 - Auto-detected via `$servercaps` probe — bot UI only appears when connected to a Matcen fork server
-- Add bots with name, ship, and difficulty selection
+- Add bots with name, ship, and difficulty selection; a team choice appears when the server advertises `teams` and the game has teams
+- A refused `$addbot` (server full) or one the server altered (unknown ship, team out of range) shows as an error toast
 - Active bot list with per-bot difficulty adjustment and remove controls
 - Bulk remove all bots
 
@@ -72,6 +76,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
 - Game-mode validation: activation is rejected (with per-entry reasons) when a playlist entry's mission doesn't support the profile's game type; rotation re-checks each entry and skips incompatible ones instead of restarting into a broken game; the editor flags offending entries with ⚠ inline
+- Restart health check: each restarted server must accept the console login and answer `$servercaps` within 120 s. A crash or timeout retries once; a second failure pauses the playlist with the reason in the sidebar and a Resume button. Rotation is still best-effort: players must reconnect after each mission change
 
 ### Config Editor (Launch mode)
 - Server profile system — named configurations pointing at config files in the D3 game directory
@@ -79,6 +84,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - **Structured form UI** (no .cfg editing required): server identity, network settings, rules, ship bans, powerup toggles, bot roster
 - Starting level (SetLevel) exposed in the identity section
 - **Mission mode-compatibility**: mission picker shows per-mission details (name, level count, mode badges with team capacity) parsed from each `.mn3`, disables missions that don't support the selected game type, and warns on incompatible pairings
+- **Mission download link**: set the link a server offers players who join without the mission (rewrites the `URL` lines inside the server's copy of the `.mn3`; the original is kept as `<name>.mn3.pyrodeck-orig` and one click restores it; takes effect the next time the server loads the mission)
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
@@ -100,6 +106,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 ### Launch Mode
 - D3 install path detection and validation
 - Process lifecycle management (launch, stop, auto-connect via telnet)
+- Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 

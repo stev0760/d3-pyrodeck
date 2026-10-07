@@ -2,6 +2,26 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.4.20] - 2026-10-07
+
+### Added
+- **Mission download links.** A server offers players who join without its mission the `URL` lines inside the mission file, and most custom missions carry dead links from 1999. The Config tab's mission panel now shows a mission's links and can replace them with one working link; Pyrodeck rewrites the `.mn3` (checked as a real archive first, every other byte kept), keeps the untouched file as `<name>.mn3.pyrodeck-orig`, and restores it with one click. The server picks the new link up the next time it loads the mission.
+- **Post-start settings** per server profile: server HUD names, kill message filter, and saving stats at level end and on disconnect. These can't go in `dedicated.cfg`, so Pyrodeck sends them over the console after every launch and playlist restart.
+- Bots tab: a team choice when the server advertises `teams` and the current game has teams.
+- Bug report issue form (`.github/ISSUE_TEMPLATE`).
+
+### Changed
+- **Playlist restarts are health-checked.** The restarted server must accept the console login and answer `$servercaps` within 120 s. A crash, a failed launch or a timeout retries once; if that fails too, the playlist pauses and the sidebar says why, with a Resume button, instead of rotating on behind a dead server.
+- Synced to the Matcen fork's contract (`PYRODECK_CONTRACT.md`): `Name[BOT]` callsigns, `$addbot` with a team and its new success line, exact `$botmode` names, and `$botobj` printing to the console. The `$servercaps` parser keeps feature flags it doesn't know, including the fork's new `teams`, `squad_orders` and `population`. Spec v2.8.
+- A refused or altered `$addbot` (server full, unknown ship, team out of range) now shows an error toast instead of appearing only in the console. Bot names are sent as one word of at most 14 characters, as the server expects.
+- The Log Directory must be an absolute path; Pyrodeck creates the directory and the log file before each launch, playlist restarts included.
+
+### Fixed
+- A dead bot (`shields=-1`) vanished from the `$botstat` details.
+- A playlist rotation whose profile config had no remote console stopped the server and never restarted it, without a message. It now pauses the playlist with that reason.
+- A server log that stopped being written mid-run (deleted, moved, replaced) went unnoticed, and the one post-launch warning was a toast gone in five seconds. The log is now re-checked every 30 s and a failure stays in the Launch panel.
+- Server unit tests ran twice locally (compiled copies in `dist/` were picked up too).
+
 ## [0.4.19] - 2026-09-26
 
 ### Fixed
