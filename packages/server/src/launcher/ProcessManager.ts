@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import fs from "node:fs";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 
 export type ProcessState =
@@ -50,7 +51,7 @@ export interface LaunchConfig {
   gamePath: string;
   /** Config filename in gamePath (e.g., "my-server.cfg"). */
   configFile: string;
-  /** Extra CLI flags (e.g., -autoexec). */
+  /** Extra CLI flags (e.g., -useport). -autoexec is added by buildLaunchArgs. */
   additionalArgs?: string[];
   /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
   profileId?: string;
@@ -58,6 +59,49 @@ export interface LaunchConfig {
   logPath?: string;
   telnetPort: number;
   telnetPassword: string;
+}
+
+/** DMFC startup script: the Config tab's "Startup Commands", kept in the game directory. */
+export const AUTOEXEC_FILE = "autoexec.dmfc";
+
+// The engine copies each command-line argument into a 100-byte buffer
+// (MAX_CHARS_PER_ARG in Descent3/args.h); a longer one reaches DMFC mangled.
+const MAX_ENGINE_ARG_BYTES = 99;
+
+export interface LaunchArgs {
+  args: string[];
+  /** Set when the Startup Commands file exists but cannot be passed to the server. */
+  warning: string | null;
+}
+
+/**
+ * The server's command line. DMFC reads its startup script from the engine's
+ * writable directory (`<pref dir>/netgames/autoexec.dmfc`) unless `-autoexec`
+ * names a file, so a Startup Commands file in the game directory is passed by
+ * absolute path. Without one nothing is passed and DMFC reads its default.
+ * spawn() hands each argument over whole, so a path with spaces needs no quoting.
+ */
+export async function buildLaunchArgs(config: LaunchConfig): Promise<LaunchArgs> {
+  // Config files live in gamePath alongside game data — the traditional D3 layout.
+  // Use ./ prefix so cfopen() resolves relative to cwd (gamePath).
+  const args = ["-dedicated", `./${config.configFile}`, ...(config.additionalArgs ?? [])];
+
+  const autoexecPath = path.resolve(config.gamePath, AUTOEXEC_FILE);
+  try {
+    if (!(await fs.promises.stat(autoexecPath)).isFile()) return { args, warning: null };
+  } catch {
+    return { args, warning: null };
+  }
+  if (Buffer.byteLength(autoexecPath) > MAX_ENGINE_ARG_BYTES) {
+    return {
+      args,
+      warning:
+        `Startup Commands not applied: ${autoexecPath} is longer than the ${MAX_ENGINE_ARG_BYTES} characters ` +
+        "the server accepts in one command-line argument. Use a game directory with a shorter path.",
+    };
+  }
+  // The engine takes the first -autoexec, so one already in additionalArgs wins.
+  return { args: [...args, "-autoexec", autoexecPath], warning: null };
 }
 
 const TELNET_PROBE_INTERVAL_MS = 500;
@@ -163,12 +207,8 @@ export class ProcessManager extends EventEmitter {
     // network (bots simulate but nothing connects).
     await this.waitForPortFree(config.telnetPort);
 
-    // Config files live in gamePath alongside game data — the traditional D3 layout.
-    // Use ./ prefix so cfopen() resolves relative to cwd (gamePath).
-    const args = [
-      "-dedicated", `./${config.configFile}`,
-      ...(config.additionalArgs ?? []),
-    ];
+    const { args, warning: argsWarning } = await buildLaunchArgs(config);
+    if (argsWarning) this.emit("stderr", `${argsWarning}\n`);
 
     this.child = spawn(config.executablePath, args, {
       cwd: config.gamePath,
@@ -214,6 +254,7 @@ export class ProcessManager extends EventEmitter {
         this.logStream.write(`  Executable: ${config.executablePath}\n`);
         this.logStream.write(`  Config: ${config.gamePath}/${config.configFile}\n`);
         this.logStream.write(`  Args: ${args.join(" ")}\n`);
+        if (argsWarning) this.logStream.write(`  Warning: ${argsWarning}\n`);
         this.logStream.write(`  PID: ${this.child.pid}\n\n`);
       } catch (err) {
         // Log file is optional — don't fail the launch, but don't hide it either.

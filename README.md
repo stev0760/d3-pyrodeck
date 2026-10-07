@@ -88,6 +88,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
+- Startup Commands (`autoexec.dmfc` in the game directory) reach the server at launch through `-autoexec`
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
 - Raw textarea fallback always available via structured/raw toggle
 - Import existing config files as new profiles

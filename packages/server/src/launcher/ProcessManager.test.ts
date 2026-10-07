@@ -2,7 +2,52 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ProcessManager } from "./ProcessManager.js";
+import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
+
+describe("buildLaunchArgs", () => {
+  let dir: string;
+  const config = (gamePath: string) => ({
+    executablePath: "unused",
+    gamePath,
+    configFile: "server.cfg",
+    telnetPort: 2092,
+    telnetPassword: "x",
+  });
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-args-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("passes no -autoexec when the game directory has no Startup Commands file", async () => {
+    expect(await buildLaunchArgs(config(dir))).toEqual({
+      args: ["-dedicated", "./server.cfg"],
+      warning: null,
+    });
+  });
+
+  it("passes the Startup Commands file by absolute path when it exists", async () => {
+    const gameDir = path.join(dir, "Descent 3"); // a space, as in a Windows install path
+    await fs.mkdir(gameDir);
+    await fs.writeFile(path.join(gameDir, AUTOEXEC_FILE), "$killmsgfilter simple\n");
+    const { args, warning } = await buildLaunchArgs(config(gameDir));
+    expect(args).toEqual(["-dedicated", "./server.cfg", "-autoexec", path.join(gameDir, AUTOEXEC_FILE)]);
+    expect(path.isAbsolute(args[3])).toBe(true);
+    expect(warning).toBeNull();
+  });
+
+  it("does not pass a path the engine would truncate, and says so", async () => {
+    const gameDir = path.join(dir, "x".repeat(100));
+    await fs.mkdir(gameDir);
+    await fs.writeFile(path.join(gameDir, AUTOEXEC_FILE), "$killmsgfilter simple\n");
+    const { args, warning } = await buildLaunchArgs(config(gameDir));
+    expect(args).toEqual(["-dedicated", "./server.cfg"]);
+    expect(warning).toMatch(/Startup Commands not applied/);
+  });
+});
 
 // A stand-in for the D3 binary: ignores its arguments and prints a line every
 // 50ms until killed. POSIX shell only; the launcher logic under test is the
@@ -65,6 +110,15 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
     await expect.poll(() => pm.getStatus().log.state, { timeout: 3000 }).toBe("failed");
     expect(pm.getStatus().log.message).toMatch(/deleted or moved/);
     expect(warnings).toHaveLength(1);
+  });
+
+  it("records the -autoexec argument in the log header when Startup Commands exist", async () => {
+    await fs.writeFile(path.join(dir, AUTOEXEC_FILE), "$killmsgfilter simple\n");
+    const logPath = path.join(dir, "args.log");
+    await launch(logPath);
+    await expect
+      .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
+      .toContain(`Args: -dedicated ./server.cfg -autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
   });
 
   it("reports no log at all as state none", async () => {

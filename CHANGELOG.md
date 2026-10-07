@@ -2,6 +2,11 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [Unreleased]
+
+### Fixed
+- **Startup Commands were never applied.** Pyrodeck saves them as `autoexec.dmfc` in the game directory, but DMFC only reads its own default file unless the server is started with `-autoexec`, and Pyrodeck never passed it. Each launch and playlist restart now passes `-autoexec <absolute path>` when the file exists, and nothing when it doesn't. A path longer than the 99 characters the engine keeps per argument is not passed; the console and the server log say so.
+
 ## [0.4.20] - 2026-10-07
 
 ### Added

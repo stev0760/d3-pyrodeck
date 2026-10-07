@@ -228,7 +228,13 @@ This is the **only way** to restrict ships in a dedicated server config. The ava
 
 ## autoexec.dmfc
 
-Located at `<D3_dir>/netgames/autoexec.dmfc` (override with `-autoexec <path>`).
+DMFC reads `<writable dir>/netgames/autoexec.dmfc` unless `-autoexec <path>` names another file (`ParseStartupScript` in
+`netgames/dmfc/dmfcbase.cpp`). The writable dir is the engine's preference directory, logged at startup as
+`Local dir:` (on Linux `~/.local/share/Outrage Entertainment/Descent 3`), not the game directory. The engine keeps at
+most 99 characters of each command-line argument, so the `-autoexec` path must fit.
+
+Pyrodeck keeps a profile's Startup Commands in `<gamePath>/autoexec.dmfc` and, when that file exists at launch,
+passes it as `-autoexec <absolute path>`. Without the file it passes nothing and DMFC reads its default.
 
 Contains `$command` lines — same syntax as runtime DMFC commands. Executed at DMFC initialization after the game DLL loads. Use this to set options that have no dedicated.cfg CVar:
 

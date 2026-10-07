@@ -613,7 +613,7 @@ function ProfileEditor({
             ) : (
               <CompanionCreateButton
                 label="Startup Commands"
-                description="Post-init DMFC commands"
+                description="DMFC commands applied at launch (-autoexec)"
                 onClick={() =>
                   createCompanionFile("autoexec.dmfc", "", "")
                 }
@@ -724,16 +724,25 @@ function ProfileEditor({
                 onSaved={() => fetchCompanions(selectedProfile.id)}
               />
             ) : (
-              <textarea
-                value={content}
-                onChange={(e) => {
-                  setContent(e.target.value);
-                  setDirty(true);
-                  setSaved(false);
-                }}
-                className="flex-1 w-full px-3 py-2 bg-background border border-border rounded-lg font-mono text-sm text-foreground/90 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-                spellCheck={false}
-              />
+              <>
+                {editingFile === "autoexec.dmfc" && (
+                  <p className="text-[11px] text-muted-foreground mb-2 shrink-0">
+                    One DMFC command per line, e.g. <code>$killmsgfilter simple</code>. The file lives in the game
+                    directory and Pyrodeck passes it to the server with <code>-autoexec</code>, so changes apply at the
+                    next launch.
+                  </p>
+                )}
+                <textarea
+                  value={content}
+                  onChange={(e) => {
+                    setContent(e.target.value);
+                    setDirty(true);
+                    setSaved(false);
+                  }}
+                  className="flex-1 w-full px-3 py-2 bg-background border border-border rounded-lg font-mono text-sm text-foreground/90 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                  spellCheck={false}
+                />
+              </>
             )}
           </>
         ) : (
