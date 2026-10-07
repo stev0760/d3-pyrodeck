@@ -3,6 +3,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { consoleHostFor, launchOptionArgs, type LaunchOptions } from "./launchOptions.js";
 
 export type ProcessState =
   | "stopped"
@@ -51,8 +52,10 @@ export interface LaunchConfig {
   gamePath: string;
   /** Config filename in gamePath (e.g., "my-server.cfg"). */
   configFile: string;
-  /** Extra CLI flags (e.g., -useport). -autoexec is added by buildLaunchArgs. */
+  /** Extra CLI flags. -autoexec and the profile's launch options are added by buildLaunchArgs. */
   additionalArgs?: string[];
+  /** The profile's launch options (-useip, -useport, -framecap, ...), placed right after the config file. */
+  launchOptions?: LaunchOptions | null;
   /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
   profileId?: string;
   /** Optional path to write server log file. If set, stdout/stderr are written here. */
@@ -75,16 +78,25 @@ export interface LaunchArgs {
 }
 
 /**
- * The server's command line. DMFC reads its startup script from the engine's
- * writable directory (`<pref dir>/netgames/autoexec.dmfc`) unless `-autoexec`
- * names a file, so a Startup Commands file in the game directory is passed by
- * absolute path. Without one nothing is passed and DMFC reads its default.
+ * The server's command line. The profile's launch options follow the config
+ * file (launchOptions.ts lists what each flag does in the engine). DMFC reads
+ * its startup script from the engine's writable directory
+ * (`<pref dir>/netgames/autoexec.dmfc`) unless `-autoexec` names a file, so a
+ * Startup Commands file in the game directory is passed by absolute path.
+ * Without one nothing is passed and DMFC reads its default.
  * spawn() hands each argument over whole, so a path with spaces needs no quoting.
  */
 export async function buildLaunchArgs(config: LaunchConfig): Promise<LaunchArgs> {
   // Config files live in gamePath alongside game data — the traditional D3 layout.
   // Use ./ prefix so cfopen() resolves relative to cwd (gamePath).
-  const args = ["-dedicated", `./${config.configFile}`, ...(config.additionalArgs ?? [])];
+  // The engine takes the first occurrence of a flag (FindArg), so a launch
+  // option wins over the same flag in additionalArgs.
+  const args = [
+    "-dedicated",
+    `./${config.configFile}`,
+    ...launchOptionArgs(config.launchOptions),
+    ...(config.additionalArgs ?? []),
+  ];
 
   const autoexecPath = path.resolve(config.gamePath, AUTOEXEC_FILE);
   try {
@@ -138,7 +150,7 @@ const LOG_RECHECK_MS = 30_000;
  *   stateChange(state: ProcessState)
  *   stdout(data: string)
  *   stderr(data: string)
- *   telnetReady(port: number)
+ *   telnetReady(port: number, host: string)  — host: where the console listens (-useip, else 127.0.0.1)
  *   exit(code: number | null, signal: string | null)
  *   logWarning(message: string)  — logging failed; server runs but output isn't saved
  */
@@ -317,7 +329,12 @@ export class ProcessManager extends EventEmitter {
     });
 
     // Start TCP probe for telnet readiness as a fallback
-    this.startTelnetProbe(config.telnetPort);
+    this.startTelnetProbe(config.telnetPort, this.consoleHost());
+  }
+
+  /** Where the launched server's console listens: its -useip address, else loopback. */
+  private consoleHost(): string {
+    return consoleHostFor(this.launchConfig?.launchOptions) ?? "127.0.0.1";
   }
 
   async stop(): Promise<void> {
@@ -572,7 +589,7 @@ export class ProcessManager extends EventEmitter {
    * TCP probe: try connecting to the telnet port periodically.
    * Handles the case where stdout patterns don't match (different D3 versions).
    */
-  private startTelnetProbe(port: number): void {
+  private startTelnetProbe(port: number, host: string): void {
     this.stopTelnetProbe();
 
     const startTime = Date.now();
@@ -595,7 +612,7 @@ export class ProcessManager extends EventEmitter {
       const socket = new net.Socket();
       socket.setTimeout(400);
 
-      socket.connect(port, "127.0.0.1", () => {
+      socket.connect(port, host, () => {
         // Graceful half-close so D3 sees a FIN rather than an RST.
         // An abrupt RST can leave D3's accept queue in an odd state and
         // cause the immediately-following auto-connect attempt to be refused.
@@ -628,10 +645,11 @@ export class ProcessManager extends EventEmitter {
     this.stopTelnetProbe();
     this.setState("running");
     const port = this.launchConfig?.telnetPort ?? 2092;
+    const host = this.consoleHost();
     // Brief pause so D3 can finish processing the probe socket close before
     // the auto-connect handler opens its own connection to the same port.
     setTimeout(() => {
-      this.emit("telnetReady", port);
+      this.emit("telnetReady", port, host);
     }, 300);
   }
 

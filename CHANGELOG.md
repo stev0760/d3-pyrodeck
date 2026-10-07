@@ -5,6 +5,7 @@ All notable changes to D3 Pyrodeck are documented here.
 ## [Unreleased]
 
 ### Added
+- **Launch options per profile** (Launch panel → Edit → Launch Options): bind address (`-useip`), game port (`-useport`), frame cap (`-framecap`), no pilot logos (`-nomultibmp`), GameSpy port and file (`-gamespyport`, `-gspyfile`), passed right after `-dedicated` on every launch and playlist restart. The bind address must be an IPv4 address (the engine parses it with `inet_addr`), and since the server then binds its console to that address too, Pyrodeck connects there. Saving a profile or a server config warns when another profile uses the same game, GameSpy or console port, or the console port is Pyrodeck's own or the mission host's.
 - **Pyrodeck hosts mission downloads.** An optional second listener (Launch panel, Mission Downloads; off by default, port 3002) serves the server's custom missions over http, so a player who joins without the mission downloads it from the same machine. One click in the Config tab's mission panel points a mission's link at it, the panel shows whether each mission is hosted and the exact link, and **Test** fetches the mission through the public URL and compares it with the file on disk. The listener answers only `/missions/<file>.mn3`, never the retail missions and never the admin API, and starts or stops as soon as the setting is saved. `GET /api/launcher/status` reports its state.
 
 ### Changed

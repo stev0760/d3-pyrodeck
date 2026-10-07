@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
+import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -46,6 +47,46 @@ describe("buildLaunchArgs", () => {
     const { args, warning } = await buildLaunchArgs(config(gameDir));
     expect(args).toEqual(["-dedicated", "./server.cfg"]);
     expect(warning).toMatch(/Startup Commands not applied/);
+  });
+
+  it.each([
+    [{ bindIp: "192.168.0.103" }, ["-useip", "192.168.0.103"]],
+    [{ gamePort: 2116 }, ["-useport", "2116"]],
+    [{ frameCap: 30 }, ["-framecap", "30"]],
+    [{ noMultiBmp: true }, ["-nomultibmp"]],
+    [{ gameSpyPort: 20206 }, ["-gamespyport", "20206"]],
+    [{ gameSpyFile: "pro-gamespy.cfg" }, ["-gspyfile", "pro-gamespy.cfg"]],
+  ])("passes the launch option %o right after the config file", async (launchOptions, flags) => {
+    const { args } = await buildLaunchArgs({ ...config(dir), launchOptions });
+    expect(args).toEqual(["-dedicated", "./server.cfg", ...flags]);
+  });
+
+  it("passes no launch flags when the profile sets none", async () => {
+    expect((await buildLaunchArgs({ ...config(dir), launchOptions: null })).args).toEqual(["-dedicated", "./server.cfg"]);
+    expect((await buildLaunchArgs({ ...config(dir), launchOptions: {} })).args).toEqual(["-dedicated", "./server.cfg"]);
+  });
+
+  it("passes no flag for a stored option that no longer validates", async () => {
+    for (const stored of [{ gamePort: 0 }, { frameCap: 0 }, { bindIp: "example.org" }, { gameSpyFile: "../x" }]) {
+      const launchOptions = sanitizeStoredLaunchOptions(stored);
+      expect((await buildLaunchArgs({ ...config(dir), launchOptions })).args).toEqual(["-dedicated", "./server.cfg"]);
+    }
+  });
+
+  it("puts launch options before additional args and -autoexec", async () => {
+    await fs.writeFile(path.join(dir, AUTOEXEC_FILE), "$killmsgfilter simple\n");
+    const { args } = await buildLaunchArgs({
+      ...config(dir),
+      launchOptions: { gamePort: 2116, gameSpyPort: 20206 },
+      additionalArgs: ["-useport", "9999"],
+    });
+    // FindArg takes the first match, so the profile's -useport wins.
+    expect(args).toEqual([
+      "-dedicated", "./server.cfg",
+      "-useport", "2116", "-gamespyport", "20206",
+      "-useport", "9999",
+      "-autoexec", path.join(dir, AUTOEXEC_FILE),
+    ]);
   });
 });
 

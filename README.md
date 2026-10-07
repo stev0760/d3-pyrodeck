@@ -109,6 +109,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - D3 install path detection and validation
 - Process lifecycle management (launch, stop, auto-connect via telnet)
 - Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
+- Per-profile launch options (Edit → Launch Options): bind address (`-useip`, IPv4 only; the console is then reached at that address), game port (`-useport`, default 2092/udp), frame cap (`-framecap`, 1-999, default 60), no pilot logos (`-nomultibmp`), GameSpy port and file (`-gamespyport`, `-gspyfile`). Saving a profile, or a server config's console port, warns when another profile uses the same game, GameSpy or console port
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 

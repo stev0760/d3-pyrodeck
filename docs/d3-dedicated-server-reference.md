@@ -11,10 +11,11 @@ Comprehensive reference for running and managing Descent 3 dedicated servers. Co
 | Switch | Description |
 |--------|-------------|
 | `-dedicated [config.cfg]` | Start as dedicated server using the specified config file |
-| `-useip [IP]` | Bind to a specific IP address |
-| `-useport [port]` | Set TCP/IP and IPX port (default 2092) |
-| `-gamespyport [port]` | Set GameSpy query port (default 20142) |
-| `-nomultibmp` | Disable sending/receiving custom ship bitmaps (prevents crashes from corrupted logos) |
+| `-useip [IP]` | Bind every server socket (game UDP, remote console, GameSpy) to this IPv4 address. Parsed with `inet_addr`, so a host name is ignored (`networking/networking.cpp:591-599`, `nw_GetThisIP` :847) |
+| `-useport [port]` | Game UDP port (default 2092, `D3_DEFAULT_PORT` in `Descent3/descent.h`; `Descent3/init.cpp:1808-1817`) |
+| `-gamespyport [port]` | GameSpy query UDP port (default 20142, `Descent3/gamespy.cpp:144-151`) |
+| `-gspyfile [file]` | GameSpy tracker list, found under the game directory (default `gamespy.cfg`, `Descent3/gamespy.cpp:113-128`) |
+| `-nomultibmp` | The server neither requests nor relays pilot logos (`Use_file_xfer = 0`, `Descent3/init.cpp:1078`, `multi_server.cpp:2703`) |
 | `-quitongoal` | Shut down server after goal is reached |
 | `-setdir [path]` | Set working directory |
 | `-tempdir [path]` | Set temp directory (required for running multiple instances) |
@@ -24,8 +25,12 @@ Comprehensive reference for running and managing Descent 3 dedicated servers. Co
 | `-nointro` | Skip intro movie |
 | `-nooutragelogo` | Disable Outrage logo |
 | `-pilot [name]` | Skip pilot selection dialog |
-| `-framecap [fps]` | Limit framerate (default 50; use 999 to remove cap) |
+| `-framecap [fps]` | Server frame rate: minimum frame time of 1000/fps whole milliseconds (default 60, which also replaces the dedicated server's 30 ms `-limitframe` default; 0 divides by zero; above 500 the frame time is 1 ms). `Descent3/init.cpp:1081-1099` |
 | `-playermessages` | Disable weapon-related HUD messages in multiplayer |
+
+Pyrodeck sets `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport` and `-gspyfile` per profile (Launch
+panel → Edit → Launch Options) and passes them right after `-dedicated <cfg>`. The engine takes the first occurrence of
+a flag and keeps at most 99 characters of each argument (`Descent3/args.cpp`).
 
 ### Network Switches
 

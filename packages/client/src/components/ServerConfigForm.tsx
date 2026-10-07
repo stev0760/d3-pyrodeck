@@ -317,6 +317,8 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Ports this profile shares with another profile, reported by the last save. */
+  const [portWarnings, setPortWarnings] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
 
   const [missions, setMissions] = useState<string[]>([]);
@@ -398,6 +400,8 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
         },
       );
       if (res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { warnings?: string[] };
+        setPortWarnings(body.warnings ?? []);
         setSaved(true);
         setDirty(false);
         setTimeout(() => setSaved(false), 2000);
@@ -499,6 +503,16 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
           </button>
         </div>
       </div>
+
+      {portWarnings.length > 0 && (
+        <div className="mb-2 shrink-0 space-y-0.5">
+          {portWarnings.map((w) => (
+            <p key={w} className="text-[11px] text-amber-400 break-words">
+              {w}
+            </p>
+          ))}
+        </div>
+      )}
 
       {/* Scrollable form body */}
       <div className="flex-1 overflow-y-auto pr-1 space-y-1">

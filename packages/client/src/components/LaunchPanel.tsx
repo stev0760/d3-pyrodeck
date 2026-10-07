@@ -4,6 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
 import { Separator } from "@/components/ui/separator";
+import {
+  LaunchOptionsFields,
+  launchOptionsPayload,
+  launchOptionsToForm,
+  type LaunchOptionsForm,
+} from "./ProfileLaunchSettings";
 
 type LauncherState = ReturnType<typeof useLauncher>;
 
@@ -26,7 +32,16 @@ interface PathFormState {
   gamePath: string;
   executablePath: string;
   postStart: PostStartSettings;
+  launchOptions: LaunchOptionsForm;
 }
+
+const EMPTY_FORM: PathFormState = {
+  name: "",
+  gamePath: "",
+  executablePath: "",
+  postStart: {},
+  launchOptions: launchOptionsToForm(undefined),
+};
 
 type OnOff = "default" | "on" | "off";
 const toOnOff = (v: boolean | undefined): OnOff => (v === undefined ? "default" : v ? "on" : "off");
@@ -192,13 +207,10 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   } = launcher;
 
   const [mode, setMode] = useState<PanelMode>("listing");
-  const [form, setForm] = useState<PathFormState>({
-    name: "",
-    gamePath: "",
-    executablePath: "",
-    postStart: {},
-  });
+  const [form, setForm] = useState<PathFormState>(EMPTY_FORM);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  /** Non-blocking problems reported by the last save (shared ports and the like). */
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -242,13 +254,15 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       gamePath: selectedProfile.gamePath ?? config?.gamePath ?? "",
       executablePath: selectedProfile.executablePath ?? config?.executablePath ?? "",
       postStart: { ...(selectedProfile.postStart ?? {}) },
+      launchOptions: launchOptionsToForm(selectedProfile.launchOptions),
     });
     setValidationErrors([]);
+    setSaveWarnings([]);
     setMode("editing");
   };
 
   const startCreating = () => {
-    setForm({ name: "", gamePath: "", executablePath: "", postStart: {} });
+    setForm(EMPTY_FORM);
     setValidationErrors([]);
     setMode("creating");
   };
@@ -307,9 +321,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       gamePath: form.gamePath.trim() || null,
       executablePath: form.executablePath.trim() || null,
       postStart: Object.keys(form.postStart).length > 0 ? form.postStart : null,
+      launchOptions: launchOptionsPayload(form.launchOptions),
     });
     setSaving(false);
-    if (updated) setMode("listing");
+    if (updated) {
+      setSaveWarnings(updated.warnings ?? []);
+      setMode("listing");
+    }
   };
 
   const handleLaunch = async () => {
@@ -367,11 +385,20 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           />
         )}
 
+        {!isCreate && (
+          <LaunchOptionsFields
+            values={form.launchOptions}
+            onChange={(launchOptions) => setForm((prev) => ({ ...prev, launchOptions }))}
+          />
+        )}
+
         {validationErrors.length > 0 && (
           <div className="text-xs text-destructive space-y-0.5">
             {validationErrors.map((e, i) => <p key={i}>{e}</p>)}
           </div>
         )}
+        {/* A refused save (invalid launch options and the like) */}
+        {error && <p className="text-xs text-destructive break-words">{error}</p>}
 
         <div className="flex gap-1.5">
           <Button
@@ -432,7 +459,10 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <div className="flex gap-1">
             <select
               value={selectedProfileId}
-              onChange={(e) => setSelectedProfileId(e.target.value)}
+              onChange={(e) => {
+                setSelectedProfileId(e.target.value);
+                setSaveWarnings([]);
+              }}
               className="flex-1 bg-input border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             >
               {profiles.map((p: ServerProfile) => (
@@ -472,6 +502,16 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               ) : (
                 <p className="text-xs text-destructive">No executable — click Edit to configure.</p>
               )}
+            </div>
+          )}
+
+          {saveWarnings.length > 0 && (
+            <div className="space-y-0.5">
+              {saveWarnings.map((w) => (
+                <p key={w} className="text-[11px] text-amber-400 break-words">
+                  {w}
+                </p>
+              ))}
             </div>
           )}
 

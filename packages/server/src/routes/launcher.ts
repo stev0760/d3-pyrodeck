@@ -22,6 +22,7 @@ import {
 } from "../launcher/playlistInstance.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
+import { sanitizeStoredLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 
@@ -148,8 +149,10 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
   // Remove any stale once-handler from a launch that crashed before telnet was ready
   processManager.removeAllListeners("telnetReady");
 
-  processManager.once("telnetReady", async (port: number) => {
-    console.log(`[Pyrodeck] D3 telnet ready on port ${port}, auto-connecting...`);
+  processManager.once("telnetReady", async (port: number, host?: string) => {
+    // A server started with -useip listens on that address only.
+    const consoleHost = host && host !== "127.0.0.1" ? host : "localhost";
+    console.log(`[Pyrodeck] D3 telnet ready on ${consoleHost}:${port}, auto-connecting...`);
 
     try {
       // Disconnect any stale session
@@ -161,13 +164,13 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
       const connection = new TelnetConnection();
       const session = sessionManager.create(
         connection,
-        "localhost",
+        consoleHost,
         port,
         telnetPassword,
       );
 
       sessionManager.updateState(session.id, "connecting");
-      await connection.connect("localhost", port, telnetPassword);
+      await connection.connect(consoleHost, port, telnetPassword);
 
       // Probe capabilities
       sessionManager.updateState(session.id, "probing");
@@ -488,6 +491,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         telnetPort: telnetCfg.port,
         telnetPassword: telnetCfg.password,
         profileId: activeProfile.id,
+        launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
       },
     };
     rotationHealth.begin();
@@ -610,6 +614,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     // Start with global config; profile may override these
     let gamePath = config.gamePath;
     let executablePath = config.executablePath;
+    let launchOptions: LaunchOptions | null = null;
 
     if (body.profileId) {
       // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
@@ -621,6 +626,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         // Per-profile path overrides take precedence over global config
         if (profile.gamePath) gamePath = profile.gamePath;
         if (profile.executablePath) executablePath = profile.executablePath;
+        launchOptions = sanitizeStoredLaunchOptions(profile.launchOptions);
         await profileManager.markLaunched(body.profileId);
       } catch {
         return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
@@ -741,6 +747,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         telnetPort,
         telnetPassword,
         profileId: body.profileId,
+        launchOptions,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

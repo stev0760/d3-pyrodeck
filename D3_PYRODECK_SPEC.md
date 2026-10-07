@@ -827,6 +827,24 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
 
+**Profile settings (v0.4.21).** `PATCH /api/profiles/:id` takes, besides the metadata and `postStart`:
+
+| Field | Shape | Effect |
+|-------|-------|--------|
+| `launchOptions` | `{ bindIp?, gamePort?, frameCap?, noMultiBmp?, gameSpyPort?, gameSpyFile? }` or `null` | Flags after `-dedicated <cfg>`: `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport`, `-gspyfile` |
+
+Invalid values are refused with 400 and `details: string[]`; the stored profile is untouched. The response is the
+profile plus `warnings: string[]`, problems that do not block the save. Saving launch options checks the profile's game
+(UDP), GameSpy (UDP) and console (TCP, `RemoteConsolePort` from its config file) ports against every other profile and
+against Pyrodeck's own and the mission host's TCP ports; `PUT /api/profiles/:id/structured-config` runs the same check
+and returns `{ ok, warnings }`.
+
+Launch option rules, from the engine source (`packages/server/src/launcher/launchOptions.ts` cites each line):
+`bindIp` is a dotted IPv4 literal (`inet_addr`; a host name would be ignored, `255.255.255.255` is `INADDR_NONE`), and
+since the server binds its console to it too, Pyrodeck's readiness probe and auto-connect go to that address instead of
+loopback. Ports are 1-65535 (defaults: game 2092, GameSpy 20142). `frameCap` is 1-999 frames per second (default 60;
+0 divides by zero in `init.cpp`). `gameSpyFile` is a plain file name in the game directory.
+
 ---
 
 ## 9. Project Structure

@@ -3,6 +3,15 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { generateDedicatedCfg, type DedicatedCfgDefaults } from "../launcher/ConfigGenerator.js";
 import type { PostStartSettings } from "../launcher/postStartSettings.js";
+import type { LaunchOptions } from "../launcher/launchOptions.js";
+
+/** Per-profile settings stored as one object each; null in an update clears it. */
+export interface ProfileSettingsUpdate {
+  postStart?: PostStartSettings | null;
+  launchOptions?: LaunchOptions | null;
+}
+
+const SETTINGS_KEYS = ["postStart", "launchOptions"] as const;
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -38,6 +47,8 @@ export interface ServerProfile {
    * launch and playlist restart of this profile. Unset = server default.
    */
   postStart?: PostStartSettings;
+  /** Engine flags added after -dedicated at each launch (launcher/launchOptions.ts). */
+  launchOptions?: LaunchOptions;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -247,7 +258,7 @@ export class ServerProfileManager {
     return profile;
   }
 
-  /** Update profile metadata (name, description, logPath, gamePath, executablePath). */
+  /** Update profile metadata (name, description, logPath, gamePath, executablePath) and settings. */
   async update(
     id: string,
     updates: {
@@ -256,9 +267,7 @@ export class ServerProfileManager {
       logPath?: string | null;
       gamePath?: string | null;
       executablePath?: string | null;
-      /** Already sanitized; null clears the settings. */
-      postStart?: PostStartSettings | null;
-    },
+    } & ProfileSettingsUpdate, // settings already validated; null clears one
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
     const profile = profiles.find((p) => p.id === id);
@@ -287,11 +296,13 @@ export class ServerProfileManager {
         profile.executablePath = updates.executablePath;
       }
     }
-    if (updates.postStart !== undefined) {
-      if (updates.postStart === null) {
-        delete profile.postStart;
+    for (const key of SETTINGS_KEYS) {
+      const value = updates[key];
+      if (value === undefined) continue;
+      if (value === null) {
+        delete profile[key];
       } else {
-        profile.postStart = updates.postStart;
+        (profile as unknown as Record<string, unknown>)[key] = value;
       }
     }
 
@@ -351,10 +362,14 @@ export class ServerProfileManager {
       configFile: newCfgFile,
       createdAt: new Date().toISOString(),
     };
-    // Inherit the source profile's path overrides and post-start settings
+    // Inherit the source profile's path overrides and settings
     if (source.gamePath) profile.gamePath = source.gamePath;
     if (source.executablePath) profile.executablePath = source.executablePath;
-    if (source.postStart) profile.postStart = { ...source.postStart };
+    for (const key of SETTINGS_KEYS) {
+      if (source[key] !== undefined) {
+        (profile as unknown as Record<string, unknown>)[key] = structuredClone(source[key]);
+      }
+    }
 
     profiles.push(profile);
     await this.saveProfiles(profiles);
