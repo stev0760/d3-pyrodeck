@@ -226,6 +226,7 @@ export class MissionHost {
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const who = req.socket.remoteAddress ?? "?"; // gone once the socket closes
     const name = missionNameFromUrl(req.url);
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (name === null) return sendPlain(res, 404, "Not found");
@@ -270,6 +271,7 @@ export class MissionHost {
           }
         }
       }
+      if (res.destroyed) return; // the client went away
 
       res.writeHead(200, {
         ...BASE_HEADERS,
@@ -285,12 +287,11 @@ export class MissionHost {
       const stream = handle.createReadStream({ start: 0, end: stat.size - 1 });
       try {
         await pipeline(stream, res);
-        const who = req.socket.remoteAddress ?? "?";
         this.opts.logger?.info(`mission host: sent ${name} (${stat.size} bytes) to ${who}`);
       } catch (err) {
         // Most often the player cancelled the download.
         this.opts.logger?.warn(
-          `mission host: ${name} not completed: ${err instanceof Error ? err.message : String(err)}`,
+          `mission host: ${name} to ${who} not completed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     } finally {
