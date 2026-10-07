@@ -332,6 +332,9 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       for the fork's POP1 controls.
 - [x] Mission download link refresh (Matcen registry REL7, v0.4.20): rewrite the `URL` lines
       inside a `.mn3`, backup once, restore; spec Addendum B
+- [ ] Mission host (branch `feature/mission-host`, unreleased): Pyrodeck serves the missions on its
+      own port and points the link at itself; spec Addendum C. Built and tested; open: a real game
+      client downloading from it, and Windows
 - [x] Server log path hardening (Matcen registry REL9, v0.4.20): absolute Log Directory validated on
       save, directory and file created before every launch, log re-checked while the server runs
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes

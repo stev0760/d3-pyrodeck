@@ -85,6 +85,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Starting level (SetLevel) exposed in the identity section
 - **Mission mode-compatibility**: mission picker shows per-mission details (name, level count, mode badges with team capacity) parsed from each `.mn3`, disables missions that don't support the selected game type, and warns on incompatible pairings
 - **Mission download link**: set the link a server offers players who join without the mission (rewrites the `URL` lines inside the server's copy of the `.mn3`; the original is kept as `<name>.mn3.pyrodeck-orig` and one click restores it; takes effect the next time the server loads the mission)
+- **Mission hosting**: Pyrodeck can serve the missions itself, so the link points at this machine; see [Hosting mission downloads](#hosting-mission-downloads)
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
@@ -171,6 +172,27 @@ ConsolePassword=yourpassword
 
 Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it.
 
+## Hosting mission downloads
+
+A player who joins a server without its mission is offered the mission's download links. Pyrodeck can host the missions itself, from the same machine, so those links work without a separate web server.
+
+1. In the Launch panel, open **Mission Downloads**, tick **Serve missions to players who join without them**, and set:
+   - **Port**: the TCP port the download listener uses (default `3002`). Forward it on your router to this machine.
+   - **Public URL**: the address players reach that port at, such as `http://example.org:3002`. A dynamic-DNS name works. Pyrodeck adds `/missions/<file>`.
+2. In the Config tab, pick a mission and click **Host this mission**. Pyrodeck points the mission's link at `<public URL>/missions/<file>` (the same rewrite as a typed link, so the original file is kept and **Restore original** puts it back). The server offers the new link the next time it loads the mission.
+3. **Test** downloads the mission through the public URL from the Pyrodeck machine and compares it with the file on disk. That proves the listener works, not that players outside your network can reach it: check that from outside the LAN (a phone off Wi-Fi will do). Some routers cannot reach their own public address from inside, so a failed test from inside the LAN is not proof either.
+
+The listener is separate from the admin panel: it answers only `GET`/`HEAD /missions/<file>.mn3` for missions in the game path's `missions/` directory, and every other path, the admin API included, gets a 404. It needs no login. It starts, stops and moves port as soon as you save, and the Launch panel shows whether it is listening. It serves the global game path; a profile with its own game path cannot host its missions.
+
+Limits that come from the game client:
+
+- **http only.** The game's HTTP client is built without TLS: current builds crash on an `https://` link and 1999-era ones refuse it.
+- **86 characters at most** for the whole link (the download screen copies it into a 100-character buffer). A long host name plus a long mission file name can exceed it; Pyrodeck refuses with the length.
+- **No resume.** An interrupted download starts over.
+- **Retail missions are never offered** (`d3.mn3`, `d3_2.mn3`, `training.mn3`, `merc.mn3`); the server never advertises links for them.
+- **1999-era clients** (retail-derived builds) accept no port in a link. To reach them as well, forward public port 80 to the listener's port and leave the port out of the public URL (`http://example.org`).
+- The game window does not redraw while a download runs; it resumes when the download finishes. Pyrodeck holds each download for one second before sending, to keep clear of a divide-by-zero in the client's progress display.
+
 ## Tech Stack
 
 | Layer | Choice |
@@ -211,6 +233,8 @@ An admin password is required to access the web panel from non-localhost connect
 2. **Environment variable** — set `PYRODECK_ADMIN_PASSWORD` (takes precedence over the config file)
 
 With no admin password set, the server serves localhost only: requests from non-loopback peers are refused (and a startup warning explains why) until a password is configured. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`. Login attempts are rate-limited to 5 per IP per 15 minutes. Web-based first-run setup is allowed only from localhost (so nobody can claim the admin password on a freshly-exposed instance); set `PYRODECK_ALLOW_REMOTE_SETUP=1` to permit it from a remote browser.
+
+The mission download listener (off by default) is public by design and needs no login, but serves nothing except the missions in the game path's `missions/` directory, never the retail ones; it runs on its own port, not through the admin panel.
 
 For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS, and set `PYRODECK_TRUST_PROXY=1` so rate-limiting and logging see the real client IP from `X-Forwarded-For` (off by default, since trusting that header on a directly-exposed server lets clients spoof their IP).
 
