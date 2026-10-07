@@ -1,0 +1,110 @@
+name: Bug report
+description: Something in Pyrodeck does not work as it should.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before you paste logs, remove console passwords, admin passwords and any IP addresses you do not want public.
+
+  - type: input
+    id: pyrodeck-version
+    attributes:
+      label: Pyrodeck version
+      description: Shown in the page header (on wider screens), or at `/api/version`.
+      placeholder: "0.4.20"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run Pyrodeck?
+      options:
+        - Release binary (Linux)
+        - Release binary (Windows)
+        - Built from source (pnpm package:server)
+        - Dev mode (pnpm dev)
+        - Other (say below)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS and version; for Linux, the distribution and release.
+      placeholder: "Ubuntu 24.04 / Windows 11 23H2 / Arch (rolling)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: d3-build
+    attributes:
+      label: Descent 3 server build
+      options:
+        - Matcen fork
+        - Retail 1.5
+        - Open-source Descent 3 (upstream)
+        - PiccuEngine
+        - Other (say below)
+    validations:
+      required: true
+
+  - type: input
+    id: d3-version
+    attributes:
+      label: Server version
+      description: For Matcen, the `fork_version` that `$servercaps` prints; otherwise whatever version the server reports.
+      placeholder: "0.9.17"
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Pyrodeck mode
+      options:
+        - Launch (Pyrodeck starts the server)
+        - Connect (remote console to a running server)
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected to see instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch profile "..."
+        2. Open the Bots tab
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: pyrodeck-log
+    attributes:
+      label: Pyrodeck output
+      description: The terminal output of `pyrodeck-server` (or `pnpm dev`) around the problem.
+      render: shell
+
+  - type: textarea
+    id: server-log
+    attributes:
+      label: Server log
+      description: The relevant part of the server log (Logs tab, or the file it lists). Trim it to the minutes around the problem.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, browser and version for UI problems, workarounds you found.
