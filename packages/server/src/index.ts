@@ -19,6 +19,7 @@ import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
 import { requireAuth } from "./middleware/requireAuth.js";
+import { startConsoleEvents } from "./events/consoleEventHub.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
 const HOST = process.env.PYRODECK_HOST ?? "0.0.0.0";
@@ -114,6 +115,9 @@ async function main() {
   await app.register(playlistRoutes);
 
   app.get("/api/health", async () => ({ status: "ok" }));
+
+  // Player and level events from whatever console session is open.
+  startConsoleEvents();
 
   if (staticDir) {
     await app.register(fastifyStatic, { root: staticDir, wildcard: false });

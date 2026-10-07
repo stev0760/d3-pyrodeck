@@ -19,8 +19,10 @@ export interface ServerEventMap {
   "server.hung": { profileId: string; pid: number; silentForMs: number };
   /** A new level started (first line of a level load seen on the console or in the log). */
   "level.started": { profileId: string; mission?: string; level?: string };
-  "player.joined": { profileId: string; name: string; ip?: string; slot?: number };
-  "player.left": { profileId: string; name: string; ip?: string; slot?: number };
+  /** `bot`: the callsign carries the engine's [BOT] tag. Repeats for every player at each level start. */
+  "player.joined": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean };
+  /** `reason`: "left the game", "disconnected" (dropped, kicked or banned) or "bot removed". */
+  "player.left": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean; reason?: string };
   /** Pyrodeck kicked a player (a rule or an operator). */
   "player.kicked": { profileId: string; name: string; ip?: string; reason: string };
   /** Pyrodeck banned a player (name, address or both). */
