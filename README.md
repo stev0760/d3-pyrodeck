@@ -221,6 +221,7 @@ docs/
 
 - [`BUILDING.md`](BUILDING.md) — building from source and running on all platforms (Windows, Ubuntu, Rocky Linux/RHEL, Arch)
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
+- `docs/D3SERVER3_AUDIT.md` — feature audit of D3Server3 3.0.83 (2010) against Pyrodeck 0.4.20, with a ranked list of what Pyrodeck lacks
 
 ## Releases
 
