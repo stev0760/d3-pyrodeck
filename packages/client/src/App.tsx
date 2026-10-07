@@ -52,6 +52,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     onPlayers,
     onBots,
     onBotStats,
+    onBotMode,
     onServerInfo,
     onLevelChanged,
     onPlaylistEvent,
@@ -373,8 +374,10 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
                 sendCommand={sendCommand}
                 onBots={onBots}
                 onBotStats={onBotStats}
+                onBotMode={onBotMode}
                 hasShips={hasFeature("ships")}
                 hasDifficulty={hasFeature("difficulty")}
+                hasTeams={hasFeature("teams")}
               />
             )}
           </TabsContent>

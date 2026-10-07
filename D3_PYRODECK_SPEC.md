@@ -1,7 +1,7 @@
 # D3 Pyrodeck — Specification
 
-**Version:** 2.7
-**Date:** July 2, 2026
+**Version:** 2.8
+**Date:** October 7, 2026
 **Author:** stev0760
 **Repository:** `stev0760/d3-pyrodeck` (planned)
 **Engine Fork:** `stev0760/Descent3` branch `feature/multiplayer-bots`
@@ -149,6 +149,11 @@ The parser must strip this echo line before processing the response.
 
 These are the only additions made to the `stev0760/Descent3` engine fork that the web admin depends on. The philosophy is minimal C++ footprint — add server management capability without changing how the server fundamentally works.
 
+**Source of truth for output formats.** What the fork prints is owned by the Matcen repo's
+`matcen-docs/PYRODECK_CONTRACT.md`; every Tier 1 line below is copied from it (verified against the fork
+source at Matcen 0.9.16/0.9.17-dev, 2026-10-07). When the two disagree, the contract wins and this
+section is the one to fix.
+
 ### 5.1 `$servercaps` — Capability Detection
 
 **Purpose:** Allows the web admin to detect fork capabilities after connecting, and enable/disable UI features accordingly.
@@ -157,39 +162,45 @@ These are the only additions made to the `stev0760/Descent3` engine fork that th
 
 **Response format:** Single line, no terminator required.
 ```
-SERVERCAPS version=1 fork=Matcen fork_version=0.9.5 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.9.16 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.9.17 features=bots,roster,ships,difficulty,teams,squad_orders,population
 ```
+The first line is Matcen 0.9.16; the second is the extended list the fork adopts from 0.9.17 (POP6;
+`population` appears once the population controls are built). `fork_version` is always a clean
+`X.Y.Z`: the fork's `-dev` suffix is never printed here.
 
-**Current feature flags (version=1):**
+**Feature flags (version=1):**
 
 | Flag | Meaning | Web Admin UI Effect |
 |------|---------|-------------------|
-| `bots` | Bot commands available (`$addbot`, `$removebot`, `$removebots`, `$botlist`, `$botstat`, `$botmov`) | Enable Bots tab |
-| `roster` | `$scores` output is structured and parseable | Enable live Players panel |
-| `ships` | Ship selection parameter supported on `$addbot` | Enable ship dropdown in Add Bot form |
-| `difficulty` | Difficulty levels supported (`$botdifficulty`, difficulty param on `$addbot`) | Enable difficulty dropdown in Add Bot form and per-bot difficulty controls |
+| `bots` | The `$` bot commands exist (`$addbot`, `$removebot`, `$removebots`, `$botlist`, `$botdifficulty`, `$botmode`, `$botstat`, `$botobj`, `$bothelp`) | Enable Bots tab and the Bots / Bot Debug command reference |
+| `roster` | Bots come from a config-file roster (`BotConfig=`). (Older Pyrodeck builds read it as "`$scores` is parseable"; the fork settled on the roster meaning, 2026-10-01.) | None today; the Players panel is not gated on it |
+| `ships` | `$addbot` takes a ship argument | Ship dropdown in the Add Bot form |
+| `difficulty` | `$addbot` takes a difficulty argument; `$botdifficulty` exists | Difficulty dropdown in the Add Bot form |
+| `teams` | `$addbot` takes a 4th, 1-based team argument (built in Matcen 0.8.6, advertised from 0.9.17) | Team dropdown in the Add Bot form, shown only in a team game (`$botmode` `teams>=2`) |
+| `squad_orders` | The in-game `!` chat orders exist | None (players use them in chat) |
+| `population` | The `$botpopulation` console controls exist | Not built yet; the flag is parsed and kept |
+
+**Unknown flags are kept, never an error.** The parser stores every comma-separated flag in the
+set, known or not, and ignores `key=value` fields it does not recognise, so a newer fork that adds a
+flag or a field degrades to "that UI is hidden" rather than "vanilla server". Gate UI on `features=`,
+never on `fork_version`.
 
 **Vanilla server behavior:** Returns `Unknown command` or no response. Web admin detects this and sets all features to disabled. The general admin experience (console, config, standard commands) remains fully functional.
 
-**Parser:**
+**Parser** (`packages/server/src/parser/parsers/servercaps.ts`):
 ```typescript
 interface ServerCapabilities {
   version: number;           // 0 = vanilla/unknown
   fork: string;              // fork name (e.g., "Matcen"), empty on vanilla
-  forkVersion: string;       // fork version (e.g., "0.9.5"), empty on vanilla
-  features: Set<string>;     // empty set on vanilla
+  forkVersion: string;       // fork version (e.g., "0.9.16"), empty on vanilla
+  features: Set<string>;     // empty set on vanilla; unknown flags kept
 }
 
-function parseServercaps(line: string): ServerCapabilities | null {
-  const match = line.match(/^SERVERCAPS version=(\d+) fork=(\S+) fork_version=(\S+) features=(.+)$/);
-  if (!match) return null;
-  return {
-    version: parseInt(match[1]),
-    fork: match[2],
-    forkVersion: match[3],
-    features: new Set(match[4].split(',')),
-  };
-}
+// A line whose first token is SERVERCAPS; the rest is read as key=value
+// fields. version (numeric), fork and features are required; fork_version
+// defaults to ""; unknown keys are ignored; empty feature tokens are dropped.
+function parseServercaps(raw: string): ServerCapabilities | null;
 
 // "Unknown command" or timeout → vanilla server
 const VANILLA_CAPS: ServerCapabilities = { version: 0, fork: '', forkVersion: '', features: new Set() };
@@ -215,8 +226,8 @@ exists. Adding or removing a diagnostic command is invisible churn; a real capab
 
 | Tier | Commands | Pyrodeck may… |
 |------|----------|---------------|
-| **1 — Stable contract** | `$servercaps` (anchor), `$botlist`, `$addbot` / `$removebot` / `$removebots` / `$botdifficulty` (fire-and-forget verbs), `$botmode`, plus the vanilla `$scores` / player / team / settings commands in §5.3 | parse output, build UI, feature-gate |
-| **2 — Semi-stable** | `$botstat` *status* line (line 1 only), `$botobj` | expose as console/help text; avoid hard output parsers |
+| **1 — Stable contract** | `$servercaps` (anchor), `$addbot`, `$removebot`, `$removebots`, `$botlist`, `$botdifficulty`, `$botmode`, plus the vanilla `$scores` / player / team / settings commands in §5.3 | parse output, build UI, feature-gate |
+| **2 — Semi-stable** | `$botstat` *status* line (line 1 only), `$botobj`, `$bothelp` | expose as console/help text; avoid hard output parsers |
 | **3 — Volatile diagnostics (mid-flight)** | `$botstat` **nav: line** (`route:goal=… dijkstra=… boa=… gcost=… intent:room=… owner=… held=…`), the `$nav` namespace (bare `$nav` = toggle table, `$nav <name> on|off`, `$nav dump [file]` = nav-geometry JSON; flat aliases may be added or retired), `$botmov` | reference as text only — **zero** output binding |
 
 **Tier 3 detail.** These commands exist to support active bot-AI/navigation debugging and change shape without
@@ -228,68 +239,80 @@ and `$botdispersal` were deleted in the earlier nav consolidation. The 0.9.11 re
 removed `$nav gridall`, `$nav outroute`, `$nav replan` and flat aliases `$gridall`, `$outdoorroute`,
 `$stallreplan`. If an older Pyrodeck build references any of these, strip them.
 
+**Hidden aliases — work, but never reference.** `$navdump [file]` (use `$nav dump [file]`) and
+`$terrainsteer on|off` (use `$nav terrain on|off`; its usage line now reads
+`Usage: $nav terrain on|off  (current: …)`), plus about 27 other flat toggle aliases (`$gridnav`,
+`$navgrid`, ...). Pyrodeck's Command Reference lists only the `$nav` forms.
+
 ### 5.2 Bot Management Commands
 
-These commands exist in the fork. The web admin sends them as plain text over Telnet and parses the output with timeout-based collection (~200ms silence window).
+These commands exist in the fork. The web admin sends them as plain text over Telnet and parses the output with timeout-based collection (~200ms silence window). Every reply is plain text, one line per message, with no terminator line. A listen-server host has no `$` bot commands; input that matches no bot command falls through to the game DLL.
 
-**`$addbot <name> [ship] [difficulty]`**
-Add a bot. Ship and difficulty parameters optional. Ships: `pyro`, `phoenix`, `magnum`, `blackpyro`. Difficulty: `trainee`, `rookie`, `hotshot` (default), `ace`, `insane`.
-Output on success: `Bot '<name> [BOT]' added in slot <N> (ship=<ship>, diff=<difficulty>)`
+**Callsigns** are `<name>[BOT]`, with **no space** before the suffix (Matcen `BOT_NAME_SUFFIX`). The base name is cut to 14 characters so the whole callsign fits D3's 19-character limit. Match bots on `[BOT]` alone; builds before 0.9.9 printed `Name [BOT]`, and Pyrodeck's parsers accept both.
+
+**`$addbot <name> [ship] [difficulty] [team]`** *(Tier 1; parser `parsers/addbot.ts`)*
+Arguments are positional: difficulty is read only when a ship was given, team only when a difficulty was given. The name is one whitespace-free token (the server splits on whitespace).
+- Ship: `pyro`, `phoenix`, `magnum`, `blackpyro`, or a full ship name. An unknown ship first prints `Unknown ship '<ship>', using default. Valid: pyro, phoenix, magnum, blackpyro` and uses Pyro-GL.
+- Difficulty: `trainee`, `rookie`, `hotshot`, `ace`, `insane`, or `0`–`4`. An unknown word becomes Hotshot silently (not the configured default).
+- Team (`teams` flag): `1`–`4`, 1-based; anything else means auto-balance. In a team game, a team above the game's team count first prints `BOT: team <n> out of range for <teams>-team game — auto-balancing '<name>'` (the base name, without `[BOT]`; seen live 2026-10-07). In a free-for-all game the team is always auto.
+
+Output on success: `Bot '<name>[BOT]' added in slot <N> (ship=<ship>, diff=<difficulty>, team=<T>)` — `team` is 1-based (`Players[].team + 1`), so a free-for-all bot prints `team=1`. Example: `Bot 'Phantom[BOT]' added in slot 2 (ship=Pyro-GL, diff=Hotshot, team=2)`.
 Output on failure: `Failed to add bot (server full or max bots reached)`
+Pyrodeck shows the failure line and either warning line as an error toast.
 
-**`$removebot <index>`**
-Remove a specific bot by Bots[] index (0-based). Index comes from `$botlist` output.
+**`$removebot <index>`** *(Tier 1)*
+Remove a specific bot by Bots[] index (0-based). Index comes from `$botlist` output, not the player slot.
 Output on success: `Removing bot '<callsign>' from slot <N>`
 Output on invalid index: `Invalid bot index <N>`
 Output on no argument: `Usage: $removebot <index>`
 
-**`$removebots`**
+**`$removebots`** *(Tier 1)*
 Remove all bots. Output: `All bots removed`
 
-**`$botlist`**
-List active bots. Output format (timeout-based collection):
+**`$botlist`** *(Tier 1; parser `parsers/botlist.ts`)*
+List active bots, one line per bot with two leading spaces:
 ```
-  Bot 0: 'Phantom [BOT]' slot=2 ship=Pyro-GL diff=Hotshot (alive)
-  Bot 1: 'Viper [BOT]' slot=3 ship=Phoenix diff=Ace (dead)
+  Bot 0: 'Phantom[BOT]' slot=2 ship=Black Pyro diff=Ace (alive)
+  Bot 1: 'Viper[BOT]' slot=3 ship=Phoenix diff=Hotshot (dead)
 ```
 No terminator — use timeout-based collection (~200ms silence). Empty list returns `No bots active`.
-Fields: bot index, callsign, player slot, ship name, difficulty name, alive/dead status.
+Fields: bot index, callsign, player slot, ship name (the game's name, which can contain a space: `Black Pyro`), difficulty name (`Trainee`, `Rookie`, `Hotshot`, `Ace`, `Insane`), alive/dead status.
 
-**`$botdifficulty <index|all> <level>`**
+**`$botdifficulty <index|all> <level>`** *(Tier 1)*
 Change difficulty mid-game. `index` is a Bots[] index or `all` for every active bot.
 Level: `trainee`, `rookie`, `hotshot`, `ace`, `insane` (also accepts `0`–`4`).
 When `all`, also updates the default difficulty for future `$addbot` calls.
-Output per bot (single): `Bot <N> '<name>' → <difficulty>`
-Output per bot (all): `  Bot <N> '<name>' → <difficulty>` (2 leading spaces)
-Extra line when `all`: `Default difficulty set to <difficulty>`
+Output (single): `Bot <N> '<callsign>' → <difficulty>`
+Output (all): `  Bot <N> '<callsign>' → <difficulty>` per bot (2 leading spaces), then `Default difficulty set to <difficulty>`
+The arrow is the UTF-8 character U+2192, not `->`.
+Errors: `Usage: $botdifficulty <index|all> <level>` plus `Levels: trainee, rookie, hotshot, ace, insane (or 0-4)`; `Invalid bot index <N>`.
 
-**`$botstat [index|all]`**
-Show bot status — **two lines per bot** (a status line and a navigation-diagnostic line). Output format (timeout-based collection):
-```
-  Bot 0 'Phantom [BOT]' slot=2 state=COMBAT role=Freelance lean=balanced speed=10.3 shields=100 target=Viper [BOT]
-      nav: dest_room=5 num_paths=1 path=0/3 mdir|0.98| ahead:WALL d=12.3 solid=0 portal=1 route:goal=19 dijkstra=3 boa=24 [DIVERGE] gcost=40
-  Bot 1 'Viper [BOT]' slot=3 state=EXPLORE role=Attack lean=attack speed=51.6 shields=43 target=(none)
-      nav: dest_room=7 num_paths=1 path=1/4 mdir|1.00| ahead:clear(>30u) route:goal=19 dijkstra=7 boa=7 gcost=0
-```
-Status-line fields: `slot=` (player slot index), `state=` (UPPERCASE: EXPLORE/HUNT/COMBAT/FLEE/EVADE), `role=` (squad role, TitleCase per `BotSquadRoleName()`), `lean=` (objective lean, lowercase: balanced/attack/defend), `speed=`, `shields=`, `target=` (`(none)`, a player name, or `(robot)`).
+**`$botmode`** *(Tier 1; parser `parsers/botmode.ts`)*
+Print the detected game mode. Output: `Game mode: <MODE> (scriptname='<name>', teams=<n>)`. `<MODE>` is exactly one of `Anarchy`, `Team Anarchy`, `Robo-Anarchy`, `Co-op`, `CTF`, `Hyper-Anarchy`, `Hoard`, `Entropy`, `Monsterball`, `Unknown` (the fork's `BotGameModeName`). Two names contain a space and three a hyphen, so match the name up to ` (scriptname=`. Pyrodeck reads `teams=` to decide whether the Add Bot form offers a team choice.
 
-Nav-line (Phase 11 router diagnostic): `dest_room=`, `num_paths=`/`path=`, `mdir|x|`, `ahead:` probe, and `route:goal=… dijkstra=… boa=… [DIVERGE] gcost=…`. **Phase 12:** while a via-point detour is committed, the line gains a trailing ` via:d=<dist-to-via> t=<commit-seconds-left>` (absent otherwise).
-> **Tier:** status line = Tier 2 (semi-stable, OK to surface as text); nav: line = **Tier 3 (volatile, mid-flight — do not parse)**. See §5.1.1. When parsing the status block, consume the status line and skip the nav: line.
+**`$botstat [index|all]`** *(status line Tier 2; nav line Tier 3)*
+Show bot status — usually **two lines per bot** (a status line and a navigation-diagnostic line):
+```
+  Bot 0 'Phantom[BOT]' slot=2 state=COMBAT role=Freelance lean=balanced speed=10.3 shields=100 target=Viper[BOT]
+      nav: dest_room=5 num_paths=1 path=0/3 mdir|0.98| ahead:WALL d=12.3 ...
+  Bot 1 'Viper[BOT]' slot=3 state=EXPLORE role=Attack lean=attack speed=51.6 shields=43 target=(none)
+      nav: dest_room=7 num_paths=1 path=1/4 mdir|1.00| ahead:clear(>30u) ...
+```
+Status-line fields: `slot=` (player slot index), `state=` (`EXPLORE`, `HUNT`, `COMBAT`, `FLEE`, `EVADE`), `role=` (`Freelance`, `Attack`, `Defend`, `Follow`, `Cover` — TitleCase), `lean=` (`balanced`, `attack`, `defend`, `runner`, `flex`, or `?` for an out-of-range value), `speed=`, `shields=` (`-1` for a dead bot, seen live 2026-10-07), `target=` (a player callsign, which ends in `[BOT]` for a bot, `(robot)`, or `(none)`).
+A bot with no object prints `  Bot <N> '<callsign>' slot=<N> (no object — respawning?)` instead. No match: `No bots active (or invalid index)`.
+> **Tier:** status line = Tier 2 (semi-stable, OK to surface as text, parsed softly: non-matching lines are skipped); nav line = **Tier 3 (volatile — do not parse)**. See §5.1.1.
 
 **`$nav` — navigation toggle/diagnostic namespace (0.9.5)**
-Single entry point for the nav diagnostic surface. Bare `$nav` prints the live toggle table; `$nav <name> on|off` flips one toggle; `$nav dump [file]` writes the nav-geometry JSON (default `navdump.json`, server working directory). Toggle names churn every build (0.9.5 had 8; the 0.9.15+ table has ~26, e.g. `grid`, `bridge`, `grate`, `terrain`, `troute`, `mball`, `outdoorvia`; `route`, `bnodes` and `softhop` are gone) — Pyrodeck's Command Reference therefore takes the toggle name as free text and relies on bare `$nav` for the live list. Some sub-commands take values rather than on/off (e.g. `$nav mtenure <seconds>`, `$nav contend [index|all]`). Flipping `bridge` invalidates cached roadmaps (build-time parameter). Flat pre-0.9.5 names may remain as **hidden aliases** but can be retired without notice.
+Single entry point for the nav diagnostic surface. Bare `$nav` prints the live toggle table; `$nav <name> on|off` flips one toggle and prints `nav <name> <on|off> - <description>`; `$nav dump [file]` writes the nav-geometry JSON (default `navdump.json`, server working directory) and prints `Nav geometry dumped to '<file>' (see log for summary)` once the file is written. Toggle names churn every build (0.9.5 had 8; the 0.9.15+ table has ~26, e.g. `grid`, `bridge`, `grate`, `terrain`, `troute`, `mball`, `outdoorvia`; `route`, `bnodes` and `softhop` are gone) — Pyrodeck's Command Reference therefore takes the toggle name as free text and relies on bare `$nav` for the live list. Some sub-commands take values rather than on/off (e.g. `$nav mtenure <seconds>`, `$nav contend [index|all]`). Flat pre-0.9.5 names (`$terrainsteer`, `$navdump`, ...) remain as **hidden aliases** but are never referenced (§5.1.1).
 > **Tier 3 (volatile, mid-flight).** The toggle set and JSON schema churn with nav development — list in the command reference but build zero output binding. See §5.1.1.
 
 **`$botmov on|off`**
 Toggle movement debug logging. No structured output. *(Tier 3 — diagnostic toggle; reference only.)*
 
-**`$botmode`**
-Print the detected game mode. Output: `Game mode: <MODE> (scriptname='<name>', teams=<n>)` — `<MODE>` is one of `Anarchy`/`TeamAnarchy`/`CTF`/`Hoard`/`HyperAnarchy`/`Monsterball`/`RoboAnarchy`/`Coop` (matches `BotGameModeName`). Useful for the web UI to confirm objective-mode detection before showing CTF/Hoard panels. *(Tier 1 — stable, OK to parse.)*
+**`$botobj`** *(Tier 2)*
+Prints `Game mode: <MODE>` (no parenthesised part) and then the objective state, all to the console: flags and carriers, orbs, Hoard counts, Monsterball roles, Entropy labs, the co-op goal, per-bot roles and leans. (Before Matcen 0.9.16 most of this went to the server log only.) Show as text; no parser.
 
-**`$botobj`**
-Print the current objective state (CTF flag IDs and goal rooms, Hoard/Hyper orb IDs, per-team flag status). Prints a `Game mode: <MODE>` line plus any warnings; most detail goes to `server.log` at DEBUG. *(Tier 2 — diagnostic, not routine web display.)*
-
-**`$bothelp`**
+**`$bothelp`** *(Tier 2)*
 Print bot command reference. For display in the web UI help panel only.
 
 ### 5.3 Standard Commands Used by the Web Admin
@@ -302,13 +325,13 @@ These are vanilla D3 commands (present in all D3 builds) that the web admin call
 Player scoreboard. Output format (timeout-based collection):
 ```
 Pilot                Points K D S Ping
-Viper [BOT]:         5      6 1 1 0
-Shadow [BOT]:        4      6 2 2 0
-Phantom [BOT]:       0      0 8 0 0
-*Reaper [BOT]:       0      0 0 0 ---
+Viper[BOT]:          5      6 1 1 0
+Shadow[BOT]:         4      6 2 2 0
+Phantom[BOT]:        0      0 8 0 0
+*Reaper[BOT]:        0      0 0 0 ---
 ```
 - `*` prefix = observer/disconnected slot — exclude from active count
-- Bot players identified by `[BOT]` suffix in name — match on `[BOT]` alone: Matcen 0.9.16 emits it with **no** leading space (`Viper[BOT]`, verified live 2026-09-26) although examples here and in the fork docs still show `Viper [BOT]`
+- Bot players identified by `[BOT]` suffix in name — match on `[BOT]` alone: Matcen emits it with **no** leading space (`Viper[BOT]`, verified live 2026-09-26 and in the fork contract); builds before 0.9.9 printed `Viper [BOT]`
 - Hyper Anarchy formats score columns as `total[level]` (e.g. `1[1]`); parse the leading integer
 - Ping `---` = no network connection (bots always show this)
 - First line is the header; skip for data parsing
@@ -681,6 +704,7 @@ All commands flow through WebSocket for real-time streaming. The REST endpoint i
 { type: "capabilities",          payload: ServerCapabilities }
 { type: "players",               payload: ParsedScores }
 { type: "bots",                  payload: ParsedBotList }
+{ type: "botmode",               payload: { mode: string; scriptName: string; teams: number } }
 { type: "serverinfo",            payload: NetGameInfo }
 { type: "process_state",         payload: { state: "running" | "stopped" | "crashed" | "starting" | "stopping" } }
 { type: "process_output",        payload: { stream: "stdout" | "stderr"; data: string } }

@@ -347,7 +347,7 @@ $servercaps
 
 **Output format:**
 ```
-SERVERCAPS version=1 fork=Matcen fork_version=0.8.16 features=bots,roster,ships,difficulty
+SERVERCAPS version=1 fork=Matcen fork_version=0.9.16 features=bots,roster,ships,difficulty
 ```
 
 A vanilla D3 server will not recognize `$servercaps` and will produce no structured output. The presence of the `SERVERCAPS` line confirms the Matcen fork.
@@ -355,41 +355,47 @@ A vanilla D3 server will not recognize `$servercaps` and will produce no structu
 **Fields:**
 - `version` — Protocol version (currently 1)
 - `fork` — Fork name (`Matcen`)
-- `fork_version` — Semantic version (e.g., `0.8.16`)
-- `features` — Comma-separated feature flags: `bots`, `roster`, `ships`, `difficulty`
+- `fork_version` — Numeric `X.Y.Z` (the `-dev` suffix is never printed)
+- `features` — Comma-separated feature flags: `bots`, `roster`, `ships`, `difficulty`; from 0.9.17 also `teams`, `squad_orders`, and `population` once its controls exist. Treat unknown flags as harmless.
+
+The output formats below are owned by the fork's `matcen-docs/PYRODECK_CONTRACT.md`; Pyrodeck's spec §5.2 mirrors them.
 
 ### Bot Commands
 
 | Command | Description |
 |---------|-------------|
-| `$addbot <name> [ship] [difficulty]` | Add a bot with optional ship and difficulty |
+| `$addbot <name> [ship] [difficulty] [team]` | Add a bot; arguments are positional |
 | `$removebot <index>` | Remove a specific bot by its bot index |
 | `$removebots` | Remove all bots |
 | `$botlist` | List all active bots with status |
-| `$botstat [index\|all]` | Show detailed bot status (state, speed, target, shields) |
+| `$botstat [index\|all]` | Show detailed bot status (state, role, lean, speed, shields, target) |
 | `$botdifficulty <index\|all> <level>` | Change difficulty for one or all bots |
+| `$botmode` | Print the detected game mode and team count |
+| `$botobj` | Print the objective state (flags, orbs, roles) |
 | `$botmov [on\|off]` | Toggle bot movement debug logging |
+| `$nav ...` | Navigation diagnostics (format unstable; do not parse) |
 | `$bothelp` | Show bot command help |
 
 ### Bot Command Details
 
-**`$addbot <name> [ship] [difficulty]`**
+**`$addbot <name> [ship] [difficulty] [team]`**
 
-Adds a bot to the game. All parameters after name are optional.
+Adds a bot to the game. Difficulty is read only after a ship, team only after a difficulty.
 
-- **name** — Bot callsign (will be suffixed with `[BOT]` in player lists)
+- **name** — One token, cut to 14 characters; the callsign becomes `<name>[BOT]` (no space)
 - **ship** — Ship alias: `pyro`, `phoenix`, `magnum`, `blackpyro` (default: pyro)
-- **difficulty** — `trainee`, `rookie`, `hotshot`, `ace`, `insane` (or 0-4)
+- **difficulty** — `trainee`, `rookie`, `hotshot`, `ace`, `insane` (or 0-4); an unknown word becomes Hotshot
+- **team** — `1`-`4` (1-based); anything else auto-balances; ignored in free-for-all games
 
 ```
 $addbot Viper
 $addbot Reaper phoenix ace
-$addbot Shadow blackpyro 4
+$addbot Shadow blackpyro 4 2
 ```
 
-Output on success:
+Output on success (team is 1-based; a free-for-all bot prints `team=1`):
 ```
-Bot 'Viper' added in slot 3 (ship=Pyro-GL, diff=Hotshot)
+Bot 'Viper[BOT]' added in slot 3 (ship=Pyro-GL, diff=Hotshot, team=1)
 ```
 
 Output on failure:
@@ -402,8 +408,8 @@ Failed to add bot (server full or max bots reached)
 Lists all active bots with their index, slot, ship, difficulty, and alive/dead status.
 
 ```
-  Bot 0: 'Viper' slot=1 ship=Pyro-GL diff=Hotshot (alive)
-  Bot 1: 'Reaper' slot=2 ship=Phoenix diff=Ace (dead)
+  Bot 0: 'Viper[BOT]' slot=1 ship=Pyro-GL diff=Hotshot (alive)
+  Bot 1: 'Reaper[BOT]' slot=2 ship=Black Pyro diff=Ace (dead)
 ```
 
 - **Bot index** (0, 1, 2...) is used for `$removebot` and `$botdifficulty`
@@ -411,23 +417,32 @@ Lists all active bots with their index, slot, ship, difficulty, and alive/dead s
 
 **`$botstat [index|all]`**
 
-Shows detailed real-time bot status. With no argument or `all`, shows all bots.
+Shows detailed real-time bot status. With no argument or `all`, shows all bots. Each bot prints a status line and, usually, an indented `nav:` diagnostics line whose format changes without notice.
 
 ```
-  Bot 0 'Viper' slot=1 state=COMBAT speed=32.5 vel=(12.3,-8.1,4.2) shields=84 target=PlayerOne
-  Bot 1 'Reaper' slot=2 state=EXPLORE speed=15.0 vel=(5.0,0.0,10.0) shields=100 target=(none)
+  Bot 0 'Viper[BOT]' slot=1 state=COMBAT role=Freelance lean=balanced speed=32.5 shields=84 target=PlayerOne
+      nav: ...
+  Bot 1 'Reaper[BOT]' slot=2 state=EXPLORE role=Attack lean=attack speed=15.0 shields=100 target=(none)
 ```
 
-**States:** `EXPLORE`, `HUNT`, `COMBAT`, `FLEE`, `EVADE`
+**States:** `EXPLORE`, `HUNT`, `COMBAT`, `FLEE`, `EVADE`. **Roles:** `Freelance`, `Attack`, `Defend`, `Follow`, `Cover`. **Leans:** `balanced`, `attack`, `defend`, `runner`, `flex`.
 
 **`$botdifficulty <index|all> <level>`**
 
-Changes difficulty for a specific bot or all bots. When used with `all`, also sets the default difficulty for future bots.
+Changes difficulty for a specific bot or all bots. When used with `all`, also sets the default difficulty for future bots. Replies use the `→` (U+2192) arrow: `Bot 0 'Viper[BOT]' → Ace`.
 
 ```
 $botdifficulty 0 ace
 $botdifficulty all insane
 ```
+
+**`$botmode`**
+
+```
+Game mode: Team Anarchy (scriptname='team anarchy', teams=2)
+```
+
+Mode names: `Anarchy`, `Team Anarchy`, `Robo-Anarchy`, `Co-op`, `CTF`, `Hyper-Anarchy`, `Hoard`, `Entropy`, `Monsterball`, `Unknown`.
 
 ### Bot Roster File (BotConfig)
 
@@ -468,6 +483,7 @@ BotDifficulty4=insane
 - `BotName[N]=[string]` — Name for bot N (1-indexed, falls back to `BotN` if missing)
 - `BotShip[N]=[alias]` — Ship for bot N (`pyro`, `phoenix`, `magnum`, `blackpyro`)
 - `BotDifficulty[N]=[level]` — Per-bot difficulty override
+- `BotTeam[N]=[1-4]` — Per-bot team in team games (Matcen 0.8.6+)
 
 ### Available Ships
 
@@ -516,7 +532,7 @@ The `$players` command returns:
 PNum Name
 00: -Server-
 01: PlayerOne
-02: Viper [BOT]
+02: Viper[BOT]
 03: PlayerTwo
 ```
 

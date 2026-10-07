@@ -34,6 +34,7 @@ export function useServerConnection() {
   const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const botModeCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const levelChangedCallbacksRef = useRef<Array<(level: string | null) => void>>([]);
   const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
@@ -110,6 +111,11 @@ export function useServerConnection() {
             break;
           case "botstats":
             for (const cb of botStatsCallbacksRef.current) {
+              cb(msg.payload);
+            }
+            break;
+          case "botmode":
+            for (const cb of botModeCallbacksRef.current) {
               cb(msg.payload);
             }
             break;
@@ -344,6 +350,15 @@ export function useServerConnection() {
     };
   }, []);
 
+  const onBotMode = useCallback((callback: (data: unknown) => void) => {
+    botModeCallbacksRef.current.push(callback);
+    return () => {
+      botModeCallbacksRef.current = botModeCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const onServerInfo = useCallback((callback: (data: unknown) => void) => {
     serverInfoCallbacksRef.current.push(callback);
     return () => {
@@ -393,6 +408,7 @@ export function useServerConnection() {
     onPlayers,
     onBots,
     onBotStats,
+    onBotMode,
     onServerInfo,
     onLevelChanged,
     onPlaylistEvent,

@@ -1,9 +1,13 @@
 /**
- * Parser for $botlist output.
+ * Parser for $botlist output (Matcen contract, PYRODECK_CONTRACT §4, Tier 1).
  *
- * Example:
- *   Bot 0: 'Phantom [BOT]' slot=2 ship=Pyro-GL diff=Hotshot (alive)
- *   Bot 1: 'Viper [BOT]' slot=3 ship=Phoenix diff=Ace (dead)
+ * One line per active bot, two leading spaces:
+ *   Bot 0: 'Phantom[BOT]' slot=2 ship=Black Pyro diff=Ace (alive)
+ *   Bot 1: 'Viper[BOT]' slot=3 ship=Phoenix diff=Hotshot (dead)
+ *
+ * Callsigns end in "[BOT]" with no space before it. The ship is the game's
+ * ship name and can contain a space ("Black Pyro"). Difficulty is one of
+ * Trainee, Rookie, Hotshot, Ace, Insane.
  *
  * Empty list: "No bots active"
  */

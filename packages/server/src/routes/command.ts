@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { sessionManager, responseParser, serializeCaps } from "./server.js";
 import { playlistManager } from "../launcher/playlistInstance.js";
+import type { AddBotResult } from "../parser/parsers/addbot.js";
 
 interface WsCommand {
   type: "command";
@@ -168,12 +169,29 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
                   "$botlist": "bots",
                   "$botstat": "botstats",
                   "$netgameinfo": "serverinfo",
+                  "$botmode": "botmode",
                 };
                 const msgType = typeMap[commandName];
                 if (msgType) {
                   socket.send(
                     JSON.stringify({ type: msgType, payload: parsed.parsed }),
                   );
+                }
+
+                // A refused or altered $addbot is otherwise visible only in
+                // the console; surface it as an error toast.
+                if (commandName === "$addbot") {
+                  const result = parsed.parsed as AddBotResult;
+                  const problems = [...result.warnings];
+                  if (!result.ok && result.error) problems.push(result.error);
+                  if (problems.length > 0) {
+                    socket.send(
+                      JSON.stringify({
+                        type: "error",
+                        payload: { message: problems.join(" — ") },
+                      }),
+                    );
+                  }
                 }
 
                 // Forward $netgameinfo to playlist manager for timer anchoring

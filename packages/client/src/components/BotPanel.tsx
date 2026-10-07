@@ -28,12 +28,23 @@ interface BotPanelProps {
   sendCommand: (command: string) => void;
   onBots: (callback: (data: unknown) => void) => () => void;
   onBotStats: (callback: (data: unknown) => void) => () => void;
+  onBotMode: (callback: (data: unknown) => void) => () => void;
   hasShips: boolean;
   hasDifficulty: boolean;
+  /** Server advertises `teams`: $addbot takes a 4th, 1-based team argument. */
+  hasTeams: boolean;
 }
 
 const SHIPS = ["pyro", "phoenix", "magnum", "blackpyro"];
 const DIFFICULTIES = ["trainee", "rookie", "hotshot", "ace", "insane"];
+// The server cuts the base name to 14 characters (19-char callsign minus
+// "[BOT]") and splits $addbot arguments on whitespace.
+const BOT_NAME_MAX = 14;
+
+/** A bot base name as the server will use it: one token, at most 14 characters. */
+function cleanBotName(raw: string): string {
+  return raw.replace(/\s+/g, "").slice(0, BOT_NAME_MAX);
+}
 
 function shieldsColor(shields: number): string {
   if (shields >= 80) return "text-green-400";
@@ -46,8 +57,10 @@ export function BotPanel({
   sendCommand,
   onBots,
   onBotStats,
+  onBotMode,
   hasShips,
   hasDifficulty,
+  hasTeams,
 }: BotPanelProps) {
   const [bots, setBots] = useState<BotEntry[]>([]);
   const [botStats, setBotStats] = useState<Map<number, BotStatus>>(new Map());
@@ -55,11 +68,29 @@ export function BotPanel({
   const [newName, setNewName] = useState("");
   const [newShip, setNewShip] = useState("pyro");
   const [newDifficulty, setNewDifficulty] = useState("hotshot");
+  const [newTeam, setNewTeam] = useState("");
+  const [teamCount, setTeamCount] = useState(0);
   const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
+
+  // The team argument is positional after ship and difficulty, and only
+  // means something in a team game ($botmode reports the team count).
+  const showTeam = hasTeams && hasShips && hasDifficulty && teamCount >= 2;
 
   const refresh = useCallback(() => {
     sendCommand("$botlist");
   }, [sendCommand]);
+
+  useEffect(() => {
+    if (hasTeams) sendCommand("$botmode");
+  }, [hasTeams, sendCommand]);
+
+  useEffect(() => {
+    const unsubscribe = onBotMode((data: unknown) => {
+      const payload = data as { teams?: number };
+      if (typeof payload.teams === "number") setTeamCount(payload.teams);
+    });
+    return unsubscribe;
+  }, [onBotMode]);
 
   const refreshStats = useCallback(() => {
     sendCommand("$botstat all");
@@ -113,10 +144,18 @@ export function BotPanel({
   };
 
   const addBot = () => {
-    if (!newName.trim()) return;
-    let cmd = `$addbot ${newName.trim()}`;
-    if (hasShips) cmd += ` ${newShip}`;
-    if (hasDifficulty) cmd += ` ${newDifficulty}`;
+    const name = cleanBotName(newName);
+    if (!name) return;
+    // Arguments are positional: difficulty is read only after a ship, team
+    // only after a difficulty.
+    let cmd = `$addbot ${name}`;
+    if (hasShips) {
+      cmd += ` ${newShip}`;
+      if (hasDifficulty) {
+        cmd += ` ${newDifficulty}`;
+        if (showTeam && newTeam) cmd += ` ${newTeam}`;
+      }
+    }
     sendCommand(cmd);
     setNewName("");
     setTimeout(refresh, 500);
@@ -133,7 +172,8 @@ export function BotPanel({
             <input
               type="text"
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={(e) => setNewName(cleanBotName(e.target.value))}
+              maxLength={BOT_NAME_MAX}
               placeholder="Bot name"
               className="w-full px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               onKeyDown={(e) => e.key === "Enter" && addBot()}
@@ -173,7 +213,24 @@ export function BotPanel({
               </select>
             </div>
           )}
-          <Button onClick={addBot} disabled={!newName.trim()} className="font-score tracking-wide">
+          {showTeam && (
+            <div>
+              <label className="block text-sm font-score tracking-wide text-muted-foreground mb-1">Team</label>
+              <select
+                value={newTeam}
+                onChange={(e) => setNewTeam(e.target.value)}
+                className="px-2 py-1.5 bg-input border border-border rounded-md text-sm text-foreground"
+              >
+                <option value="">auto</option>
+                {Array.from({ length: Math.min(teamCount, 4) }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>
+                    {i + 1}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <Button onClick={addBot} disabled={!cleanBotName(newName)} className="font-score tracking-wide">
             Add
           </Button>
         </div>
