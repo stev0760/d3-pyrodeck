@@ -1225,4 +1225,39 @@ disable without a restart. **Not verified:** a real game client downloading from
 
 ---
 
+## Addendum D — Supervisor (D3Server3 parity, 2026-10-07, branch `parity/sup`)
+
+The behaviours `docs/D3SERVER3_AUDIT.md` ranks 1, 3 and 13: relaunch after a crash or a hang, restart
+when empty after an uptime limit, and re-attach after Pyrodeck restarts. Engine facts are cited from
+the Matcen tree (`Descent3/`, `netgames/`).
+
+### D.1 Server events and the lines behind them
+
+`packages/server/src/events/ServerEvents.ts` is the bus. `ProcessManager` emits `server.started`
+(with the reason the caller passed: `manual` for the Launch button, `playlist` for a rotation,
+`relaunch` for the supervisor), `server.stopped` (the reason passed to `stop()`) and `server.crashed`
+(an exit nobody asked for). An exit within 30 s of the echo of a `quit` typed at a remote console
+(`[<address>] quit`, printed for every console line by `DedicatedReadTelnet`, dedicated_server.cpp;
+`Quit` is a console variable whose setter leaves the game, `SetCVarNone`) is a stop on request:
+state `stopped`, `server.stopped` with `reason: "manual", via: "console"`.
+
+`ServerLineMonitor` reads the launched process's stdout (the console when re-attached, D.5) and emits:
+
+| Event | Line (English string tables) | Source |
+|---|---|---|
+| `player.joined` | `*<name> has joined the Anarchy` / `CTF` / `the Hyper Anarchy!` / `the Hoard` / `the game` / `the <team> Team` (Entropy and Monsterball capitalise `Has Joined The`) | each mode's `DisplayWelcomeMessage` (e.g. `netgames/anarchy/anarchy.cpp`, `ctf/ctf.cpp`), called from `OnClientPlayerEntersGame` |
+| `player.left` | `*<name> has left the game` (D3.STR 147), `*<name> disconnected!` (D3.STR 247) | `MultiDoLeaveGame` (multi.cpp, the client quit), `MultiDisconnectPlayer` (multi_server.cpp, timeout or kick) |
+| `player.chat` | `*<name> says: <text>` (D3.STR 117) | |
+| `level.started` | `Opening level '<file>.d3l'...` | `LoadLevel` (LoadLevel.cpp, `TXT_DS_OPENLEVEL`) |
+
+HUD messages reach the console as `*<text>` on a dedicated server (`AddLineToHUDMessages`,
+hudmessage.cpp), and `PrintDedicatedMessage` (dedicated_server.cpp) writes every one of these lines to
+stdout and to each remote console. Bots (`[BOT]` callsigns, bot.h `BOT_NAME_SUFFIX`) are not reported.
+Chat is matched before joins and leaves, so typed text cannot pose as one. A HUD line glued after the
+level-load status (`... 100 Percent Complete*X has joined CTF`; the status is printed without a
+newline, Mission.cpp) is still read. A server running other string tables prints other words and is
+not read. No line carries the player's address.
+
+---
+
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*

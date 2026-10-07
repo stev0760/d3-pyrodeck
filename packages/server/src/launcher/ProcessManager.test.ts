@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
+import { ServerEvents } from "../events/ServerEvents.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -124,5 +125,73 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
   it("reports no log at all as state none", async () => {
     await launch(undefined);
     expect(pm.getStatus().log).toEqual({ path: null, state: "none", message: null });
+  });
+});
+
+describe.skipIf(process.platform === "win32")("ProcessManager server events", () => {
+  let dir: string;
+  let exe: string;
+  let pm: ProcessManager;
+  let events: ServerEvents;
+  let seen: string[];
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-pm-ev-"));
+    exe = path.join(dir, "fake-d3");
+    await fs.writeFile(exe, FAKE_SERVER, { mode: 0o755 });
+    events = new ServerEvents();
+    seen = [];
+    events.onEvent("server.started", (p) => seen.push(`started ${p.profileId} ${p.reason} ${p.args.join(" ")}`));
+    events.onEvent("server.stopped", (p) => seen.push(`stopped ${p.reason}${p.via ? ` via ${p.via}` : ""}`));
+    events.onEvent("server.crashed", (p) => seen.push(`crashed ${p.signal}`));
+    pm = new ProcessManager({ events });
+  });
+
+  afterEach(async () => {
+    await pm.stop();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const launch = (reason?: Parameters<ProcessManager["start"]>[1]) =>
+    pm.start(
+      {
+        executablePath: exe,
+        gamePath: dir,
+        configFile: "server.cfg",
+        telnetPort: UNUSED_PORT,
+        telnetPassword: "x",
+        profileId: "p1",
+      },
+      reason,
+    );
+
+  it("reports a start and a requested stop with their reasons", async () => {
+    await launch("schedule");
+    await pm.stop("schedule");
+    expect(pm.getStatus().state).toBe("stopped");
+    expect(seen).toEqual(["started p1 schedule -dedicated ./server.cfg", "stopped schedule"]);
+  });
+
+  it("reports a kill from outside as a crash", async () => {
+    await launch();
+    process.kill(pm.getStatus().pid!, "SIGKILL");
+    await expect.poll(() => pm.getStatus().state, { timeout: 3000 }).toBe("crashed");
+    expect(seen).toEqual(["started p1 manual -dedicated ./server.cfg", "crashed SIGKILL"]);
+  });
+
+  it("reports an exit right after a console quit as a stop, not a crash", async () => {
+    await launch();
+    pm.noteConsoleQuit();
+    process.kill(pm.getStatus().pid!, "SIGTERM");
+    await expect.poll(() => pm.getStatus().state, { timeout: 3000 }).toBe("stopped");
+    expect(seen[1]).toBe("stopped manual via console");
+  });
+
+  it("emits nothing for the kill after a hang (the supervisor reported it)", async () => {
+    await launch("relaunch");
+    await pm.stop("hang", { kill: true });
+    expect(pm.getStatus().state).toBe("stopped");
+    expect(pm.getStatus().exitSignal).toBe("SIGKILL");
+    expect(seen).toEqual(["started p1 relaunch -dedicated ./server.cfg"]);
   });
 });

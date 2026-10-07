@@ -3,6 +3,16 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
+
+/** Who started the process (carried on `server.started`). */
+export type StartReason = ServerEventMap["server.started"]["reason"];
+/**
+ * Why Pyrodeck stops the process (carried on `server.stopped`). "hang" is the
+ * supervisor killing a server whose console stopped answering; it emits
+ * `server.hung` itself, so no `server.stopped` follows.
+ */
+export type StopReason = ServerEventMap["server.stopped"]["reason"] | "hang";
 
 export type ProcessState =
   | "stopped"
@@ -42,6 +52,8 @@ export interface ProcessManagerOptions {
   logCheckDelayMs?: number;
   /** Interval of the log re-checks while the process runs (default LOG_RECHECK_MS). */
   logRecheckMs?: number;
+  /** Bus for server.started/stopped/crashed (default: the process-wide one). */
+  events?: ServerEvents;
 }
 
 export interface LaunchConfig {
@@ -130,6 +142,10 @@ const LOG_WRITE_CHECK_MS = 8000;
 // moved away mid-run (cleanup scripts, a mis-aimed rm) keeps "working" from
 // the writer's side while the output goes to an unlinked inode.
 const LOG_RECHECK_MS = 30_000;
+// A `quit` typed at a remote console makes the server leave the game and exit
+// on its next frames (dedicated_server.cpp SetCVarNone, CVAR_QUIT). An exit
+// within this long of its echo is that quit, not a crash.
+const CONSOLE_QUIT_WINDOW_MS = 30_000;
 
 /**
  * Manages the D3 dedicated server process lifecycle.
@@ -169,6 +185,11 @@ export class ProcessManager extends EventEmitter {
   // Track the last D3 exit so we only apply port-release waits when needed.
   private lastExitedPort: number | null = null;
   private lastExitedAt: number = 0;
+  private readonly events: ServerEvents;
+  private startReason: StartReason = "manual";
+  private stopReason: StopReason = "manual";
+  /** When the echo of a remote-console `quit` was last seen (epoch ms), 0 = never. */
+  private consoleQuitAt = 0;
 
   /** Send a quit command over telnet for graceful shutdown. Set externally. */
   sendQuitFn: (() => Promise<void>) | null = null;
@@ -177,6 +198,21 @@ export class ProcessManager extends EventEmitter {
     super();
     this.logCheckDelayMs = options.logCheckDelayMs ?? LOG_WRITE_CHECK_MS;
     this.logRecheckMs = options.logRecheckMs ?? LOG_RECHECK_MS;
+    this.events = options.events ?? serverEvents;
+  }
+
+  /** Why the current/last process was started. */
+  getStartReason(): StartReason {
+    return this.startReason;
+  }
+
+  /**
+   * Someone typed `quit` at a remote console. If the process exits soon after,
+   * that is a stop on request (state "stopped", `server.stopped` via console),
+   * not a crash, so the supervisor leaves it down.
+   */
+  noteConsoleQuit(): void {
+    this.consoleQuitAt = Date.now();
   }
 
   getStatus(): ProcessStatus {
@@ -192,13 +228,16 @@ export class ProcessManager extends EventEmitter {
     return this.status.state === "running" || this.status.state === "starting";
   }
 
-  async start(config: LaunchConfig): Promise<void> {
+  async start(config: LaunchConfig, reason: StartReason = "manual"): Promise<void> {
     if (this.isRunning()) {
       throw new Error("Server is already running");
     }
 
     this.launchConfig = config;
     this.telnetReady = false;
+    this.startReason = reason;
+    this.stopReason = "manual";
+    this.consoleQuitAt = 0;
     this.setState("starting");
 
     // Wait for the previous D3's network port to be fully released by the
@@ -302,53 +341,91 @@ export class ProcessManager extends EventEmitter {
     });
 
     this.child.on("exit", (code, signal) => {
+      const pid = this.status.pid;
       this.cleanup();
       this.status.exitCode = code;
       this.status.exitSignal = signal;
       this.status.stoppedAt = new Date();
-
-      if (this.status.state === "stopping") {
-        this.setState("stopped");
-      } else {
-        // Unexpected exit
-        this.setState("crashed");
-      }
-      this.emit("exit", code, signal);
+      this.onProcessExit(pid, code, signal);
     });
+
+    if (this.status.pid !== null) {
+      this.events.emitEvent("server.started", {
+        profileId: config.profileId ?? "",
+        pid: this.status.pid,
+        args,
+        reason,
+      });
+    }
 
     // Start TCP probe for telnet readiness as a fallback
     this.startTelnetProbe(config.telnetPort);
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Stop the server on Pyrodeck's request: `quit` over the console, then
+   * SIGTERM, then SIGKILL. `kill` goes straight to SIGKILL, for a server that
+   * no longer answers (a hung main loop never runs the quit, and the engine's
+   * SIGTERM handler runs its shutdown code on that same stuck process).
+   */
+  async stop(reason: StopReason = "manual", options: { kill?: boolean } = {}): Promise<void> {
     if (!this.child || this.status.state === "stopped" || this.status.state === "stopping") {
       return;
     }
 
+    this.stopReason = reason;
     this.setState("stopping");
 
-    // Step 1: Try graceful quit via telnet
-    if (this.sendQuitFn && this.telnetReady) {
-      try {
-        await this.sendQuitFn();
-      } catch {
-        // Telnet quit failed, proceed to signals
+    if (!options.kill) {
+      // Step 1: Try graceful quit via telnet
+      if (this.sendQuitFn && this.telnetReady) {
+        try {
+          await this.sendQuitFn();
+        } catch {
+          // Telnet quit failed, proceed to signals
+        }
+
+        if (await this.waitForExit(GRACEFUL_QUIT_TIMEOUT_MS)) return;
       }
 
-      if (await this.waitForExit(GRACEFUL_QUIT_TIMEOUT_MS)) return;
+      // Step 2: SIGTERM
+      if (this.childAlive()) {
+        this.child?.kill("SIGTERM");
+        if (await this.waitForExit(SIGTERM_TIMEOUT_MS)) return;
+      }
     }
 
-    // Step 2: SIGTERM
-    if (this.child && !this.child.killed) {
-      this.child.kill("SIGTERM");
-      if (await this.waitForExit(SIGTERM_TIMEOUT_MS)) return;
-    }
-
-    // Step 3: SIGKILL
-    if (this.child && !this.child.killed) {
-      this.child.kill("SIGKILL");
+    // Step 3: SIGKILL. (child.killed turns true once SIGTERM is delivered,
+    // even if the process ignores it, so test for an exit instead.)
+    if (this.childAlive()) {
+      this.child?.kill("SIGKILL");
       await this.waitForExit(2000);
     }
+  }
+
+  private childAlive(): boolean {
+    return !!this.child && this.child.exitCode === null && this.child.signalCode === null;
+  }
+
+  /** Classify an exit as a requested stop or a crash, and report it. */
+  private onProcessExit(pid: number | null, code: number | null, signal: string | null): void {
+    const profileId = this.status.activeProfileId ?? "";
+    if (this.status.state === "stopping") {
+      this.setState("stopped");
+      if (pid !== null && this.stopReason !== "hang") {
+        this.events.emitEvent("server.stopped", { profileId, pid, reason: this.stopReason });
+      }
+    } else if (this.consoleQuitAt > 0 && Date.now() - this.consoleQuitAt < CONSOLE_QUIT_WINDOW_MS) {
+      this.setState("stopped");
+      if (pid !== null) {
+        this.events.emitEvent("server.stopped", { profileId, pid, reason: "manual", via: "console" });
+      }
+    } else {
+      // Unexpected exit
+      this.setState("crashed");
+      if (pid !== null) this.events.emitEvent("server.crashed", { profileId, pid, code, signal });
+    }
+    this.emit("exit", code, signal);
   }
 
   private setState(state: ProcessState): void {

@@ -24,12 +24,20 @@ import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
+import { serverEvents } from "../events/ServerEvents.js";
+import { ServerLineMonitor } from "../launcher/ServerLineMonitor.js";
 
 export { playlistManager };
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
+
+// Joins, leaves, chat and level starts onto the event bus, read from the
+// launched process's stdout.
+const lineMonitor = new ServerLineMonitor();
+lineMonitor.onConsoleQuit = () => processManager.noteConsoleQuit();
+serverEvents.onEvent("server.started", ({ profileId }) => lineMonitor.reset(profileId));
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -256,7 +264,7 @@ function broadcastPlaylistStatus(): void {
 /** Spawn the rotation's server and start the health deadline. Throws if the spawn fails. */
 async function launchForRotation(rl: RotationLaunch, token: number): Promise<void> {
   registerAutoConnect(rl.telnetPassword, token);
-  await processManager.start(rl.launch);
+  await processManager.start(rl.launch, "playlist");
   rotationHealth.arm();
 }
 
@@ -314,7 +322,7 @@ rotationHealth.on("retry", async (_attempt: number, reason: string) => {
     if (existing) sessionManager.remove(existing.id);
     processManager.sendQuitFn = null;
     playlistManager.sendCommandFn = null;
-    if (processManager.isRunning()) await processManager.stop();
+    if (processManager.isRunning()) await processManager.stop("playlist");
 
     // The operator may have taken over (Stop/Launch) while we were stopping.
     if (rotationHealth.token() !== token || !rotationHealth.isPending()) return;
@@ -425,7 +433,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 
     const launchStatus = processManager.getStatus();
     if (launchStatus.state === "running" || launchStatus.state === "starting") {
-      await processManager.stop();
+      await processManager.stop("playlist");
     }
     // From here on the server is down: a failure pauses the playlist instead
     // of leaving it "restarting" behind a dead server.
@@ -575,6 +583,7 @@ processManager.on("stdout", (data: string) => {
   queueProcessOutput("stdout", data);
   // Feed to playlist manager unbatched — level-end detection stays immediate
   playlistManager.onStdoutChunk(data);
+  lineMonitor.push(data);
 });
 
 processManager.on("stderr", (data: string) => {
@@ -765,7 +774,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
     // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
     // absorbs that on the next launch.
-    await processManager.stop();
+    await processManager.stop("manual");
 
     // Clean up session after the process is down
     processManager.sendQuitFn = null;
