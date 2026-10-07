@@ -763,6 +763,14 @@ All commands flow through WebSocket for real-time streaming. The REST endpoint i
 | `GET` | `/api/game-files/missions?profileId=&details=1` | `.mn3` list; with `details=1`, per-mission metadata, mode compatibility, `urls` and `urlBackup` (Addenda A, B) |
 | `PUT` | `/api/game-files/missions/:file/download-url` | Body `{ url, profileId? }`: rewrite the mission's download link (Addendum B) |
 | `POST` | `/api/game-files/missions/:file/download-url/restore` | Body `{ profileId? }`: put the original `.mn3` back and delete the backup |
+| `POST` | `/api/game-files/missions/:file/download-url/host` | Body `{ profileId? }`: set the link to `<publicBaseUrl>/missions/<file>` (Addendum C) |
+| `GET` | `/api/mission-host` | `{ settings: { enabled, port, publicBaseUrl }, status: { enabled, port, bound, error, publicBaseUrl, missionsDir } }` |
+| `PUT` | `/api/mission-host` | Body `{ enabled, port, publicBaseUrl }`: validate, save, start/stop/move the listener; returns `{ settings, status, warnings }` |
+| `POST` | `/api/mission-host/test` | Body `{ file }`: fetch the mission through the public base URL from the Pyrodeck machine; `{ ok, url, status, contentLength, bytes, matches, elapsedMs, error }` |
+
+With the host on, `details=1` entries also carry `hostUrl` (the link the host serves the mission at) or
+`hostError` (why it cannot: retail, too long, another game path). `GET /api/launcher/status` carries
+`missionHost` (the status object above).
 
 ### 8.5 Config Files (Phase 1)
 
@@ -1142,6 +1150,78 @@ restored (non-`.msn` payloads and the mode scan unchanged; restore byte-identica
 
 Config tab, mission details panel: the current links, **Set link / Change** (one link replaces all
 of them), and **Restore original** while a backup exists.
+
+## Addendum C — Mission host (2026-10-07, branch `feature/mission-host`)
+
+**Goal:** Quake 3 `sv_allowDownload` parity. Pyrodeck serves the server's custom missions itself, so
+the link from Addendum B can point at the same machine. No `$` command or console output changes;
+the Matcen contract (`PYRODECK_CONTRACT.md`) is untouched.
+
+### C.1 Engine facts (Matcen source, read 2026-10-07; corrects B.1 where noted)
+
+- **The current client** (`Descent3/mission_download.cpp`, `msn_DownloadWithStatus`) checks the
+  scheme with `stricmp`, splits the link at `/`, and hands `scheme://host[:port]` to
+  `D3::HttpClient` (`netcon/inetfile/httpclient.cpp`), a cpp-httplib 0.28 `Client` with
+  `follow_location(true)` and a 5 s connect timeout. Request: `GET /<path> HTTP/1.1`, origin-form,
+  with `Host`, `Accept` and `Connection: close`; no `User-Agent`, no `Accept-Encoding` (httplib adds
+  them only without a content receiver), no `Range`. It reads Content-Length, chunked and
+  close-delimited bodies and keeps the body only on 200. The body is written to
+  `<missions dir>/<server's mission name>`; a link ending in `.zip` is unzipped instead.
+- **No https (corrects B.1).** The fork's vcpkg manifest builds cpp-httplib with features
+  `brotli;core`, so `CPPHTTPLIB_OPENSSL_SUPPORT` is off and `httplib::Client` throws
+  `std::invalid_argument` on an `https` link; nothing catches it. httplib's scheme regex is `[a-z]+`,
+  so an upper-case `HTTP://` fails to resolve.
+- **86 characters, not 95 (corrects B.1 for writing).** `sprintf(fmturl, "Downloading: %s", url)`
+  into `char fmturl[100]` (`MSN_MAX_STRING_LEN`), unchanged since the 1999 import: 13 + length + 1
+  must fit in 100. The `.msn` parser still keeps 95; Pyrodeck writes at most 86.
+- **Progress division.** `int starttime = timer_GetTime();` then every 500 ms
+  `time_elapsed = timer_GetTime() - starttime;` and, once httplib's progress callback has reported a
+  Content-Length, `received_bytes / time_elapsed` in integer arithmetic. `time_elapsed` is 0 until
+  the first wall-clock second boundary after the start, so a body that starts arriving within about
+  0.5 s raises SIGFPE about half the time (reproduced with the same expression outside the engine).
+  httplib reports progress only for bodies with a Content-Length.
+- **The 1999-era client** (`netcon/inetfile/Chttpget.cpp` in the source import `df209742`) rejects
+  any `:` after `http://` (port 80 only), sends its request with bare-LF line endings, needs CRLF in
+  the response, follows only 301, and stops reading at Content-Length.
+
+### C.2 Listener (`packages/server/src/gamefiles/MissionHost.ts`)
+
+- Settings in `pyrodeck.json` as `missionHost: { enabled (false), port (3002), publicBaseUrl }`, set
+  only through `PUT /api/mission-host` (the generic config PUT ignores the key). `publicBaseUrl` is
+  normalized to `http://<lower-case host>[:port]`; https, paths, queries and credentials are
+  refused; a LAN or loopback host draws a warning.
+- A plain `node:http` server, not the admin Fastify app: `GET`/`HEAD /missions/<name>` where the
+  decoded name is a bare basename ending in `.mn3`, not retail, and listed case-exact by a `readdir`
+  of `<global gamePath>/missions` at request time. Everything else is 404 (405 for other methods on a
+  mission path). No directory listing, no ranges (`Accept-Ranges: none`).
+- Response: 200, `Content-Type: application/octet-stream`, `Content-Length` from the open
+  descriptor (a concurrent link rewrite renames a new file over the name; the response keeps the
+  old one), `Connection: close`, `X-Content-Type-Options: nosniff`.
+- Each GET is held 1 s before the first byte (`FIRST_BYTE_DELAY_MS`). The request leaves the client
+  after it read `starttime`, so by the time it sees a Content-Length a full second has passed and
+  `time_elapsed` is at least 1. Side effect: the client's first check sees 0 of 0 bytes and blocks on
+  the transfer, so its window does not redraw until the download ends (it does the same on any slow
+  start).
+- `insecureHTTPParser` on this listener only, for the 1999-era client's bare-LF requests (Node's
+  strict parser answers them 400). The listener reads no request bodies and proxies nothing.
+- 64 connections at most, 10 s to receive a request. Bind failures (`EADDRINUSE`, `EACCES`) go into
+  the status, never stop Pyrodeck. Saving the settings starts, stops or moves the listener.
+
+### C.3 Link and UI
+
+- `POST .../download-url/host` builds `<publicBaseUrl>/missions/<encodeURIComponent(file)>`, refuses
+  retail, non-`.mn3` and over-86-character links, and a profile whose missions directory is not the
+  host's, then calls the Addendum B rewriter (backup and restore unchanged).
+- Launch panel, **Mission Downloads**: on/off, port, public URL, state (green dot and port, or the
+  bind error). Config tab mission panel: "Hosted by Pyrodeck" / "Not hosted by Pyrodeck" with the
+  exact link, **Host this mission**, **Test** (server-side GET through the public URL, compared by
+  size and SHA-256 with the disk; the UI says that only a client outside the LAN proves reachability).
+
+**Verified 2026-10-07:** unit and integration tests (allowlist, URL builder, a listener on an
+ephemeral port: byte-identical body with Content-Length, 404 for retail, traversal, non-`.mn3`,
+unknown, wrong-case and `/api/...`, the bare-LF request, the hold, bind failure). Manual run on
+127.0.0.1:3001/3002: `curl -sI` and a SHA-256 match on a 5.4 MB mission, refusals, port move and
+disable without a restart. **Not verified:** a real game client downloading from the listener.
 
 ---
 

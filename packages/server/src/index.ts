@@ -13,6 +13,7 @@ import { commandRoutes } from "./routes/command.js";
 import { savedServerRoutes } from "./routes/saved-servers.js";
 import { configRoutes } from "./routes/config.js";
 import { pyrodeckConfigRoutes } from "./routes/pyrodeck-config.js";
+import { missionHostRoutes } from "./routes/mission-host.js";
 import { launcherRoutes } from "./routes/launcher.js";
 import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
@@ -106,6 +107,8 @@ async function main() {
   await app.register(savedServerRoutes);
   await app.register(configRoutes);
   await app.register(pyrodeckConfigRoutes);
+  // Starts the mission download listener (its own port) when it is enabled.
+  await app.register(missionHostRoutes);
   await app.register(launcherRoutes);
   await app.register(logsRoutes);
   await app.register(playlistRoutes);

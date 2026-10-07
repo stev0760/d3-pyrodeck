@@ -7,6 +7,7 @@ import {
   type MissionDetails,
 } from "@/lib/missionCompat";
 import { MissionUrlEditor } from "./MissionUrlEditor";
+import { fetchMissionHost, type MissionHostState } from "@/lib/missionHost";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend DedicatedCfgData)
@@ -321,11 +322,13 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
   const [missions, setMissions] = useState<string[]>([]);
   const [scripts, setScripts] = useState<string[]>([]);
   const [missionDetails, setMissionDetails] = useState<Record<string, MissionDetails>>({});
+  const [missionHost, setMissionHost] = useState<MissionHostState | null>(null);
 
   // Load config + missions + scripts in parallel
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    fetchMissionHost().then(setMissionHost);
     try {
       const [cfgRes, missionsRes, scriptsRes] = await Promise.all([
         fetch(`/api/profiles/${encodeURIComponent(profileId)}/structured-config`, {
@@ -588,6 +591,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                 onUpdated={(info) =>
                   setMissionDetails((prev) => ({ ...prev, [info.file]: info }))
                 }
+                host={missionHost}
               />
             </div>
           )}
