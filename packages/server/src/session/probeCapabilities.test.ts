@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import type { ServerCapabilities } from "../parser/parsers/servercaps.js";
-import { probeCapabilities, LATE_PROBE_ATTEMPTS } from "./probeCapabilities.js";
+import {
+  probeCapabilities,
+  probeCapabilitiesDetailed,
+  LATE_PROBE_ATTEMPTS,
+} from "./probeCapabilities.js";
 
 const CAPS_LINE =
   "SERVERCAPS version=1 fork=Matcen fork_version=0.9.15 features=bots,roster,ships,difficulty";
@@ -56,5 +60,15 @@ describe("probeCapabilities", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(onLate).not.toHaveBeenCalled();
     expect(conn.sent).toBe(1 + LATE_PROBE_ATTEMPTS);
+  });
+
+  it("reports whether the first probe was answered", async () => {
+    expect((await probeCapabilitiesDetailed(fakeConnection([CAPS_LINE]), () => {}, 0)).answered).toBe(true);
+    expect((await probeCapabilitiesDetailed(fakeConnection(["Unknown command"]), () => {}, 0)).answered).toBe(true);
+    const silent = fakeConnection(["", CAPS_LINE]);
+    const late = vi.fn();
+    const result = await probeCapabilitiesDetailed(silent, late, 0);
+    expect(result.answered).toBe(false);
+    await vi.waitFor(() => expect(late).toHaveBeenCalledTimes(1));
   });
 });

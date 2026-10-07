@@ -617,6 +617,18 @@ D3 dedicated server prints `"Ending level."` to stdout at the end of every level
 5. `ensureConfigReference("MissionName", missionName)` patches the active profile's `.cfg` file in place
 6. `processManager.start()` — new D3 process with updated config
 7. Pyrodeck auto-reconnects via telnet (same `registerAutoConnect()` flow as normal launch)
+8. **Health check (v0.4.20):** the restarted server must accept the console login and answer
+   `$servercaps` (any answer, or fork caps from the background re-probe) within 120 s of the spawn.
+   A crash during startup, a failed spawn or a refused login fails the attempt at once. One
+   automatic retry (stop whatever is left, relaunch the same config, appending to the same log);
+   if that also fails, the playlist is **paused**: status `paused` with a `pausedReason`, an error
+   toast, and a red notice with a Resume button in the sidebar. A paused playlist ignores level
+   ends and opens no votes; the pause survives a Pyrodeck restart (`playlist-state.json`). Resume
+   (`POST /api/playlists/resume`) does not relaunch the server; the operator launches it. Starting or
+   stopping the server by hand during the check cancels it. A profile config without a remote
+   console now pauses the playlist instead of leaving the server stopped without a word.
+   `GET /api/playlists/status` and `playlist_status` carry
+   `rotationCheck: { state: "idle"|"relaunching"|"waiting", attempt, maxRetries, deadline }`.
 
 #### Mission Voting
 Voting is chat-based — backwards-compatible with all D3 builds, no client mod required. Players vote by typing a single digit in all-chat; Pyrodeck parses `*PlayerName says: N` from stdout.

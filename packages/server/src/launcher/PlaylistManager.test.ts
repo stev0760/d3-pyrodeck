@@ -313,6 +313,79 @@ describe("PlaylistManager — rotation", () => {
   });
 });
 
+describe("PlaylistManager — pause after a failed restart", () => {
+  const missionOver = "Mission over.  Looping back to first level in mission file.\n";
+
+  it("pause stops rotation until resume; markRotationComplete does not unpause", async () => {
+    const mgr = await makeManager();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+    let statusEvents = 0;
+    mgr.on("statusChanged", () => statusEvents++);
+
+    mgr.onStdoutChunk(missionOver);
+    expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3"]);
+
+    mgr.pause('Rotation to "Mission B" failed: server exited during startup');
+    expect(mgr.getStatus()).toMatchObject({
+      status: "paused",
+      pausedReason: 'Rotation to "Mission B" failed: server exited during startup',
+    });
+    expect(mgr.getStatus().pausedAt).toEqual(expect.any(Number));
+    expect(statusEvents).toBe(1);
+
+    mgr.markRotationComplete();
+    mgr.onStdoutChunk(missionOver);
+    expect(mgr.getStatus().status).toBe("paused");
+    expect(rotated).toHaveLength(1);
+
+    expect(mgr.resume()).toBe(true);
+    expect(mgr.getStatus()).toMatchObject({ status: "active", pausedReason: null, pausedAt: null });
+    expect(statusEvents).toBe(2);
+    mgr.onStdoutChunk(missionOver);
+    expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3", "c.mn3"]);
+    expect(mgr.resume()).toBe(false); // not paused any more
+  });
+
+  it("keeps the pause across a Pyrodeck restart", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pl-test-"));
+    const mgr = new PlaylistManager(dir);
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.pause("restart never answered");
+    await vi.waitFor(async () => {
+      const raw = await fs.readFile(path.join(dir, "playlist-state.json"), "utf-8");
+      expect(JSON.parse(raw).paused?.reason).toBe("restart never answered");
+    });
+
+    const again = new PlaylistManager(dir);
+    await again.restoreState();
+    expect(again.getStatus()).toMatchObject({
+      status: "paused",
+      activePlaylistId: pl.id,
+      pausedReason: "restart never answered",
+    });
+  });
+
+  it("activating or deactivating clears a pause; pause without a playlist is a no-op", async () => {
+    const mgr = await makeManager();
+    mgr.pause("nothing active");
+    expect(mgr.getStatus().status).toBe("inactive");
+
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.pause("x");
+    await mgr.activate(pl.id);
+    expect(mgr.getStatus()).toMatchObject({ status: "active", pausedReason: null });
+    mgr.pause("y");
+    mgr.deactivate();
+    expect(mgr.getStatus()).toMatchObject({ status: "inactive", pausedReason: null });
+  });
+});
+
 describe("PlaylistManager — voting", () => {
   let mgr: PlaylistManager;
 

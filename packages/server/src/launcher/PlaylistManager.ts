@@ -44,6 +44,8 @@ export interface PlaylistState {
   activePlaylistId: string | null;
   currentIndex: number;
   shuffleOrder: number[] | null;
+  /** Set while rotation is paused (e.g. a restart never came healthy). */
+  paused?: { reason: string; at: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +63,8 @@ interface VoteEntry {
 // Internal state machine states
 // ---------------------------------------------------------------------------
 
-type PlaylistStatus = "inactive" | "active" | "voting" | "restarting";
+// paused: rotation suspended after a failed restart; the operator resumes it.
+type PlaylistStatus = "inactive" | "active" | "voting" | "restarting" | "paused";
 
 const PLAYLISTS_FILE = "playlists.json";
 const STATE_FILE = "playlist-state.json";
@@ -92,6 +95,7 @@ const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
  *   levelChanged(level: string | null)      — a new level is loading (fires regardless of playlist state)
  *   serverInfoRaw(raw: string)              — raw $netgameinfo output from a server-side query (for client broadcast)
+ *   statusChanged()                         — paused or resumed (for a playlist_status broadcast)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -110,6 +114,10 @@ export class PlaylistManager extends EventEmitter {
    * Prevents the first "Ending level." from skipping entry[0].
    */
   private needsInitialSync = false;
+
+  /** Why rotation is paused, and since when (epoch ms). Null unless status is "paused". */
+  private pausedReason: string | null = null;
+  private pausedAt: number | null = null;
 
   // Timer tracking
   private gameEndAt: number | null = null; // epoch ms
@@ -279,6 +287,8 @@ export class PlaylistManager extends EventEmitter {
     this.shuffleOrder = null;
     this.needsInitialSync = true;
     this.pendingWinner = null;
+    this.pausedReason = null;
+    this.pausedAt = null;
 
     if (playlist.mode === "shuffle") {
       this.buildShuffleOrder();
@@ -302,6 +312,8 @@ export class PlaylistManager extends EventEmitter {
     this.status = "inactive";
     this.needsInitialSync = false;
     this.pendingWinner = null;
+    this.pausedReason = null;
+    this.pausedAt = null;
     this.clearTimers();
     this.gameEndAt = null;
     this.emitTimerUpdate();
@@ -324,6 +336,36 @@ export class PlaylistManager extends EventEmitter {
     }
   }
 
+  /**
+   * Suspend rotation: no level end rotates and no vote opens until resume().
+   * Used when a restarted server never came healthy, so the playlist doesn't
+   * keep cycling behind a dead or broken server. The reason is kept for the UI
+   * and survives a Pyrodeck restart.
+   */
+  pause(reason: string): void {
+    if (!this.activePlaylist) return;
+    this.status = "paused";
+    this.pausedReason = reason;
+    this.pausedAt = Date.now();
+    this.pendingWinner = null;
+    this.clearTimers();
+    this.gameEndAt = null;
+    this.emitTimerUpdate();
+    this.saveState().catch(() => {});
+    this.emit("statusChanged");
+  }
+
+  /** Resume a paused playlist: the next mission end rotates again. False if not paused. */
+  resume(): boolean {
+    if (this.status !== "paused" || !this.activePlaylist) return false;
+    this.status = "active";
+    this.pausedReason = null;
+    this.pausedAt = null;
+    this.saveState().catch(() => {});
+    this.emit("statusChanged");
+    return true;
+  }
+
   getStatus(): {
     status: PlaylistStatus;
     activePlaylistId: string | null;
@@ -333,6 +375,8 @@ export class PlaylistManager extends EventEmitter {
     gameEndAt: number | null;
     voteOptions: PlaylistEntry[];
     voteDeadline: number | null;
+    pausedReason: string | null;
+    pausedAt: number | null;
   } {
     return {
       status: this.status,
@@ -343,6 +387,8 @@ export class PlaylistManager extends EventEmitter {
       gameEndAt: this.gameEndAt,
       voteOptions: this.voteOptions,
       voteDeadline: this.voteDeadline,
+      pausedReason: this.pausedReason,
+      pausedAt: this.pausedAt,
     };
   }
 
@@ -623,7 +669,7 @@ export class PlaylistManager extends EventEmitter {
    */
   private onLevelEnd(): void {
     this.clearAnnounceTimers();
-    if (!this.activePlaylist || this.status === "restarting") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
 
     this.pendingWinner = null;
     this.clearVoteTimers();
@@ -635,7 +681,7 @@ export class PlaylistManager extends EventEmitter {
    */
   private onMissionEnd(): void {
     this.clearAnnounceTimers();
-    if (!this.activePlaylist || this.status === "restarting") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
 
     // Voting still open when the mission ended: tally and rotate together.
     if (this.status === "voting" && this.voteOptions.length > 0) {
@@ -655,7 +701,7 @@ export class PlaylistManager extends EventEmitter {
   }
 
   private triggerRotate(entry?: PlaylistEntry): void {
-    if (!this.activePlaylist || this.status === "restarting") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
 
     this.status = "restarting";
     this.clearTimers();
@@ -980,6 +1026,10 @@ export class PlaylistManager extends EventEmitter {
         activePlaylistId: this.activePlaylist?.id ?? null,
         currentIndex: this.currentIndex,
         shuffleOrder: this.shuffleOrder,
+        paused:
+          this.status === "paused" && this.pausedReason
+            ? { reason: this.pausedReason, at: this.pausedAt ?? Date.now() }
+            : null,
       };
       await fs.mkdir(this.configDir, { recursive: true });
       await fs.writeFile(
@@ -1002,6 +1052,11 @@ export class PlaylistManager extends EventEmitter {
           this.status = "active";
           this.currentIndex = state.currentIndex ?? 0;
           this.shuffleOrder = state.shuffleOrder ?? null;
+          if (state.paused) {
+            this.status = "paused";
+            this.pausedReason = state.paused.reason;
+            this.pausedAt = state.paused.at;
+          }
         } catch {
           // Playlist was deleted — clear state
         }

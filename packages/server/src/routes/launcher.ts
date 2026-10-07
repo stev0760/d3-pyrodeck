@@ -1,21 +1,25 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ProcessManager } from "../launcher/ProcessManager.js";
+import { ProcessManager, type LaunchConfig } from "../launcher/ProcessManager.js";
 import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
   extractTelnetConfig,
 } from "../launcher/ConfigGenerator.js";
 import { TelnetConnection } from "../connection/TelnetConnection.js";
-import { probeCapabilities } from "../session/probeCapabilities.js";
+import { probeCapabilitiesDetailed } from "../session/probeCapabilities.js";
 import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 import { sessionManager, serializeCaps } from "./server.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import type { PlaylistEntry } from "../launcher/PlaylistManager.js";
-import { playlistManager } from "../launcher/playlistInstance.js";
+import {
+  playlistManager,
+  playlistStatusPayload,
+  rotationHealth,
+} from "../launcher/playlistInstance.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 
 export { playlistManager };
@@ -106,8 +110,12 @@ playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
 /**
  * Register a one-shot telnetReady handler so auto-connect fires after (re)start.
  * Called from POST /start and from the playlist rotate handler.
+ *
+ * `healthToken` is set for a playlist restart: the result is then reported to
+ * the rotation health check (healthy once `$servercaps` gets an answer, or a
+ * failure) instead of completing the rotation directly.
  */
-function registerAutoConnect(telnetPassword: string): void {
+function registerAutoConnect(telnetPassword: string, healthToken?: number): void {
   // Remove any stale once-handler from a launch that crashed before telnet was ready
   processManager.removeAllListeners("telnetReady");
 
@@ -134,7 +142,8 @@ function registerAutoConnect(telnetPassword: string): void {
 
       // Probe capabilities
       sessionManager.updateState(session.id, "probing");
-      const capabilities = await probeCapabilities(connection, (late) => {
+      const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
+        if (healthToken !== undefined) rotationHealth.healthy(healthToken);
         if (sessionManager.getActive()?.id !== session.id) return;
         sessionManager.updateCapabilities(session.id, late);
         wsBroadcast("capabilities", serializeCaps(late));
@@ -152,9 +161,16 @@ function registerAutoConnect(telnetPassword: string): void {
       // Wire playlist manager's command sender
       playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
 
-      // Transition out of "restarting" if this connect is the post-rotation
-      // resume; ensure subsequent "Ending level." events fire rotations again.
-      playlistManager.markRotationComplete();
+      if (healthToken === undefined) {
+        // User-started launch: nothing to verify. (Also unsticks a playlist
+        // left "restarting" by a rotation the operator took over by hand.)
+        playlistManager.markRotationComplete();
+      } else if (answered) {
+        // Playlist restart: the console answered $servercaps, the server is up.
+        // A silent first probe waits for the background re-probe (above) or
+        // the health check's deadline.
+        rotationHealth.healthy(healthToken);
+      }
 
       // Anchor playlist timer if a playlist is active
       if (playlistManager.isActive()) {
@@ -166,9 +182,8 @@ function registerAutoConnect(telnetPassword: string): void {
       wsBroadcast("capabilities", serializeCaps(capabilities));
 
       // Broadcast current playlist status
-      const playlistStatus = playlistManager.getStatus();
-      if (playlistStatus.activePlaylistId) {
-        wsBroadcast("playlist_status", playlistStatus as unknown as Record<string, unknown>);
+      if (playlistManager.getStatus().activePlaylistId) {
+        wsBroadcast("playlist_status", playlistStatusPayload());
       }
 
       console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
@@ -176,12 +191,115 @@ function registerAutoConnect(telnetPassword: string): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
       wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
-      // If this auto-connect was the post-rotation resume, unstick the playlist
-      // manager so future "Ending level." events can rotate again.
-      playlistManager.markRotationComplete();
+      if (healthToken === undefined) {
+        playlistManager.markRotationComplete();
+      } else {
+        rotationHealth.failure(`remote console login failed (${message})`, healthToken);
+      }
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Playlist restart health (PLAN Phase 3 Step 6, best-effort rotation):
+// every rotation restart must come healthy within the deadline; one automatic
+// retry, then the playlist pauses with a visible reason instead of rotating on
+// behind a dead server.
+// ---------------------------------------------------------------------------
+
+interface RotationLaunch {
+  label: string;
+  telnetPassword: string;
+  launch: LaunchConfig;
+}
+
+/** The launch the current rotation is trying to bring up (kept for the retry). */
+let currentRotationLaunch: RotationLaunch | null = null;
+
+function broadcastPlaylistStatus(): void {
+  wsBroadcast("playlist_status", playlistStatusPayload());
+}
+
+/** Spawn the rotation's server and start the health deadline. Throws if the spawn fails. */
+async function launchForRotation(rl: RotationLaunch, token: number): Promise<void> {
+  registerAutoConnect(rl.telnetPassword, token);
+  await processManager.start(rl.launch);
+  rotationHealth.arm();
+}
+
+/** Give up on a rotation restart: pause the playlist and say why, loudly. */
+function pauseAfterFailedRotation(reason: string, label = currentRotationLaunch?.label): void {
+  currentRotationLaunch = null;
+  const what = label ? `the restart into "${label}"` : "the server restart";
+  console.error(`[Playlist] Paused: ${what} failed: ${reason}`);
+  if (playlistManager.isActive()) {
+    playlistManager.pause(`${what[0].toUpperCase()}${what.slice(1)} failed: ${reason}.`);
+  }
+  wsBroadcast("error", {
+    message: `Playlist paused: ${what} failed (${reason}). Check the server, launch it if needed, then resume the playlist.`,
+  });
+  broadcastPlaylistStatus();
+}
+
+/**
+ * The operator started or stopped the server by hand while a playlist restart
+ * was still being checked: stop checking (a deadline must not relaunch a
+ * server the operator just stopped) and let the playlist carry on.
+ */
+function takeOverFromRotation(): void {
+  if (!rotationHealth.isPending()) return;
+  rotationHealth.cancel();
+  currentRotationLaunch = null;
+  playlistManager.markRotationComplete();
+  broadcastPlaylistStatus();
+}
+
+rotationHealth.on("healthy", (attempt: number) => {
+  const label = currentRotationLaunch?.label;
+  currentRotationLaunch = null;
+  console.log(`[Playlist] Restart${label ? ` into "${label}"` : ""} healthy${attempt > 0 ? " after a retry" : ""}`);
+  playlistManager.markRotationComplete();
+  broadcastPlaylistStatus();
+});
+
+rotationHealth.on("retry", async (_attempt: number, reason: string) => {
+  const rl = currentRotationLaunch;
+  if (!rl) {
+    rotationHealth.failure("nothing to relaunch");
+    return;
+  }
+  const token = rotationHealth.token();
+  console.warn(`[Playlist] Restart into "${rl.label}" not healthy (${reason}); retrying once`);
+  wsBroadcast("error", {
+    message: `Playlist restart into "${rl.label}" is not healthy (${reason}). Retrying once…`,
+  });
+  broadcastPlaylistStatus();
+
+  try {
+    // Tear down whatever the failed attempt left behind.
+    const existing = sessionManager.getActive();
+    if (existing) sessionManager.remove(existing.id);
+    processManager.sendQuitFn = null;
+    playlistManager.sendCommandFn = null;
+    if (processManager.isRunning()) await processManager.stop();
+
+    // The operator may have taken over (Stop/Launch) while we were stopping.
+    if (rotationHealth.token() !== token || !rotationHealth.isPending()) return;
+    await launchForRotation(rl, token);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    rotationHealth.failure(`restart failed (${message})`, token);
+  }
+});
+
+rotationHealth.on("failed", (reason: string) => {
+  pauseAfterFailedRotation(reason);
+});
+
+// Pause/resume (and the health snapshot) reach every client.
+playlistManager.on("statusChanged", () => {
+  broadcastPlaylistStatus();
+});
 
 // Rotate: stop server, swap mission CVar, restart
 playlistManager.on("rotate", async (entry: PlaylistEntry) => {
@@ -196,6 +314,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   // Done BEFORE stopping the server so a compat failure can skip the rotation
   // and leave the current mission running.
   const metadataManager = new ServerProfileManager(CONFIG_DIR, "");
+  let serverStopped = false;
   try {
     const profiles = await metadataManager.list();
     if (profiles.length === 0) {
@@ -275,6 +394,9 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
     if (launchStatus.state === "running" || launchStatus.state === "starting") {
       await processManager.stop();
     }
+    // From here on the server is down: a failure pauses the playlist instead
+    // of leaving it "restarting" behind a dead server.
+    serverStopped = true;
 
     // Re-bind the profile manager to the effective gamePath for file ops.
     const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
@@ -295,57 +417,68 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 
     // Restart the server with the updated config
     const cfgPath = path.join(gamePath, activeProfile.configFile);
+    const cfgContent = await fs.readFile(cfgPath, "utf-8");
+    const telnetCfg = extractTelnetConfig(parseDedicatedCfg(cfgContent));
+    if (!telnetCfg.enabled || !telnetCfg.password) {
+      pauseAfterFailedRotation(
+        `${activeProfile.configFile} has no remote console (AllowRemoteConsole=1 and ConsolePassword are required), so Pyrodeck cannot restart and watch the server`,
+        entry.label,
+      );
+      return;
+    }
+
+    let executablePath = executablePathRaw;
+    if (!path.isAbsolute(executablePath)) {
+      executablePath = path.join(gamePath, executablePath);
+    }
+    // Auto-name the rotation's log in the configured dir (default: next to
+    // the executable) and create it, as POST /start does. A rotation still
+    // restarts the server when the log can't be written (players matter
+    // more than the log), but says so; ProcessManager then marks the
+    // launch's log as failed in the status the Launch panel shows.
+    const logDir = resolveLogDir(config.logDir, executablePath);
+    const logPath = path.join(logDir, buildLogFilename(activeProfile.name));
+    const logError = await prepareLogFile(logPath);
+    if (logError) {
+      wsBroadcast("error", { message: `Playlist rotation: ${logError} The server restarts without a log.` });
+    }
+
+    await profileManager.markLaunched(activeProfile.id);
+    currentRotationLaunch = {
+      label: entry.label,
+      telnetPassword: telnetCfg.password,
+      launch: {
+        executablePath,
+        gamePath,
+        configFile: activeProfile.configFile,
+        logPath,
+        telnetPort: telnetCfg.port,
+        telnetPassword: telnetCfg.password,
+        profileId: activeProfile.id,
+      },
+    };
+    rotationHealth.begin();
+    const token = rotationHealth.token();
+    broadcastPlaylistStatus();
     try {
-      const cfgContent = await fs.readFile(cfgPath, "utf-8");
-      const entries = parseDedicatedCfg(cfgContent);
-      const telnetCfg = extractTelnetConfig(entries);
-
-      if (telnetCfg.enabled && telnetCfg.password) {
-        let executablePath = executablePathRaw;
-        if (!path.isAbsolute(executablePath)) {
-          executablePath = path.join(gamePath, executablePath);
-        }
-        // Auto-name the rotation's log in the configured dir (default: next to
-        // the executable) and create it, as POST /start does. A rotation still
-        // restarts the server when the log can't be written (players matter
-        // more than the log), but says so; ProcessManager then marks the
-        // launch's log as failed in the status the Launch panel shows.
-        const logDir = resolveLogDir(config.logDir, executablePath);
-        const logPath = path.join(logDir, buildLogFilename(activeProfile.name));
-        const logError = await prepareLogFile(logPath);
-        if (logError) {
-          wsBroadcast("error", { message: `Playlist rotation: ${logError} The server restarts without a log.` });
-        }
-
-        // Register auto-connect handler BEFORE calling start()
-        registerAutoConnect(telnetCfg.password);
-
-        await profileManager.markLaunched(activeProfile.id);
-        await processManager.start({
-          executablePath,
-          gamePath,
-          configFile: activeProfile.configFile,
-          logPath,
-          telnetPort: telnetCfg.port,
-          telnetPassword: telnetCfg.password,
-          profileId: activeProfile.id,
-        });
-
-        wsBroadcast("playlist_rotate", {
-          entry: { id: entry.id, label: entry.label, missionName: entry.missionName },
-        });
-      }
+      await launchForRotation(currentRotationLaunch, token);
+      wsBroadcast("playlist_rotate", {
+        entry: { id: entry.id, label: entry.label, missionName: entry.missionName },
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[Playlist] Restart failed: ${message}`);
-      wsBroadcast("error", { message: `Playlist restart failed: ${message}` });
-      playlistManager.markRotationComplete();
+      rotationHealth.failure(`restart failed (${message})`, token);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Playlist] Rotation error: ${message}`);
-    wsBroadcast("error", { message: `Playlist rotation error: ${message}` });
-    playlistManager.markRotationComplete();
+    if (serverStopped) {
+      pauseAfterFailedRotation(`rotation error (${message})`, entry.label);
+    } else {
+      wsBroadcast("error", { message: `Playlist rotation error: ${message}` });
+      playlistManager.markRotationComplete();
+    }
   }
 });
 
@@ -360,6 +493,16 @@ processManager.on("stateChange", (state: string) => {
   // the next "Opening level" line.
   if (state === "stopped" || state === "crashed") {
     playlistManager.clearCurrentLevel();
+  }
+  // A playlist restart that dies before it answers fails its health check now,
+  // not at the deadline. Only while armed ("waiting"): the old process being
+  // stopped for a retry is not this attempt's crash.
+  if (state === "crashed" && rotationHealth.snapshot().state === "waiting") {
+    const { exitCode, exitSignal } = processManager.getStatus();
+    rotationHealth.failure(
+      `server exited during startup (${exitSignal ? `signal ${exitSignal}` : `exit code ${exitCode}`})`,
+      rotationHealth.token(),
+    );
   }
 });
 
@@ -417,6 +560,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     if (processManager.isRunning()) {
       return reply.status(409).send({ error: "Server is already running" });
     }
+    takeOverFromRotation();
 
     const body = request.body as {
       profileId?: string;
@@ -581,6 +725,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: "Server is not running" });
     }
 
+    takeOverFromRotation();
     playlistManager.sendCommandFn = null;
 
     // Stop while the telnet session is still wired so ProcessManager can try

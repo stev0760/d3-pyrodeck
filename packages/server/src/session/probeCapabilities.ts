@@ -38,9 +38,23 @@ export async function probeCapabilities(
   onLateCaps: (caps: ServerCapabilities) => void,
   intervalMs = LATE_PROBE_INTERVAL_MS,
 ): Promise<ServerCapabilities> {
+  return (await probeCapabilitiesDetailed(connection, onLateCaps, intervalMs)).caps;
+}
+
+/**
+ * As probeCapabilities, but also says whether the first probe got any answer.
+ * `answered: false` means the console was silent (the vanilla caps returned
+ * are a placeholder); the playlist restart health check waits for late caps
+ * in that case instead of calling the server healthy.
+ */
+export async function probeCapabilitiesDetailed(
+  connection: ServerConnection,
+  onLateCaps: (caps: ServerCapabilities) => void,
+  intervalMs = LATE_PROBE_INTERVAL_MS,
+): Promise<{ caps: ServerCapabilities; answered: boolean }> {
   const first = await probeOnce(connection);
-  if (first.caps) return first.caps;
-  if (first.answered) return vanilla();
+  if (first.caps) return { caps: first.caps, answered: true };
+  if (first.answered) return { caps: vanilla(), answered: true };
 
   void (async () => {
     for (let i = 0; i < LATE_PROBE_ATTEMPTS; i++) {
@@ -55,5 +69,5 @@ export async function probeCapabilities(
     }
   })();
 
-  return vanilla();
+  return { caps: vanilla(), answered: false };
 }

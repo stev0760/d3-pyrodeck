@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { playlistManager } from "../launcher/playlistInstance.js";
+import { playlistManager, playlistStatusPayload } from "../launcher/playlistInstance.js";
 import type {
   Playlist,
   PlaylistEntry,
@@ -196,7 +196,7 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
         }
       }
       await playlistManager.activate(id);
-      return { ok: true, status: playlistManager.getStatus() };
+      return { ok: true, status: playlistStatusPayload() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.status(400).send({ error: message });
@@ -209,8 +209,17 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // Get playlist manager status
+  // Resume a playlist paused after a failed restart. The next mission end
+  // rotates again; Pyrodeck does not relaunch the server here.
+  app.post("/api/playlists/resume", async (_request, reply) => {
+    if (!playlistManager.resume()) {
+      return reply.status(409).send({ error: "Playlist is not paused" });
+    }
+    return { ok: true, status: playlistStatusPayload() };
+  });
+
+  // Get playlist manager status (plus the restart health check)
   app.get("/api/playlists/status", async () => {
-    return playlistManager.getStatus();
+    return playlistStatusPayload();
   });
 }

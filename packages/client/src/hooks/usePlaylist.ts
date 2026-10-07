@@ -32,14 +32,26 @@ export interface Playlist {
   updatedAt: string;
 }
 
+/** Health check of the server a rotation restarts (server RotationHealthMonitor). */
+export interface RotationCheck {
+  state: "idle" | "relaunching" | "waiting";
+  attempt: number;
+  maxRetries: number;
+  deadline: number | null;
+}
+
 export interface PlaylistStatus {
-  status: "inactive" | "active" | "voting" | "restarting";
+  status: "inactive" | "active" | "voting" | "restarting" | "paused";
   activePlaylistId: string | null;
   currentIndex: number;
   currentEntry: PlaylistEntry | null;
   gameEndAt: number | null;
   voteOptions: PlaylistEntry[];
   voteDeadline: number | null;
+  /** Why rotation is paused (a restart that never came healthy). */
+  pausedReason?: string | null;
+  pausedAt?: number | null;
+  rotationCheck?: RotationCheck;
 }
 
 type OnPlaylistEvent = ReturnType<typeof useServerConnection>["onPlaylistEvent"];
@@ -70,8 +82,10 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
         const { gameEndAt } = data as { gameEndAt: number | null };
         setStatus((prev) => ({ ...prev, gameEndAt }));
       } else if (type === "playlist_rotate") {
+        // The server stays "restarting" until the restart passes its health
+        // check; playlist_status says when.
         const { entry } = data as { entry: PlaylistEntry };
-        setStatus((prev) => ({ ...prev, currentEntry: entry, status: "active" }));
+        setStatus((prev) => ({ ...prev, currentEntry: entry }));
         notify?.(`Rotating to: ${entry.label}`, "info");
         // Re-fetch status after rotation
         fetchStatus();
@@ -238,6 +252,23 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
     }
   }, []);
 
+  const resumePlaylist = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch("/api/playlists/resume", {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setStatus(data.status);
+      } else {
+        notify?.(data.error ?? "Failed to resume playlist");
+      }
+    } catch {
+      notify?.("Failed to resume playlist");
+    }
+  }, [notify]);
+
   return {
     playlists,
     status,
@@ -250,5 +281,6 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
     deletePlaylist,
     activatePlaylist,
     deactivatePlaylist,
+    resumePlaylist,
   };
 }

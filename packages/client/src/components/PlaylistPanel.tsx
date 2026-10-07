@@ -7,6 +7,7 @@ interface PlaylistPanelProps {
   status: PlaylistStatus;
   onActivate: (id: string) => void;
   onDeactivate: () => void;
+  onResume?: () => void;
 }
 
 /** Format seconds into M:SS */
@@ -23,6 +24,7 @@ function StatusDot({ status }: { status: PlaylistStatus["status"] }) {
     active: "bg-green-500",
     voting: "bg-amber-400",
     restarting: "bg-primary",
+    paused: "bg-destructive",
   };
   return (
     <span
@@ -32,16 +34,19 @@ function StatusDot({ status }: { status: PlaylistStatus["status"] }) {
   );
 }
 
-export function PlaylistPanel({ playlists, status, onActivate, onDeactivate }: PlaylistPanelProps) {
+export function PlaylistPanel({ playlists, status, onActivate, onDeactivate, onResume }: PlaylistPanelProps) {
   const [now, setNow] = useState(Date.now());
   const [showSelect, setShowSelect] = useState(false);
 
-  // Update countdown every second while vote is open
+  const check = status.rotationCheck;
+  const checkDeadline = check?.state === "waiting" ? check.deadline : null;
+
+  // Update countdowns every second while a vote or a restart check is open
   useEffect(() => {
-    if (!status.voteDeadline) return;
+    if (!status.voteDeadline && !checkDeadline) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [status.voteDeadline]);
+  }, [status.voteDeadline, checkDeadline]);
 
   const activePlaylist = playlists.find((p) => p.id === status.activePlaylistId);
 
@@ -119,7 +124,29 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate }: P
           {status.status === "restarting" && (
             <p className="text-[10px] text-primary animate-pulse">
               Rotating mission...
+              {check && check.state !== "idle" && (
+                <>
+                  {" "}
+                  {check.attempt > 0 ? `retry ${check.attempt}/${check.maxRetries}, ` : ""}
+                  {checkDeadline
+                    ? `waiting for the server (${formatCountdown(checkDeadline - now)})`
+                    : "restarting the server"}
+                </>
+              )}
             </p>
+          )}
+          {status.status === "paused" && (
+            <div className="space-y-1">
+              <p className="text-[10px] text-destructive bg-destructive/10 border border-destructive/40 rounded px-1.5 py-1 break-words">
+                <span className="font-medium">Paused.</span> {status.pausedReason ?? "Rotation is paused."}{" "}
+                Check the server (launch it if it is down), then resume.
+              </p>
+              {onResume && (
+                <Button variant="secondary" size="sm" className="w-full" onClick={onResume}>
+                  Resume playlist
+                </Button>
+              )}
+            </div>
           )}
           {status.status === "voting" && (
             <p className="text-[10px] text-amber-400">

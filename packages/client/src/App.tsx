@@ -170,6 +170,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     playlistStatus: playlistHook.status,
     onActivatePlaylist: (id: string) => playlistHook.activatePlaylist(id, launcher.selectedProfileId || undefined),
     onDeactivatePlaylist: playlistHook.deactivatePlaylist,
+    onResumePlaylist: playlistHook.resumePlaylist,
   };
 
   const leftSidebarContent = (

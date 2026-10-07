@@ -16,6 +16,7 @@ interface ServerSidebarProps {
   playlistStatus?: PlaylistStatus;
   onActivatePlaylist?: (id: string) => void;
   onDeactivatePlaylist?: () => void;
+  onResumePlaylist?: () => void;
   className?: string;
 }
 
@@ -92,6 +93,7 @@ export function ServerSidebar({
   playlistStatus,
   onActivatePlaylist,
   onDeactivatePlaylist,
+  onResumePlaylist,
   className,
 }: ServerSidebarProps) {
   const [warpLevel, setWarpLevel] = useState("1");
@@ -179,6 +181,7 @@ export function ServerSidebar({
                 status={playlistStatus}
                 onActivate={onActivatePlaylist}
                 onDeactivate={onDeactivatePlaylist}
+                onResume={onResumePlaylist}
               />
             </>
           )}
