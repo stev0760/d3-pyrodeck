@@ -302,6 +302,27 @@ Settings that can't be set in cfg but Pyrodeck can apply after server launch:
 - [x] Store these in Pyrodeck's own config per server profile, apply automatically on launch
       (`profiles.json` `postStart`; applied after every launch and playlist restart)
 
+### Step 8: D3Server3 parity wave ✅ (v0.5.0)
+
+From the ranked list in `docs/D3SERVER3_AUDIT.md` §3, rebuilt from scratch (no D3Server3 code). Spec §8.6-8.10 and
+Addenda D (operations) and E (supervisor).
+- [x] Supervisor: relaunch after a crash (backoff, gives up after 7 in 30 min), hang check (`$players` probe, kill at
+      120 s), restart when empty after an uptime limit, re-attach after Pyrodeck restarts
+- [x] Players: join/leave history with addresses (rationed `$playerinfo`), hosts.deny editor + `$rehash`, name bans,
+      say-then-kick, nickname rules, profanity monitor
+- [x] Profiles: launch options (`-useip`, `-useport`, `-framecap`, `-nomultibmp`, GameSpy), team and Hoard settings in
+      the Startup Commands block, periodic commands, respawn scaled by players, join address
+- [x] Operations: weekly schedule, email alerts, process priority, update notice, import from a launch script, service
+      docs
+- [x] One server event bus (`events/ServerEvents.ts`): one emitter per event; joins, leaves, chat and level starts from
+      the console event hub only
+
+Not in this wave (0.6.0 candidates): multi-server (audit rank 5; `ProcessManager` singleton → per instance, per-profile
+`-autoexec` files); a playlist mission (repack a playlist's levels into one generated `.mn3` served by the mission
+host, so clients follow rotations: the engine has no cross-mission switch, `MP_LEVEL_ENDED` carries only a level
+index); tracker registration (tracker.h0m3.net and tsetsefly.de answer); operator commands on server events (audit
+§3 item 20); stats processing.
+
 ---
 
 ## Phase 4 — Production Release (current focus)
@@ -332,9 +353,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       for the fork's POP1 controls.
 - [x] Mission download link refresh (Matcen registry REL7, v0.4.20): rewrite the `URL` lines
       inside a `.mn3`, backup once, restore; spec Addendum B
-- [ ] Mission host (branch `feature/mission-host`, unreleased): Pyrodeck serves the missions on its
-      own port and points the link at itself; spec Addendum C. Built and tested; open: a real game
-      client downloading from it, and Windows
+- [x] Mission host (v0.5.0): Pyrodeck serves the missions on its own port and points the link at
+      itself; spec Addendum C. Open: a real game client downloading from it, and Windows
 - [x] Server log path hardening (Matcen registry REL9, v0.4.20): absolute Log Directory validated on
       save, directory and file created before every launch, log re-checked while the server runs
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
@@ -347,7 +367,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [x] Release-readiness pass (2026-09-26, v0.4.19): release workflow fixed (had failed on every
       run: unpinned pnpm), Linux SEA binary fixed (was a silent no-op), dependency audit 72 → 0,
       Matcen 0.9.15 spec sync. Commit identity moved to the GitHub noreply address.
-- [ ] Rewrite history to the noreply author email before going public (all commits + v0.4.18 tag)
+- [x] Rewrite history to the noreply author email before going public (2026-09-27, git-filter-repo;
+      repository recreated so the old SHAs are gone)
 - [ ] Flip repo public, push first release tag, verify CI pipeline end-to-end
       (dry run first: Actions → Release → Run workflow)
 - [ ] Smoke-test CI artifacts: Linux tarball on Ubuntu LTS (binary starts, SPA loads, auth works,
@@ -367,7 +388,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [ ] Structured volumes: gamedata, config
 - [ ] Web file manager (upload .mn3 missions, manage game files)
 - [ ] Provisioning wizard (scan for required .hog files, validate, guide upload)
-- [ ] Document systemd service setup for headless servers (draft in `release-workflow-notes.txt` Part 3)
+- [x] Document service setup for headless servers (`docs/running-as-a-service.md`, v0.5.0: systemd user unit, NSSM,
+      `schtasks`)
 
 ---
 
@@ -377,7 +399,7 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 
 - [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels)
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
-- [ ] IP access control UI (hosts.allow/deny editor + `$rehash`)
+- [x] IP access control UI: hosts.deny editor + `$rehash` (Bans tab, v0.5.0); hosts.allow not edited
 - [ ] Repeat one level of a multi-level mission (D3Server3 "Loop"). Not expressible in `dedicated.cfg`: `SetLevel` only
       picks the first level (`dedicated_server.cpp:503-513`), and at level end the engine goes to `Multi_next_level` if a
       `$warp`/`SetLevel` set it, else the next level, wrapping after the last (`gamesequence.cpp:1929-1946`). Options: a

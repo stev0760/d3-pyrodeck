@@ -2,7 +2,7 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-08
 
 ### Added
 - **Supervisor: Pyrodeck keeps a launched server up, as D3Server3 did.** It relaunches the server when the process exits without a stop request (after 5 s, doubling to 2 min; after the seventh failure in 30 minutes it gives up and says so). It kills and relaunches a server whose remote console has been silent for 120 s and did not answer `$players`, sent after 59 s of silence; no probe or kill in the 2 minutes after a level starts loading. When turned on, it restarts a server that has run longer than an uptime limit, once no human has been on it for 130 s; bots don't count, and `$players` confirms the server is empty first. A server stopped from Pyrodeck, by a playlist rotation or with `quit` at its console stays down, and a crash during a playlist restart is left to the rotation's own retry. Relaunch and the hang check are on by default, restart-when-empty is off. If the console link drops while the server runs, Pyrodeck logs in again every 5 s. The Launch panel's **Supervisor** block shows its counters and holds the switches and limits; `GET /api/launcher/status` reports the same state, and Pyrodeck's log gets a `[Server]` line per start, stop, crash, hang, level start, join and leave.
@@ -18,28 +18,26 @@ All notable changes to D3 Pyrodeck are documented here.
 - **Process priority** for the game server (below normal to high), applied after every launch, playlist restart, scheduled start and relaunch, and to a running server when changed. A refused change (raising priority without privilege) is a warning, not a failure.
 - **Update notice:** a banner when GitHub has a newer Pyrodeck release, checked at most once a day; never downloads anything; can be turned off.
 - **Import a profile from a launch script** (`.bat`, `.cmd`, `.sh`): the `-dedicated` line is read the way the engine reads its command line, with a preview of the game directory, program and config before the profile is created. `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport` and `-gspyfile` become the profile's Launch Options; other flags are kept on it as imported flags.
-- `docs/running-as-a-service.md`: running Pyrodeck under NSSM, `schtasks` or a systemd user service.
-
 - **Player history.** Pyrodeck records who joined and left each server, with the slot and the player's address, and keeps a name-to-address index: 5,000 rows per server profile in `config/players/`. The address comes from one `$playerinfo` per new human session, never polled; on servers other than Matcen 0.9.3+, which never clear the text buffer that command writes into, at most 20 lookups per server run (the setting goes to 30), and none for a name containing `%`. A player who leaves during a level change without a leave line is closed out 120 s into the next level. API: `/api/players/history`, `/sessions` ("who was on"), `/addresses`, `/present`, `/settings`.
-
 - **Bans that survive a restart.** The Ban button used DMFC's `$ban`, which the server forgets at every restart, playlist rotations included. Banning a player now says why in chat, waits two seconds, re-checks the slot, sends `$ban`, and adds the player's address to the engine's `netgames/hosts.deny` (and, if asked, the name to a stored name-ban list), then `$rehash`. The hosts.deny editor lists the file as the server reads it, flags lines the engine silently ignores (comments, trailing spaces, `/24`), takes addresses, `*` patterns and /8-/32 prefixes, keeps a reason and date per entry, and sends `$rehash` after each edit and at each level start. Banned names are kicked on join, with the reason said first. Pyrodeck edits the hosts.deny the server actually reads: the server's writable directory (`~/.local/share/Outrage Entertainment/Descent 3/netgames/` on Linux), learned from a launched server's log, or a path set by hand. API: `/api/bans`, `/api/bans/hosts`, `/api/bans/names`, `/api/bans/rehash`, `/api/players/kick`, `/api/players/ban`.
-
 - **Join rules and a profanity monitor**, both off by default. Nickname rules kick a joining player whose name is empty, contains `%`, contains control characters or is shorter than a minimum, saying why first (D3Server3's INVALID/HACKED NICKNAME). The profanity monitor matches general chat against an editable word list (a short default list of plain profanity ships as data) and escalates per player: private warnings, then kicks, then a ban of the name and the address, with a cooldown so one burst counts once. API: `/api/players/rules`.
-
 - **Players, Bans and Rules in the UI.** The Players tab gains a History view (joins and leaves, "who was on", name-to-address index) and is available without a connection; Kick and Ban ask for a reason. New Bans tab (hosts.deny editor, name bans, `$rehash`) and Rules tab (nickname rules, profanity monitor, address lookups).
+- `docs/running-as-a-service.md`: running Pyrodeck under NSSM, `schtasks` or a systemd user service.
 
 ### Changed
 - **Closing Pyrodeck no longer stops the game server**; stop it first if you want it down. On Linux and macOS the server is started through `sh` with SIGPIPE ignored, so its writes to a closed output pipe fail quietly instead of killing it.
 - A server stopped by typing `quit` at its remote console now shows as stopped, not crashed.
 - `config/pyrodeck.json` is written readable by its owner only, since it now holds the SMTP password.
-- Every start and stop, by hand, by a playlist or by the schedule, is announced on the server event bus, which the priority and alert features listen to.
+- Joins, leaves, chat and level starts are read from Pyrodeck's console session (Connect mode included), the one source for the supervisor, history, rules, alerts and respawn scaling. A player who re-enters at a level start is not counted again.
 - Mission links are capped at 86 characters instead of 95: the client copies "Downloading: <link>" into a 100-character buffer, so a longer link overflowed it. `https://` links now carry a warning (1999-era clients refuse them, current builds without TLS crash on them), and an upper-case `HTTP://` is refused.
 
 ### Fixed
 - Stop never sent SIGKILL to a server that ignored SIGTERM: Node marks a child "killed" as soon as a signal is delivered, so the last step was always skipped. It now checks whether the process has exited.
 - **Kick and Ban could hit the wrong player.** The Players tab sent `$kick`/`$ban` with the row's position in the `$scores` list, which is sorted by score, as if it were the player's slot. Pyrodeck now looks the slot up by name with `$players` and checks it again just before acting.
 - **Startup Commands were never applied.** Pyrodeck saves them as `autoexec.dmfc` in the game directory, but DMFC only reads its own default file unless the server is started with `-autoexec`, and Pyrodeck never passed it. Each launch and playlist restart now passes `-autoexec <absolute path>` when the file exists, and nothing when it doesn't. A path longer than the 99 characters the engine keeps per argument is not passed; the console and the server log say so.
-- Spec §1.3 credited D3Server3 with a profanity filter, email alerts, a Windows service mode and process priority control. The audited 3.0.83 binary has none of them; the paragraph now lists what the audit found.
+- Spec §1.3 credited D3Server3 with a profanity filter, email alerts, a Windows service mode and process priority control without saying which release. The audited 3.0.83 binary has none of them; they arrived from 3.0.84 to 3.1.9 (email through its event commands), and the paragraph now names the versions (`docs/D3SERVER3_AUDIT.md` §6).
+- Playlist chat lines (the vote prompt, each vote, the result, the mission change) and the scheduled-stop warning carried mission labels and voters' names as typed. They now drop `%` (the server's console output treats it as a format directive), colons (the engine reads the text before one as a chat destination) and anything but printable ASCII (the vote result's em dash showed as junk in game).
+- Spec §8.3 listed a `POST /api/command` route that never existed; console commands go over the WebSocket only.
 
 ## [0.4.20] - 2026-10-07
 

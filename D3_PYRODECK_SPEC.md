@@ -1,7 +1,7 @@
 # D3 Pyrodeck — Specification
 
-**Version:** 2.8
-**Date:** October 7, 2026
+**Version:** 2.9
+**Date:** October 8, 2026
 **Author:** stev0760
 **Repository:** `stev0760/d3-pyrodeck` (planned)
 **Engine Fork:** `stev0760/Descent3` branch `feature/multiplayer-bots`
@@ -810,14 +810,14 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 |--------|------|-------------|
 | `POST` | `/api/launcher/start` | Start local D3 dedicated server process |
 | `POST` | `/api/launcher/stop` | Stop local server (graceful) |
-| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost` and `supervisor` (Addendum D) |
+| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost` and `supervisor` (Addendum E) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
-| `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum D) |
+| `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum E) |
 | `PUT` | `/api/launcher/supervisor` | Save supervisor settings (fields left out keep their value); applies at once |
 | `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
-| `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.4.21) |
+| `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.5.0) |
 
-**Join address (v0.4.21).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
+**Join address (v0.5.0).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
 (`Descent3/descent.h`). `host` is the first of: the global `joinHost` setting (`PUT /api/pyrodeck/config`
 `{ joinHost }`, a host name or IPv4 address without scheme, port or path; empty clears it), the profile's `bindIp` when
 it is public, the host of `missionHost.publicBaseUrl`, the `bindIp` when it is a LAN address. `lanOnly` marks a loopback
@@ -834,7 +834,7 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
 
-**Profile settings (v0.4.21).** `PATCH /api/profiles/:id` takes, besides the metadata and `postStart`:
+**Profile settings (v0.5.0).** `PATCH /api/profiles/:id` takes, besides the metadata and `postStart`:
 
 | Field | Shape | Effect |
 |-------|-------|--------|
@@ -887,13 +887,14 @@ repeats for everyone at each level start), starting from zero at each `server.st
 last join or leave and sends `$setrespawntime <n>` only when `n` differs from the last value sent. DMFC
 (`dmfcinputcommand.cpp:672-700`) clamps below 1, has no upper limit and syncs the netgame to clients; the engine times
 each powerup's return at pickup (`object.cpp:1917-1918`: `respawn_time` × the powerup's `respawn_scalar`), so a change
-applies from the next pickup. The console event hub emits `player.joined`/`player.left` (Supervisor addendum, D.1).
+applies from the next pickup. The console event hub emits `player.joined`/`player.left` (Addendum E.1).
+
 ### 8.7 Operations (Addendum D)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
-| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) and `importedArgs: string[] \| null` |
+| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `details` when invalid) and `importedArgs: string[] \| null` |
 | `POST` | `/api/profiles` | Also takes `launchOptions` and `importedArgs` (with `existingConfigFile`); invalid launch options are dropped |
 | `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
 | `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
@@ -904,16 +905,17 @@ applies from the next pickup. The console event hub emits `player.joined`/`playe
 | `PUT` | `/api/update-check` | Body `{ enabled }` |
 | `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, launchOptions, launchOptionArgs, importedArgs, notes }, checks }`; creates nothing |
 
-`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
-`processPriority` and `updateCheck`: each has its own route.
-### 8.7 Players: history and addresses
+`GET /api/pyrodeck/config` does not return `mail`, and `PUT /api/pyrodeck/config` ignores `missionHost`, `supervisor`,
+`mail`, `processPriority`, `updateCheck`, `players` and `playerRules`: each has its own route.
+
+### 8.8 Players: history and addresses
 
 Pyrodeck reads every console session it opens (Connect and Launch mode) and keeps, per server
 profile, the joins and leaves it sees: `<config dir>/players/<profile>.json`, 5,000 rows, oldest
 dropped first, plus a name/address index of up to 5,000 pairs. A Connect-mode server's profile id is
 `connect:<host>:<port>`. A join while the player is already in the game is a level re-entry (every
 player re-enters each level) and adds no row. For a human's new session Pyrodeck sends `$players`
-for the slot and one `$playerinfo <slot>` for the address, never polled; see §8.7.1.
+for the slot and one `$playerinfo <slot>` for the address, never polled; see §8.8.1.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -928,7 +930,7 @@ for the slot and one `$playerinfo <slot>` for the address, never polled; see §8
 Settings (`pyrodeck.json` → `players`): `ipLookup` (default `true`), `ipLookupBudget` (0-30,
 default 20).
 
-#### 8.7.1 Engine facts
+#### 8.8.1 Engine facts
 
 - **Lines read** (all printed through `PrintDedicatedMessage`, so they reach every console
   session; a HUD message prints as `*<text>`, `hudmessage.cpp:425`). Join: each game DLL's
@@ -963,7 +965,7 @@ default 20).
   120 s gets a leave row ("not back after a level change"); `server.started`, `server.stopped` and
   `server.crashed` end every open session.
 
-### 8.8 Bans
+### 8.9 Bans
 
 DMFC's `$ban <slot>` kicks and refuses the address, but keeps it in a list freed with the game DLL
 (`BanPlayerFromGame`, `dmfcbase.cpp:3088`; freed in `~DMFCBase`, `:586`), so every restart, a
@@ -986,7 +988,7 @@ Settings (`pyrodeck.json` → `players`): `hostsDenyPath` (absolute path; null =
 directory below), `rehashOnLevelStart` (default `true`). Name bans and the notes on hosts.deny
 entries live in `<config dir>/bans.json`.
 
-#### 8.8.1 Engine facts
+#### 8.9.1 Engine facts
 
 - **Where:** DMFC reads `<LocalD3Dir>/netgames/hosts.deny` and `hosts.allow`
   (`ReadInHostsAllowDeny`, `dmfcbase.cpp:4844`). `LocalD3Dir` is the engine's first, writable base
@@ -1010,7 +1012,7 @@ entries live in `<config dir>/bans.json`.
   `GetMessageDestination`, `hudmessage.cpp:737`), so public lines carry no colon and `say <slot>:
   <text>` reaches one player. The engine has no name ban: a name on the list is kicked on join.
 
-### 8.9 Join rules and the profanity monitor
+### 8.10 Join rules and the profanity monitor
 
 Both off by default; settings in `pyrodeck.json` → `playerRules`.
 
@@ -1040,7 +1042,7 @@ Both off by default; settings in `pyrodeck.json` → `playerRules`.
   Words match as whole words or phrases without regard to case; a trailing `*` matches any ending.
   The default list ships as data (`rules/profanityDefaults.json`): plain profanity, no slurs. Per
   player and server run: `warnings` private warnings (`say <slot>: ...`), then `kicks` kicks, then a
-  ban of the name and the address (§8.8), or more kicks when `ban` is off. Matches within
+  ban of the name and the address (§8.9), or more kicks when `ban` is off. Matches within
   `cooldownSeconds` of the last action are not counted. A chat line's name is the sender's own
   claim (the client writes `<name> says: <text>`, `hudmessage.cpp:828`), so a modified client can
   put words in another player's mouth; the bans that follow go by that name's slot and address.
@@ -1471,10 +1473,10 @@ emails, service mode and priority class). No `$` command or console output chang
   the spring gap moves forward by the gap and an end in the autumn repeat ends at its first occurrence. Overlapping or
   touching windows merge into one run.
 - A 30 s tick (the first 10 s after Pyrodeck starts), edge-triggered on runs: at a run's start, the profile is
-  started through the Launch panel's own path (`startServer`, emits `server.started{reason:"schedule"}`) if nothing
+  started through the Launch panel's own path (`startServer`; `server.started{reason:"schedule"}`) if nothing
   is running; another profile's server or a playlist restart in progress skips it (`schedule.skipped` event, error
   toast). At the run's end, if the profile's
-  server is running, it is stopped (`stopServer`, `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
+  server is running, it is stopped (`stopServer`: SIGTERM, no `quit`; `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
   human (slot 0 and `[BOT]` callsigns excluded), and at `end + stopWaitMinutes` regardless; without a console session the
   count is unknown and the stop waits for the deadline. One `say` when the wait begins.
 - Nothing is persisted but the settings. After a Pyrodeck restart: inside a run, the start is made; outside one, nothing
@@ -1533,13 +1535,13 @@ the game server running across a Pyrodeck restart).
 
 ---
 
-## Addendum D — Supervisor (D3Server3 parity, 2026-10-07, branch `parity/sup`)
+## Addendum E — Supervisor (D3Server3 parity, 2026-10-07, branch `parity/sup`)
 
 The behaviours `docs/D3SERVER3_AUDIT.md` ranks 1, 3 and 13: relaunch after a crash or a hang, restart
 when empty after an uptime limit, and re-attach after Pyrodeck restarts. Engine facts are cited from
 the Matcen tree (`Descent3/`, `netgames/`).
 
-### D.1 Server events and the lines behind them
+### E.1 Server events and the lines behind them
 
 `packages/server/src/events/ServerEvents.ts` is the bus. `ProcessManager` emits `server.started`
 (with the reason the caller passed: `manual` for the Launch button, `playlist` for a rotation,
@@ -1549,9 +1551,9 @@ the Matcen tree (`Descent3/`, `netgames/`).
 `Quit` is a console variable whose setter leaves the game, `SetCVarNone`) is a stop on request:
 state `stopped`, `server.stopped` with `reason: "manual", via: "console"`.
 
-`launcher/consoleQuit.ts` watches the launched process's stdout (the console when re-attached, D.5)
+`launcher/consoleQuit.ts` watches the launched process's stdout (the console when re-attached, E.5)
 for that echo. Joins, leaves, chat and level starts come from the console event hub
-(`events/consoleEventHub.ts`, `events/consoleLines.ts`; the Players part of this addendum lists the
+(`events/consoleEventHub.ts`, `events/consoleLines.ts`; §8.8.1 lists the
 lines): it reads Pyrodeck's console session from its login, so it also works in Connect mode and for a
 re-attached server, and it is the only emitter of `player.joined`, `player.left`, `player.chat` and
 `level.started`. The join line repeats for every player at each level start (`OnClientPlayerEntersGame`
@@ -1559,10 +1561,10 @@ runs per level), so the supervisor and the respawn scaler count callsigns as a s
 already in the game is a re-entry. Bots (`[BOT]` callsigns) are reported with `bot: true` and never
 counted as players.
 
-### D.2 Relaunch after a crash
+### E.2 Relaunch after a crash
 
 `launcher/Supervisor.ts`, wired in `routes/launcher.ts`. A process that exits in state `crashed`
-(no `stop()` and no console `quit`, D.1) is relaunched with the same `LaunchConfig` (same profile,
+(no `stop()` and no console `quit`, E.1) is relaunched with the same `LaunchConfig` (same profile,
 config file, executable and arguments; a new log file next to the last one) and
 `server.started{reason:"relaunch"}`. The wait is 5 s, doubling per failure to 2 min; failures older
 than 30 minutes are forgotten; the seventh failure inside 30 minutes gives up (`gaveUp` in the
@@ -1581,7 +1583,7 @@ the scheduler should use it with `"schedule"`). Only a manual stop sends `quit`;
 Pyrodeck's console session first and signal the process, as a rotation does, so the console port
 is not left in TIME_WAIT on the server's side.
 
-### D.3 Hang check
+### E.3 Hang check
 
 `launcher/HangWatch.ts`. The engine services the remote console once per server frame
 (`DoDedicatedServerFrame` → `DedicatedReadTelnet`, dedicated_server.cpp) and echoes each line it
@@ -1590,10 +1592,10 @@ it print. Once the console is logged in, every chunk of console output resets th
 `hangProbeAfterSec` (default 59) of silence it sends `$players`
 (`DMFCInputCommand_Players`, dmfcinputcommand.cpp: a header and one line per player, printed with
 `DPrintf` = `PrintDedicatedMessage`, Game2DLL.cpp; vanilla and Matcen alike, and it refreshes the
-player count for D.4). With no output for `hangRestartAfterSec` (default 120) in all it emits
+player count for E.4). With no output for `hangRestartAfterSec` (default 120) in all it emits
 `server.hung`, kills the process (SIGKILL, no `quit`: a stuck loop never runs it, and the engine's
 SIGTERM handler runs shutdown code in the same stuck process, sdlmain.cpp `fatal_signal_handler`)
-and relaunches it with the D.2 backoff. No `server.stopped` or `server.crashed` follows the kill.
+and relaunches it with the E.2 backoff. No `server.stopped` or `server.crashed` follows the kill.
 
 Level loads: no probe and no kill for 120 s after `level.started`. 3202 loads in the Matcen soak
 lab's logs took at most 0.98 s from `Opening level` to the end of the load, and the end of a level
@@ -1605,16 +1607,16 @@ If the console link drops while the process runs, Pyrodeck logs in again every 5
 does the same); the silence keeps counting, so a server that accepts the TCP connection but never
 prompts for the password is still found hung.
 
-### D.4 Restart when empty
+### E.4 Restart when empty
 
 Off by default. Checked every 15 s (D3Server3's timer): uptime above `emptyRestartAfterHours`
 (default 24), no human on the server, and at least `emptyRestartGraceSec` (default 130, D3Server3's
 value) since the last one left (since the start if nobody joined). Humans are counted from
-`player.joined`/`player.left` (D.1; `[BOT]` callsigns never count, a callsign counts once) and from every `$players` reply
+`player.joined`/`player.left` (E.1; `[BOT]` callsigns never count, a callsign counts once) and from every `$players` reply
 (slot 0 is the server itself). Before restarting, `$players` is sent once more and the restart
 happens only if its reply parses and lists no human. Then `server.stopped{reason:"empty-restart"}`
 and an immediate relaunch (`server.started{reason:"relaunch"}`), not counted as a failure. Not
-during a rotation. A re-attached server (D.5) counts as unknown until its first `$players` reply.
+during a rotation. A re-attached server (E.5) counts as unknown until its first `$players` reply.
 
 Settings are global (`pyrodeck.json` → `supervisor`, validated like `missionHost`):
 `relaunchOnCrash` (true), `hangCheck` (true), `hangProbeAfterSec` (59, 10..3600),
@@ -1627,7 +1629,7 @@ signal}`, `lastHang {at, silentForMs}`, `hang {state: off|listening|probing|load
 probeAt, restartAt}`, `uptimeMs`, `humans` (null = unknown), `emptySince`, `emptyRestart` (why not
 yet, null when off), `adopted`. The process status also carries `stopReason`.
 
-### D.5 Re-attach after Pyrodeck restarts
+### E.5 Re-attach after Pyrodeck restarts
 
 For the server to outlive Pyrodeck, `ProcessManager.start` spawns it `detached` (its own process
 group on POSIX, so a Ctrl+C or SIGHUP to Pyrodeck's group does not reach it; outside libuv's
@@ -1652,9 +1654,9 @@ in (no post-start settings; the playlist timer is anchored once); Stop sends `qu
 and SIGKILL by PID; its exit is found by polling every second (exit code unknown, so an exit
 without a request is a crash and the supervisor relaunches it). Its stdout went to the old
 Pyrodeck, so the Output tab and log get nothing more; the console then feeds the line monitor
-(D.1) and the playlist's level detection instead.
+(E.1) and the playlist's level detection instead.
 
-### D.6 UI
+### E.6 UI
 
 Launch panel, **Supervisor** (below the Launch/Stop button, above Mission Downloads;
 `components/SupervisorSettings.tsx`). The title row shows a dot and a word: Watching, Probing,
