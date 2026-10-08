@@ -165,7 +165,7 @@ export function isLoopbackName(hostname: string): boolean {
  * An Origin passes when its host name is the request's own (`hostname`:
  * Fastify's request.hostname, the Host header, or X-Forwarded-Host from a
  * trusted proxy), when both are loopback names (the Vite dev proxy rewrites
- * Host to localhost:3001), or when it is listed in PYRODECK_CORS_ORIGIN.
+ * Host to 127.0.0.1:3001), or when it is listed in PYRODECK_CORS_ORIGIN.
  * Ports are not compared: nginx's $host drops the port, and Vite serves the
  * page on 5173 while Pyrodeck answers on 3001.
  */

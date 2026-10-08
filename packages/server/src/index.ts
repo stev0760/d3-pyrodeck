@@ -35,12 +35,10 @@ import {
   parseTrustProxy,
 } from "./middleware/requestSource.js";
 import { startConsoleEvents } from "./events/consoleEventHub.js";
+import { resolveListenAddress } from "./listenAddress.js";
 import { parseSessionLifetimes, sessions } from "./auth/sessions.js";
 
-const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
-const HOST = process.env.PYRODECK_HOST ?? "0.0.0.0";
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
-const isSidecar = process.env.PYRODECK_SIDECAR === "1";
 
 async function loadSessionSecret(): Promise<string> {
   if (process.env.PYRODECK_SESSION_SECRET) {
@@ -72,6 +70,8 @@ async function findStaticDir(): Promise<string | null> {
 
 async function main() {
   // Environment checks first: a malformed value stops the start here.
+  const listen = resolveListenAddress(process.env);
+  const { host: HOST, port: PORT, sidecar: isSidecar } = listen;
   sessions.setLifetimes(parseSessionLifetimes(process.env));
 
   const sessionSecret = await loadSessionSecret();
@@ -98,7 +98,7 @@ async function main() {
 
   if (!hasPassword && !isLocalhost && !isSidecar) {
     console.warn(
-      "[Pyrodeck] WARNING: No admin password configured but server is binding to " +
+      "[Pyrodeck] WARNING: No admin password configured but PYRODECK_HOST is " +
         HOST +
         ". Remote clients are refused until a password is set (requireAuth fails " +
         "closed for non-loopback peers). Set PYRODECK_ADMIN_PASSWORD to enable " +
@@ -118,7 +118,7 @@ async function main() {
     console.warn(
       `[Pyrodeck] WARNING: PYRODECK_TRUST_PROXY trusts a reverse proxy on this machine, but Pyrodeck ` +
         `listens on ${HOST}, so browsers can also reach it directly over plain http, around the proxy. ` +
-        "Set PYRODECK_HOST=127.0.0.1 (or keep the port closed in the firewall).",
+        "Remove PYRODECK_HOST (the default is 127.0.0.1), or keep the port closed in the firewall.",
     );
   }
 
@@ -130,6 +130,12 @@ async function main() {
     `Sessions end ${ttlMs / 3_600_000} h after login, or after ${idleMs / 60_000} min unused. ` +
       "They are kept in memory: restarting Pyrodeck logs everyone out.",
   );
+  if (listen.hostIsDefault && !isSidecar) {
+    app.log.info(
+      `Listening on ${HOST} only (the default since 0.5.2): browsers on other machines reach Pyrodeck through a ` +
+        "reverse proxy or an SSH tunnel. To serve a LAN directly, set PYRODECK_HOST=0.0.0.0.",
+    );
+  }
 
   if (trustProxy) {
     app.log.info(`Trusting X-Forwarded-For and X-Forwarded-Proto from: ${trustProxy.join(", ")}`);
@@ -199,17 +205,14 @@ async function main() {
   // hook (which provides request.unsignCookie) is already in place.
   app.addHook("onRequest", requireAuth);
 
-  const bindHost = isSidecar ? "127.0.0.1" : HOST;
-  const bindPort = isSidecar ? 0 : PORT;
-
-  await app.listen({ port: bindPort, host: bindHost });
+  await app.listen({ port: PORT, host: HOST });
 
   if (isSidecar) {
     const addr = app.server.address();
     const port = typeof addr === "object" && addr ? addr.port : 0;
     process.stdout.write(`sidecar-port:${port}\n`);
   } else {
-    app.log.info(`D3 Pyrodeck server listening on ${bindHost}:${PORT}`);
+    app.log.info(`D3 Pyrodeck server listening on ${HOST}:${PORT}`);
   }
 }
 
