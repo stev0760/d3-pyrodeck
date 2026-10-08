@@ -2,6 +2,26 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.2] - 2026-10-08
+
+The second hardening release for running Pyrodeck on the public internet: real login sessions, a loopback-only default address, and retention for the game-server logs.
+
+### Security
+- **Real sessions.** The session cookie held a signed constant, the same for every login: logging out only deleted the browser's copy, nothing expired on the server, and only a new session secret logged anyone out. Each login now gets a random 32-byte session id, kept in Pyrodeck's memory and checked on every request. A session ends at logout, 12 hours after login (`PYRODECK_SESSION_TTL_HOURS`) or after 120 minutes without a request (`PYRODECK_SESSION_IDLE_MINUTES`), whichever comes first, and the cookie's lifetime matches. A login always starts a new session and ends the one the browser carried, so an id planted before login is never the one logged in. Setting the admin password ends every session. Sessions are not saved to disk: the upgrade, and every restart of Pyrodeck from now on, logs everyone out.
+- **Log out all sessions.** Settings tab → Sessions lists the sessions (address, browser, login and last use) and ends them all, this one included (`GET` and `DELETE /api/sessions`).
+- **Open consoles close with their session.** A console WebSocket closes (code 4401) as soon as the session that opened it ends, by logout, revocation or timeout, and the browser goes back to the login page. A browser that reconnects after a Pyrodeck restart is sent to the login page instead of retrying forever.
+- **Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` is set** (it was `0.0.0.0`). Behind a reverse proxy, or used from the same machine, nothing changes. **A LAN that opens Pyrodeck directly at `http://<this machine>:3001` must now set `PYRODECK_HOST=0.0.0.0`.** The desktop app (always on loopback) and `pnpm dev` work as before. Startup says where Pyrodeck listens and how to serve a LAN.
+- A malformed `PYRODECK_PORT`, `PYRODECK_SESSION_*` or `PYRODECK_LOG_*` value stops Pyrodeck at startup with an error naming the variable.
+
+### Added
+- **Log retention**, on by default, for the game-server logs Pyrodeck writes, one per launch (a server writes 12-28 MB an hour, and nothing pruned them). Closed logs are gzipped in place (`.log.gz`, keeping their modification time); logs last written more than `PYRODECK_LOG_RETENTION_DAYS` ago (default 30) are deleted, then the oldest until the total fits in `PYRODECK_LOG_MAX_MB` (default 2048). It runs at startup, every hour and when its settings are saved, and logs each compression and deletion at info level. It touches only files named the way Pyrodeck names its logs (`<profile>-YYYY-MM-DDTHH-MM-SS.log`), never anything else in the Log Directory, which may be the game's own folder; symlinks and directories are skipped. The running server's log, and any log written in the last ten minutes, is never compressed or deleted. **To keep every log, set both variables to 0 (or 0 in the Logs tab) and untick compression.**
+- Logs tab → **Retention**: days, size cap and compression, saved in `config/pyrodeck.json`. A value set in the environment wins and shows as locked. `GET` and `PUT /api/logs/retention`.
+
+### Changed
+- The Logs tab lists compressed logs too. View decompresses them (the last 256 KB, as for any large log); Download saves the `.log.gz` itself.
+- The Vite dev proxy targets `127.0.0.1:3001` instead of `localhost:3001`.
+- `docs/behind-a-reverse-proxy.md` and `docs/running-as-a-service.md` rely on the new default address; the service unit lists the session and log retention variables.
+
 ## [0.5.1] - 2026-10-08
 
 A hardening release for running Pyrodeck on the public internet behind a reverse proxy.

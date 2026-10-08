@@ -16,14 +16,19 @@ same applies to a dev checkout if you replace the binary with `node packages/ser
   directory). Set the working directory to the Pyrodeck directory, or set `PYRODECK_CONFIG_DIR` to an absolute path.
 - **An admin password.** Set `PYRODECK_ADMIN_PASSWORD`, or set one once from a local browser before you install the
   service. Without one, Pyrodeck answers only on localhost.
-- **A reverse proxy for a server on the internet.** Put nginx in front with HTTPS, keep Pyrodeck on 127.0.0.1 and set
-  `PYRODECK_TRUST_PROXY`: [behind-a-reverse-proxy.md](behind-a-reverse-proxy.md) has the whole setup, the firewall
-  included.
+- **A reverse proxy for a server on the internet.** Put nginx in front with HTTPS, keep Pyrodeck on 127.0.0.1 (its
+  default address) and set `PYRODECK_TRUST_PROXY`: [behind-a-reverse-proxy.md](behind-a-reverse-proxy.md) has the
+  whole setup, the firewall included. To serve browsers on a LAN directly instead, set `PYRODECK_HOST=0.0.0.0`.
 - **A user account that can run the game.** Run the service as the account that owns the Descent 3 directory, not as
   root or `LocalSystem`. The game server writes into the game directory and its temp directory.
 - **A place for Pyrodeck's own log.** Pyrodeck writes its log to standard output. The service manager has to capture
   it (journald on Linux, a file under NSSM). The game servers' logs are separate: they go to the Log Directory set in
-  the Logs tab, next to the game executable by default.
+  the Logs tab, next to the game executable by default. Pyrodeck gzips the closed ones and deletes its own logs older
+  than 30 days or beyond 2048 MB in total (`PYRODECK_LOG_RETENTION_DAYS`, `PYRODECK_LOG_MAX_MB`; 0 turns a limit off),
+  and never touches another file there.
+- **Sessions end on restart.** Logins are kept in memory, so a restart of the service logs every browser out. A
+  session also ends 12 hours after login and after 2 hours unused (`PYRODECK_SESSION_TTL_HOURS`,
+  `PYRODECK_SESSION_IDLE_MINUTES`).
 
 ## What happens when Pyrodeck restarts
 
@@ -65,10 +70,12 @@ keep the game server running when the service stops or restarts, also set:
 nssm set Pyrodeck AppKillProcessTree 0
 ```
 
-`nssm stop Pyrodeck`, `nssm restart Pyrodeck` and `nssm remove Pyrodeck confirm` manage it afterwards. The Windows
-firewall needs an inbound rule for the game's UDP port, and for Pyrodeck's port (3001) if browsers on other machines
-reach it directly. The game's console port needs one only for Connect mode from another machine, which also takes
-`AllowRemoteConsole=1` in the server's config; a server Pyrodeck launches here needs neither.
+With the settings above, Pyrodeck answers browsers on this machine only; for browsers on other machines of the LAN,
+add `PYRODECK_HOST=0.0.0.0` to `AppEnvironmentExtra`. `nssm stop Pyrodeck`, `nssm restart Pyrodeck` and
+`nssm remove Pyrodeck confirm` manage it afterwards. The Windows firewall needs an inbound rule for the game's UDP
+port, and for Pyrodeck's port (3001) if browsers on other machines reach it directly. The game's console port needs
+one only for Connect mode from another machine, which also takes `AllowRemoteConsole=1` in the server's config; a
+server Pyrodeck launches here needs neither.
 
 ## Windows: sc.exe and schtasks
 
@@ -120,11 +127,18 @@ WorkingDirectory=%h/pyrodeck
 ExecStart=%h/pyrodeck/pyrodeck-server
 Environment=PYRODECK_ADMIN_PASSWORD=change-me
 Environment=PYRODECK_PORT=3001
-# Behind nginx on this machine (behind-a-reverse-proxy.md): listen on loopback
-# only, and trust X-Forwarded-For/-Proto from that proxy alone. To serve a LAN
-# directly instead, remove both lines and open port 3001 in the firewall.
-Environment=PYRODECK_HOST=127.0.0.1
+# Behind nginx on this machine (behind-a-reverse-proxy.md): trust
+# X-Forwarded-For/-Proto from that proxy alone. Pyrodeck listens on 127.0.0.1
+# by default, so only the proxy reaches it. To serve a LAN directly instead,
+# replace this line with PYRODECK_HOST=0.0.0.0 and open port 3001 in the firewall.
 Environment=PYRODECK_TRUST_PROXY=1
+# Sessions: end 12 h after login, or after 120 min without a request.
+Environment=PYRODECK_SESSION_TTL_HOURS=12
+Environment=PYRODECK_SESSION_IDLE_MINUTES=120
+# Game-server logs: delete Pyrodeck's logs older than 30 days, then the oldest
+# beyond 2048 MB in total (0 turns a limit off). These win over the Logs tab.
+Environment=PYRODECK_LOG_RETENTION_DAYS=30
+Environment=PYRODECK_LOG_MAX_MB=2048
 Restart=on-failure
 RestartSec=5
 # Leave the game server running when Pyrodeck stops or restarts

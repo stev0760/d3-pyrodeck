@@ -29,20 +29,25 @@ Replace both. The commands are for Ubuntu LTS. Other distributions differ only i
 ## Pyrodeck's environment
 
 ```ini
-Environment=PYRODECK_HOST=127.0.0.1
 Environment=PYRODECK_PORT=3001
 Environment=PYRODECK_TRUST_PROXY=1
 ```
 
-- `PYRODECK_HOST=127.0.0.1` keeps Pyrodeck's port off the network, so browsers can reach it only through nginx.
+- Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` says otherwise (the default since 0.5.2), so its port is off
+  the network and browsers reach it only through nginx. Leave `PYRODECK_HOST` unset. At startup the log says
+  `Listening on 127.0.0.1 only`.
 - `PYRODECK_TRUST_PROXY=1` trusts `X-Forwarded-For` and `X-Forwarded-Proto` from a proxy on this machine
   (127.0.0.0/8 and ::1) and from nowhere else. A proxy on another machine is named by its address instead:
   `PYRODECK_TRUST_PROXY=10.0.0.5`, or a list of addresses and CIDR blocks (`10.0.0.0/24,fd00::/8`). Any other value
-  stops Pyrodeck at startup with an error.
+  stops Pyrodeck at startup with an error. With a proxy on another machine, Pyrodeck must also listen where that
+  proxy reaches it: set `PYRODECK_HOST` to this machine's address on the private network.
 
 At startup Pyrodeck's log says `Trusting X-Forwarded-For and X-Forwarded-Proto from: loopback`. It warns when
-`PYRODECK_TRUST_PROXY` is set but Pyrodeck still listens on a public address, when no admin password is set, and,
-the first time a proxied request arrives, when `PYRODECK_TRUST_PROXY` is not set.
+`PYRODECK_TRUST_PROXY` is set but `PYRODECK_HOST` is a public address, when no admin password is set, and, the first
+time a proxied request arrives, when `PYRODECK_TRUST_PROXY` is not set.
+
+Sessions (12 hours from login, 2 hours unused) and log retention (30 days, 2048 MB) have defaults that suit a public
+server; [running-as-a-service.md](running-as-a-service.md) lists their variables.
 
 ### What Pyrodeck reads from a proxied request
 
@@ -206,4 +211,10 @@ nc -vz -w 3 203.0.113.10 2092   # the console (TCP): must fail
 
 Log in from a browser: the developer tools show the `pyrodeck_session` cookie with `Secure`, `HttpOnly` and
 `SameSite=Strict`, and the console tab connects (a WebSocket to `wss://panel.example.com/ws`). Pyrodeck's log
-(`journalctl --user -u pyrodeck`) records your address, not 127.0.0.1, on each request.
+(`journalctl --user -u pyrodeck`) records your address, not 127.0.0.1, on each request. Copy the cookie's value, log
+out, and send it back: the API answers 401, because logout ended the session on the server.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Cookie: pyrodeck_session=<the copied value>' https://panel.example.com/api/sessions
+# 401
+```

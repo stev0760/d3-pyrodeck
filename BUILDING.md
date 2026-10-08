@@ -181,11 +181,14 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 Install prerequisites as shown above. The build and run process is identical to Arch Linux.
 
 **Firewall:**
+Pyrodeck listens on 127.0.0.1 by default, so only this machine reaches it. To serve a LAN, start it with
+`PYRODECK_HOST=0.0.0.0` and open the port:
 ```bash
 sudo ufw allow 3001/tcp
 ```
-That serves the panel over plain http to anyone who can reach the port, which suits a LAN. On the internet, keep
-3001 closed and put nginx with HTTPS in front: [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md).
+That serves the panel over plain http to anyone who can reach the port, which suits a LAN. On the internet, leave
+`PYRODECK_HOST` unset, keep 3001 closed and put nginx with HTTPS in front:
+[docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md).
 
 **Running as a service (optional):**
 Create `/etc/systemd/system/pyrodeck.service`:
@@ -203,6 +206,8 @@ Restart=on-failure
 RestartSec=5
 Environment=PYRODECK_ADMIN_PASSWORD=yourpassword
 Environment=PYRODECK_PORT=3001
+# Browsers on other machines: uncomment (LAN only; on the internet use a reverse proxy).
+#Environment=PYRODECK_HOST=0.0.0.0
 
 [Install]
 WantedBy=multi-user.target
@@ -281,6 +286,7 @@ sudo semanage port -l | grep 3001
 ```
 
 **Firewall (firewalld on Rocky):**
+Only to serve a LAN directly, with `PYRODECK_HOST=0.0.0.0`; behind nginx, keep 3001 closed.
 ```bash
 sudo firewall-cmd --permanent --add-port=3001/tcp
 sudo firewall-cmd --reload
@@ -335,10 +341,14 @@ The admin password can also be set via the web UI on first run (stored as a scry
 |----------|---------|---------|
 | `PYRODECK_ADMIN_PASSWORD` | *(unset)* | Admin password. If unset, falls back to the password hash in `config/pyrodeck.json`. If neither is set, the web UI prompts for first-time setup. |
 | `PYRODECK_PORT` | `3001` | Port to bind |
-| `PYRODECK_HOST` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only, and behind a reverse proxy. |
+| `PYRODECK_HOST` | `127.0.0.1` | Interface to bind. The default (since 0.5.2; `0.0.0.0` before) serves this machine and a reverse proxy on it only. Set `0.0.0.0` to serve a LAN directly. |
 | `PYRODECK_TRUST_PROXY` | *(unset)* | `1` trusts `X-Forwarded-For`/`-Proto` from a reverse proxy on this machine only; a comma-separated list of addresses or CIDR blocks names a proxy elsewhere. See [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md). |
 | `PYRODECK_CONFIG_DIR` | `./config` | Where Pyrodeck stores profiles, secrets, playlists |
-| `PYRODECK_SESSION_SECRET` | *(auto-generated)* | Cookie signing secret. Auto-generated and saved to `config/session-secret` on first run. Set explicitly for multi-instance or to preserve sessions across restarts. |
+| `PYRODECK_SESSION_SECRET` | *(auto-generated)* | Cookie signing secret. Auto-generated and saved to `config/session-secret` on first run. Changing it invalidates every cookie. Sessions themselves are kept in memory, so a restart logs everyone out whatever this is. |
+| `PYRODECK_SESSION_TTL_HOURS` | `12` | A login session ends this long after login, however busy. The cookie lasts as long. Decimals allowed. |
+| `PYRODECK_SESSION_IDLE_MINUTES` | `120` | A login session ends after this long without a request. An open panel polls, so it stays in use. |
+| `PYRODECK_LOG_RETENTION_DAYS` | `30` | Delete Pyrodeck's game-server logs last written more than this many days ago; `0` keeps them. Wins over the Logs tab. |
+| `PYRODECK_LOG_MAX_MB` | `2048` | Then delete the oldest until Pyrodeck's logs take at most this many MB; `0` is no cap. Wins over the Logs tab. Closed logs are gzipped first unless compression is unticked in the Logs tab. |
 | `PYRODECK_STATIC_DIR` | *(auto-detected)* | Path to the `resources/` SPA directory. Auto-detected from the executable's location in binary mode. Set manually if needed. |
 | `PYRODECK_SIDECAR` | *(unset)* | Set to `1` by the Tauri wrapper. Binds loopback-only on an ephemeral port and writes `sidecar-port:{n}` to stdout. |
 

@@ -694,8 +694,10 @@ All REST endpoints are prefixed with `/api`. WebSocket endpoint is `/ws`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/auth/login` | Authenticate; returns session token |
-| `POST` | `/api/auth/logout` | Invalidate session |
+| `POST` | `/api/auth/login` | Authenticate; starts a new session (the browser's previous one ends) and sets the `pyrodeck_session` cookie |
+| `POST` | `/api/auth/logout` | End this session on the server and clear the cookie |
+| `GET` | `/api/sessions` | `{ ttlHours, idleMinutes, sessions: [{ createdAt, lastSeenAt, expiresAt, idleExpiresAt, ip, userAgent, current }] }`, most recently used first; never the ids |
+| `DELETE` | `/api/sessions` | End every session, the caller's included; `{ ok, revoked }`. Their `/ws` sockets close with 4401 |
 
 ### 8.2 Server Connection
 
@@ -833,6 +835,22 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 (first check about 8 s after launch), `failed` on a stream error, an empty or missing file, or a
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
+
+**Log retention (v0.5.2, `launcher/logRetention.ts`).** At startup (after 5 s), every hour and after
+`PUT /api/logs/retention`, in the Log Directory and the folder of the last launch's log: (1) delete
+Pyrodeck's logs last written more than `days` ago, (2) gzip each closed `.log` to `.log.gz` (written
+as `.log.gz.partial`, synced, given the original's times, renamed; the original is kept if it changed
+meanwhile), (3) delete the oldest until the total is at most `maxMb`. Only names matching
+buildLogFilename's output (`^[a-z0-9_-]{1,48}-YYYY-MM-DDTHH-MM-SS\.log(\.gz)?$`, a real UTC time) and
+regular files (lstat; never symlinks) are touched. The running server's log and files written in the
+last 10 minutes are never compressed or deleted. Each deletion and compression is logged at info.
+Settings `{ days, maxMb, compress }` (default 30, 2048, true; 0 turns a limit off) live in
+`pyrodeck.json` `logRetention`; `PYRODECK_LOG_RETENTION_DAYS` and `PYRODECK_LOG_MAX_MB` win over
+`days` and `maxMb`, and a malformed value stops startup. `GET /api/logs/retention` returns
+`{ settings (in force), stored, env: { days, maxMb } (null when unset), dirs, lastRun }`; `lastRun`
+is `{ at, compressed, deleted, freedBytes, files, totalBytes, errors }`. `GET /api/logs` items carry
+`compressed`; `GET /api/logs/:name` decompresses a `.log.gz` (with `?tail=1`, the last 256 KB and
+`X-Log-Truncated`/`X-Log-Total-Size` of the decompressed text) and `?download=1` sends the `.gz` as is.
 
 **Profile settings (v0.5.0).** `PATCH /api/profiles/:id` takes, besides the metadata and `postStart`:
 
@@ -1113,7 +1131,8 @@ d3-pyrodeck/
 - **File access:** Strict path sanitization on all file manager endpoints. Reject `..`, absolute paths, symlinks pointing outside the managed root. All file operations are jailed to the server's managed directory tree (`gamedata/`, `servers/`, `import/`). Config editor (Phase 1) is further scoped to the config directory only.
 - **Upload limits:** Configurable max upload size (default 100MB). Uploads streamed to disk (not buffered in memory) to prevent OOM on large files. File type validation on upload (reject unexpected extensions in sensitive directories).
 - **SFTP access:** If the built-in SFTP server is enabled (Phase 3), it uses the web admin session password for authentication. SFTP root is jailed to the same managed directory tree as the web file manager. Disabled by default — opt-in via config.
-- **HTTPS:** Out of scope for the app. Users deploying to VPS should put nginx or Caddy in front, as `docs/behind-a-reverse-proxy.md` describes. `PYRODECK_TRUST_PROXY=1` trusts `X-Forwarded-For`/`-Proto` from loopback only (an explicit address/CIDR list names a remote proxy; never every hop), so the client is the right-most untrusted address. A request carrying any forwarding header is never local, and a local request must ask for a loopback Host name. The session cookie is `Secure` when `request.protocol` is https; browser requests whose `Origin` host differs from `Host` are refused (403).
+- **HTTPS:** Out of scope for the app. Users deploying to VPS should put nginx or Caddy in front, as `docs/behind-a-reverse-proxy.md` describes. `PYRODECK_TRUST_PROXY=1` trusts `X-Forwarded-For`/`-Proto` from loopback only (an explicit address/CIDR list names a remote proxy; never every hop), so the client is the right-most untrusted address. A request carrying any forwarding header is never local, and a local request must ask for a loopback Host name. The session cookie is `Secure` when `request.protocol` is https; browser requests whose `Origin` host differs from `Host` are refused (403). Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` is set (v0.5.2).
+- **Sessions (v0.5.2, `auth/sessions.ts`):** a random 32-byte id per login (base64url in the signed cookie), kept in memory with its login time, last use, address and user agent. A request with a password set needs a live session and restarts its idle clock. A session ends at logout, `DELETE /api/sessions`, when the admin password is set, `PYRODECK_SESSION_TTL_HOURS` (default 12) after login, or `PYRODECK_SESSION_IDLE_MINUTES` (default 120) after its last request; expired sessions are swept every 60 s. Cookie `maxAge` is the absolute lifetime. Login ends the session id the browser presented and issues a new one (no fixation). A `/ws` socket is bound to the session that opened it and closes with code 4401 when it ends; a command on a socket whose session ended closes it too. At most 1000 sessions; the least recently used goes first. A restart ends every session.
 - **Game console exposure:** A launched server's console is reached on 127.0.0.1 when its config has `AllowRemoteConsole=0` (the default Pyrodeck writes); `AllowRemoteConsole=1` is needed only for Connect mode from another machine, and Pyrodeck warns when a launched profile uses it.
 - **CORS:** Restricted to the web admin's own origin by default.
 
