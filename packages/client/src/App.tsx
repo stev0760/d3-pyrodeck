@@ -9,7 +9,9 @@ import { SetupPage } from "./components/SetupPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
 import { SavedServers } from "./components/SavedServers.tsx";
 import { Console } from "./components/Console.tsx";
-import { PlayerList } from "./components/PlayerList.tsx";
+import { PlayersPanel } from "./components/PlayersPanel.tsx";
+import { BansPanel } from "./components/BansPanel.tsx";
+import { RulesPanel } from "./components/RulesPanel.tsx";
 import { BotPanel } from "./components/BotPanel.tsx";
 import { ConfigEditor } from "./components/ConfigEditor.tsx";
 import { CommandReference } from "./components/CommandReference.tsx";
@@ -37,7 +39,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Menu, Server as ServerIcon, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists" | "logs" | "settings";
+type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists" | "logs" | "bans" | "rules" | "settings";
 
 function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout: boolean }) {
   const {
@@ -133,11 +135,13 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
   const tabs: { id: Tab; label: string; show: boolean; group: "primary" | "more" }[] = [
     { id: "server-output", label: "Output", show: mode === "launch", group: "primary" },
     { id: "console", label: "Console", show: true, group: "primary" },
-    { id: "players", label: "Players", show: isConnected, group: "primary" },
+    { id: "players", label: "Players", show: true, group: "primary" },
     { id: "bots", label: "Bots", show: isConnected && hasFeature("bots"), group: "primary" },
     { id: "config", label: "Config", show: mode === "launch", group: "more" },
     { id: "playlists", label: "Playlists", show: mode === "launch", group: "more" },
     { id: "logs", label: "Logs", show: mode === "launch", group: "more" },
+    { id: "bans", label: "Bans", show: true, group: "more" },
+    { id: "rules", label: "Rules", show: true, group: "more" },
     { id: "settings", label: "Settings", show: true, group: "more" },
   ];
 
@@ -369,9 +373,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           </TabsContent>
 
           <TabsContent value="players" className="p-3 min-h-0">
-            {isConnected && (
-              <PlayerList sendCommand={sendCommand} onPlayers={onPlayers} />
-            )}
+            <PlayersPanel connected={isConnected} sendCommand={sendCommand} onPlayers={onPlayers} notify={addToast} />
           </TabsContent>
 
           <TabsContent value="bots" className="p-3 min-h-0">
@@ -413,6 +415,14 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
           <TabsContent value="logs" className="p-3 min-h-0">
             <LogsPanel />
+          </TabsContent>
+
+          <TabsContent value="bans" className="p-3 min-h-0">
+            <BansPanel notify={addToast} />
+          </TabsContent>
+
+          <TabsContent value="rules" className="p-3 min-h-0">
+            <RulesPanel notify={addToast} />
           </TabsContent>
 
           <TabsContent value="settings" className="p-3 min-h-0">

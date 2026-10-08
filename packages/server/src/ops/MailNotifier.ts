@@ -1,6 +1,6 @@
 import os from "node:os";
 import nodemailer, { type SendMailOptions } from "nodemailer";
-import type { ServerEventMap, ServerEventName } from "../events/ServerEvents.js";
+import { NO_PROFILE_ID, type ServerEventMap, type ServerEventName } from "../events/ServerEvents.js";
 import type { MailEventKey, MailSettings } from "./mailSettings.js";
 
 /**
@@ -50,7 +50,9 @@ export function describeEvent<K extends MailableEventName>(
   payload: ServerEventMap[K],
   at = Date.now(),
 ): DescribedEvent {
-  const base = { at, profileId: payload.profileId || null, key: `${name}:${JSON.stringify(payload)}` };
+  // A launch without a profile has no name to show.
+  const profileId = payload.profileId && payload.profileId !== NO_PROFILE_ID ? payload.profileId : null;
+  const base = { at, profileId, key: `${name}:${JSON.stringify(payload)}` };
   switch (name) {
     case "server.started": {
       const p = payload as ServerEventMap["server.started"];

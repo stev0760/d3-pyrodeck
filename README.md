@@ -49,9 +49,10 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - After launch the log is checked (about 8 s in, then every 30 s): a log that stays empty, errors, or is deleted, moved or replaced mid-run raises an error and stays flagged in the Launch panel until the next launch
 
 ### Players
-- Auto-refreshing scoreboard from `$scores` (name, points, kills, deaths, suicides, ping)
+- Auto-refreshing scoreboard from `$scores` (name, points, kills, deaths, suicides, ping), with each human's address when known
 - Bot and observer badges
-- Kick and ban controls per player
+- Kick and Ban per player, each with a reason that is said in chat before the kick; Ban can also put the address in hosts.deny and the name on the name-ban list (see Bans and join rules)
+- **History** view: every join and leave per server, with slot and address, searchable by name or address; "who was on" between two times; a name-to-address index
 
 ### Bots (Matcen fork only)
 - Auto-detected via `$servercaps` probe — bot UI only appears when connected to a Matcen fork server
@@ -245,6 +246,21 @@ A server you stop (Stop button, a playlist rotation, or `quit` typed at its cons
 The Launch panel's **Supervisor** block shows what it is doing (relaunches so far, the last crash and hang, uptime, players, how long the console has been quiet, why an empty restart has not happened yet) and, when you open it, the three switches and their limits. A pending relaunch has a **Cancel** button for a crashed server you want left down. Pyrodeck's own log gets one `[Server]` line per start, stop, crash, hang, level start, join and leave.
 
 **Pyrodeck restarts do not stop the server.** A server Pyrodeck launched keeps running when Pyrodeck stops, crashes or is upgraded, and the next Pyrodeck re-attaches to it: status, console, Stop and the supervisor work again. Closing Pyrodeck therefore leaves the server up; stop it first if you want it down. After a re-attach the server's own output is not captured any more (it went to the Pyrodeck that started it), so the Output tab and the log file stop at the restart; the console still shows everything the server prints there.
+## Bans and join rules
+
+**Bans that survive a restart.** The console's `$ban` lasts until the server restarts (a playlist rotation is a restart). Bans that last are the engine's `netgames/hosts.deny`, which the server reads at each game start and on `$rehash`:
+
+- **Bans tab → Address bans.** Add an address (`203.0.113.9`), a pattern (`203.0.113.*`) or a prefix (`203.0.113.0/24`, `/8`, `/16`, `/24` or `/32`; the server matches whole parts only), with a reason. Pyrodeck writes the line exactly as the server reads it, keeps the reason and date itself (the file has no room for them), and sends `$rehash` after every change and, by default, at every level start. Lines the server silently ignores (a comment, a trailing space, a `/24` typed by hand) are listed with the reason.
+- **Where the file is.** The server reads `netgames/hosts.deny` in its writable directory: on Linux `~/.local/share/Outrage Entertainment/Descent 3/`, on Windows `%APPDATA%\Outrage Entertainment\Descent 3\`. Pyrodeck uses the directory a launched server reports in its log, or a path you set; retail 1.4/1.5 servers read the file in their install directory. The file is on the server's machine, so in Connect mode to another machine the editor does not apply to that server.
+- **Name bans.** The game has no name ban. Pyrodeck kicks a joining player whose name matches the list (any case; `Name*` matches every name starting with `Name`), saying why first. Names are easy to borrow, so ban the address too where you can.
+- **Ban from the Players tab** says the reason, waits two seconds, re-checks the slot, sends `$ban`, adds the player's address to hosts.deny (on by default) and, if ticked, the name to the list.
+
+**Addresses.** Pyrodeck learns a joining player's address with one `$playerinfo` per new session, never polled. On servers other than Matcen 0.9.3+ that command fills a buffer the server never empties (about 40 queries crash it), so Pyrodeck sends at most 20 per server run there (Rules tab; up to 30). Names containing `%` are never looked up.
+
+**Rules tab** (both off by default):
+
+- **Nickname rules**: kick a joining player whose name is empty, contains `%`, contains control characters, or is shorter than a minimum, with the reason said first.
+- **Profanity monitor**: watches general chat (team and private chat never reach the server console) for an editable word list; a short default list of plain profanity ships with Pyrodeck. Per player and server run: private warnings, then kicks, then a ban of the name and address, with a cooldown so one burst of lines counts once. A chat line carries the name the sender's game claims.
 
 ## Tech Stack
 
@@ -307,6 +323,8 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 
 - Playlist rotation is **best-effort**: D3 has no native mission rotation, so every transition is a full server stop → config swap → relaunch. Players must manually reconnect after each rotation (D3 clients cannot be told to reconnect), and the restart can occasionally fail. Treat rotation as a convenience feature, not a guaranteed-uptime mechanism
 - Single server connection only (multi-server support planned)
+- Player history and rules see only what the server prints on its console: team and private chat are invisible, and a player who drops during a level change is recorded as gone two minutes into the next level
+- On the open-source engine and Matcen (0.9.16 tested), console text containing `%` is formatted twice by the server itself, and a `%s` in a bot name crashed it. A player whose name or chat contains `%` may crash such a server before the nickname rule can kick them; that is an engine fix, not something Pyrodeck can prevent
 - Bot team assignment in the add-bot form is not yet implemented (team assignment is available in the Bot Roster config editor for pre-launch setup)
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
 - Windows binaries are unsigned; SmartScreen will warn on first run — click **More info → Run anyway**

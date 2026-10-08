@@ -677,7 +677,7 @@ Depends on Phase 1. See `BOT_MANAGEMENT.md` in the fork for bot config format re
 - Ship/weapon/powerup allow/disallow UI — checkboxes for each item, generates correct `AllowPowerUp=` / `DisallowPowerUp=` config entries. Reference: `descent3launcher`'s granular defaults (omega off due to framerate bug, mines/cloak/invuln off for latency).
 - Bot preset management: save/load named bot configurations (roster files).
 - Bot difficulty UI tied to fork difficulty tiers (Trainee/Rookie/Hotshot/Ace/Insane) — already implemented in fork Phase 5.2.
-- **IP access control UI**: Edit `hosts.allow` / `hosts.deny` files through the config editor, with a "Reload" button that sends `$rehash`.
+- **IP access control UI**: Edit `hosts.allow` / `hosts.deny` files through the config editor, with a "Reload" button that sends `$rehash`. *(hosts.deny: built as the Bans tab, §8.8; hosts.allow is shown read-only.)*
 - **Server profiles**: Save/load named server configurations (like D3Server3's multi-config and DD3's .dd3 save/load). Each profile stores the full `dedicated.cfg` + bot roster + launch parameters.
 - **Game tracker registration**: Configure tracker URLs for PXO, descent.cx, and other community trackers. Reference: D3Server3 supported up to 5 trackers; `descent3launcher` defaults to 5 (kali, descent.cx, descentservers.net, tsetsefly.de, qtracker).
 - Dark/light theme toggle.
@@ -907,6 +907,144 @@ and leaves does.
 
 `GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
 `processPriority` and `updateCheck`: each has its own route.
+### 8.7 Players: history and addresses
+
+Pyrodeck reads every console session it opens (Connect and Launch mode) and keeps, per server
+profile, the joins and leaves it sees: `<config dir>/players/<profile>.json`, 5,000 rows, oldest
+dropped first, plus a name/address index of up to 5,000 pairs. A Connect-mode server's profile id is
+`connect:<host>:<port>`. A join while the player is already in the game is a level re-entry (every
+player re-enters each level) and adds no row. For a human's new session Pyrodeck sends `$players`
+for the slot and one `$playerinfo <slot>` for the address, never polled; see §8.7.1.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/players/profiles` | `{ active, profiles: [{ profileId, label, rows, lastEventAt }] }`: profiles with a history; `active` is the open console's profile |
+| `GET` | `/api/players/history?profileId=&q=&limit=&before=` | `{ profileId, rows, total }`: join/leave rows newest first (`id, time, event, name, slot?, ip?, bot?, reason?`); `q` matches name or address; `before` pages by row id. `profileId` defaults to the open console's |
+| `GET` | `/api/players/sessions?profileId=&from=&to=&q=` | "Who was on": `{ sessions: [{ name, slot?, ip?, bot?, joinedAt, leftAt, reason? }] }` overlapping `from`..`to` (ISO; default the last 24 h) |
+| `GET` | `/api/players/addresses?profileId=&q=` | `{ entries: [{ name, ip, firstSeen, lastSeen, count }] }`, most recent first |
+| `GET` | `/api/players/present` | `{ profileId, players: [{ name, slot?, ip?, bot }] }`: who Pyrodeck tracks as in the game |
+| `GET` | `/api/players/settings` | `{ settings, lookup: { profileId, used, unlimited } }` |
+| `PUT` | `/api/players/settings` | Body: any of the settings below; 400 with `errors` on a bad value |
+
+Settings (`pyrodeck.json` → `players`): `ipLookup` (default `true`), `ipLookupBudget` (0-30,
+default 20).
+
+#### 8.7.1 Engine facts
+
+- **Lines read** (all printed through `PrintDedicatedMessage`, so they reach every console
+  session; a HUD message prints as `*<text>`, `hudmessage.cpp:425`). Join: each game DLL's
+  `OnClientPlayerEntersGame` line, e.g. `*Bob has joined the Anarchy`, `*Bob has joined CTF`,
+  `*Bob has joined the Red Team`, `*Bob Has Joined The Blue Team` (Monsterball, Entropy). Leave:
+  `*Bob has left the game` (`multi.cpp:3635`) and `*Bob disconnected!` (`multi_server.cpp:1108`;
+  time-outs, kicks and bans). Bots: `Bot '<name>' added in slot <n> (...)`
+  (`dedicated_server.cpp:905`) after the join line, `  Bot '<name>' spawned (..., slot=<n>)`
+  (`bot.cpp:9983`), `Removing bot '<name>' from slot <n>` (`dedicated_server.cpp:918`; a removed
+  bot prints no leave line), `All bots removed`. `$kick`/`$ban` print `*Kicking <name> from game` /
+  `*Banning <name> from game` (`dmfcinputcommand.cpp:353`, `:379`); a human's `disconnected!`
+  follows, a bot gets no other line. Chat: `*<name> says: <text>` (`TXT_HUDSAY`). Level:
+  `Opening level '<file>'...` (`LoadLevel.cpp:3688`). `Ending level.`, `Opening level '...'...` and
+  the level-load progress have no newline, so the first player re-entering a level arrives glued to
+  kilobytes of `...level 2 99 Percent Complete` on one line; Pyrodeck splits lines at those points.
+  Emitted on the event bus as `player.joined`,
+  `player.left`, `player.chat`, `level.started`; `player.identified` follows a human's new session
+  once the slot and address are looked up.
+- **`$players`** lists `NN: <name>` for every player that passes `CheckPlayerNum` (connected and in
+  the level), the server (`00: -Server-`) and bots included (`dmfcinputcommand.cpp:394`).
+- **`$playerinfo <slot>`** prints the callsign, `PlayerNum: <n>`, `IP: <a.b.c.d>:<port>`
+  (`networking.cpp:825`) and the ship. For a slot not in the game it prints the previously shown
+  player if that one is still in, so Pyrodeck keeps an answer only when it names the slot and the
+  player asked about. The command queues its text twice with `DLLgrtext_Printf`, even headless
+  (`dmfcmenu.cpp:1138`, `dmfcinputcommand.cpp:261`), about 400 bytes per query into a 16 KB buffer a
+  dedicated server never flushes (`grtext.h:115`): the same defect as `$netgameinfo` (v0.4.11), so a
+  retail or upstream server dies after roughly 40 queries. Matcen clears the buffer every frame from
+  0.9.3 (`GameLoop.cpp:2591`). Pyrodeck therefore sends at most `ipLookupBudget` queries per server
+  run to anything but Matcen 0.9.3+, and none for a name containing `%` (the callsign line is passed
+  to `DLLgrtext_Printf` as the format string, `dmfcbase.cpp:1654`).
+- After each level start, a player who has neither re-entered nor appears in `$players` within
+  120 s gets a leave row ("not back after a level change"); `server.started`, `server.stopped` and
+  `server.crashed` end every open session.
+
+### 8.8 Bans
+
+DMFC's `$ban <slot>` kicks and refuses the address, but keeps it in a list freed with the game DLL
+(`BanPlayerFromGame`, `dmfcbase.cpp:3088`; freed in `~DMFCBase`, `:586`), so every restart, a
+playlist rotation included, forgets it. Bans that last are the engine's `netgames/hosts.deny`
+(addresses) and Pyrodeck's own name list.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/bans` | `{ hostsDeny: { path, source, exists, lines: [{ line, text, entry, error, reason?, addedAt?, name? }], allow: { path, exists, entries }, error }, nameBans, settings, detectedLocalDir, consoleIsLocal }` |
+| `POST` | `/api/bans/hosts` | Body `{ entry, reason }`: an address, a `*` pattern or a /8, /16, /24, /32 prefix (converted to `*` parts). Appends it, notes why and when, sends `$rehash` |
+| `DELETE` | `/api/bans/hosts/:entry` | Removes every line the engine reads as that entry, sends `$rehash` |
+| `POST` | `/api/bans/names` | Body `{ pattern, reason }`: a callsign (any case), or `Name*` for every name starting with `Name` |
+| `DELETE` | `/api/bans/names/:id` | Remove a name ban |
+| `POST` | `/api/bans/rehash` | `$rehash` on the open console |
+| `PUT` | `/api/bans/settings` | Body `{ hostsDenyPath?, rehashOnLevelStart? }` |
+| `POST` | `/api/players/kick` | Body `{ name, reason?, slot? }`: `say <name> kicked - <reason>`, 2 s, re-check the slot with `$players`, `$kick <slot>`; emits `player.kicked` |
+| `POST` | `/api/players/ban` | Body `{ name, reason?, hostsDeny? (default true), nameBan?, slot? }`: as kick but `$ban`, then the address into hosts.deny and the name into the list; emits `player.banned`. Refuses bots (`$playerinfo` gives a bot the server's own address, `127.0.1.1`) and never writes `0.0.0.0` or `127.x` to hosts.deny |
+
+Settings (`pyrodeck.json` → `players`): `hostsDenyPath` (absolute path; null = the server's
+directory below), `rehashOnLevelStart` (default `true`). Name bans and the notes on hosts.deny
+entries live in `<config dir>/bans.json`.
+
+#### 8.8.1 Engine facts
+
+- **Where:** DMFC reads `<LocalD3Dir>/netgames/hosts.deny` and `hosts.allow`
+  (`ReadInHostsAllowDeny`, `dmfcbase.cpp:4844`). `LocalD3Dir` is the engine's first, writable base
+  directory (`manage.cpp:671`), which in the open-source engine and Matcen is SDL's preference path
+  (`init.cpp:1425`): `~/.local/share/Outrage Entertainment/Descent 3` (or `$XDG_DATA_HOME/...`) on
+  Linux, `%APPDATA%\Outrage Entertainment\Descent 3` on Windows. Retail 1.4/1.5 uses its install
+  directory. A launched server logs it (`Local dir: <path>`, `manage.cpp:679`) and Pyrodeck
+  remembers it; the `hostsDenyPath` setting overrides both. Verified 2026-10-07: `$rehash` opens
+  and reads `<pref dir>/netgames/hosts.deny` (inotify on a Matcen 0.9.16 server).
+- **Format** (`ParseHostsFile`, `dmfcbase.cpp:4688`): one entry per line; CR, LF or CR LF; leading
+  spaces and tabs skipped; then only digits, dots and `*`, exactly three dots, at most 15
+  characters; each part 1-3 characters, a lone `*` or a number 0-255. Anything else (a comment, a
+  trailing space, a `/24`) makes the line ignored, silently. `*` matches any value in its part.
+  hosts.allow is checked first and wins (`IsAddressBanned`, `dmfcbase.cpp:3215`); only TCP/IP
+  addresses are checked. The lists are read at game start and by `$rehash`
+  (`*Rehashing Hosts.allow and Hosts.deny`), which Pyrodeck sends after each edit and, by default,
+  at each level start.
+- **Kick and ban** take a slot only (`dmfcinputcommand.cpp:330`, `:357`), so the reason goes out
+  first as chat: the dedicated console's `say` (`Say` variable, `dedicated_server.cpp:185`). Text
+  before a colon is read as a destination (a slot, a name prefix or `team`;
+  `GetMessageDestination`, `hudmessage.cpp:737`), so public lines carry no colon and `say <slot>:
+  <text>` reaches one player. The engine has no name ban: a name on the list is kicked on join.
+
+### 8.9 Join rules and the profanity monitor
+
+Both off by default; settings in `pyrodeck.json` → `playerRules`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/players/rules` | `{ rules, defaultWords, recent: [{ time, profileId, name, rule, action, detail, ok }], offenders }` (`offenders`: this run's profanity counts on the open server) |
+| `PUT` | `/api/players/rules` | Body `{ nickname?: {...}, profanity?: {...} }`, any subset; 400 with `errors` on a bad value |
+| `POST` | `/api/players/rules/forgive` | Body `{ name }`: clear a player's profanity count |
+
+- **Nickname rules** (`nickname: { enabled, rejectEmpty, rejectPercent, rejectControl, minLength }`),
+  applied to each human's new session (`player.identified`): an empty or blank name or one with `%`
+  is kicked as `INVALID NICKNAME`, one with control characters as `HACKED NICKNAME`, one shorter
+  than `minLength` (0 = off) as `INVALID NICKNAME`, the reason said first. `%` matters because
+  callsigns reach printf-style calls as the format: in DMFC (`dmfcbase.cpp:1654`,
+  `dmfcinputcommand.cpp:753`) and, worse, in the engine's own console output:
+  `PrintDedicatedMessage` formats its text and then passes the result to `con_Printf` as the format
+  (`dedicated_server.cpp:1388`, `lnxcon.cpp:144`), so every console line is formatted twice. Tested
+  2026-10-07 on Matcen 0.9.16: `$addbot Pct%sX` echoed as `Pct<newline>X` and the server died with
+  SIGSEGV at the bot's join line. A client callsign or a chat line with `%` takes the same path, so on
+  the open-source engine and Matcen such a player can crash the server before any rule acts; the
+  `%` rule helps only where the join line survives. A joining client's name cannot be produced from
+  the server console, so the client case was not tried. The console reader drops NUL bytes and
+  colour codes (`0x01` + 3 bytes) before Pyrodeck sees a name. Pyrodeck strips `%` from every chat
+  line it sends.
+- **Profanity monitor** (`profanity: { enabled, words, warnings, kicks, ban, cooldownSeconds }`),
+  applied to `player.chat` (general chat only; team and private chat never reach the console).
+  Words match as whole words or phrases without regard to case; a trailing `*` matches any ending.
+  The default list ships as data (`rules/profanityDefaults.json`): plain profanity, no slurs. Per
+  player and server run: `warnings` private warnings (`say <slot>: ...`), then `kicks` kicks, then a
+  ban of the name and the address (§8.8), or more kicks when `ban` is off. Matches within
+  `cooldownSeconds` of the last action are not counted. A chat line's name is the sender's own
+  claim (the client writes `<name> says: <text>`, `hudmessage.cpp:828`), so a modified client can
+  put words in another player's mouth; the bans that follow go by that name's slot and address.
 
 ---
 

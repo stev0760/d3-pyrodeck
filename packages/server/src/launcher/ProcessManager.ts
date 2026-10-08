@@ -3,7 +3,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
+import { NO_PROFILE_ID, serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
 import { consoleHostFor, launchOptionArgs, type LaunchOptions } from "./launchOptions.js";
 import { syncAutoexecBlock } from "./autoexecBlock.js";
 
@@ -322,7 +322,7 @@ export class ProcessManager extends EventEmitter {
     this.adoptedProcess = { pid: target.pid, isAlive: target.isAlive, timer };
     this.setState("running");
     this.events.emitEvent("server.adopted", {
-      profileId: target.config.profileId ?? "",
+      profileId: target.config.profileId ?? NO_PROFILE_ID,
       pid: target.pid,
       startedAt: target.startedAt.toISOString(),
     });
@@ -495,7 +495,7 @@ export class ProcessManager extends EventEmitter {
 
     if (this.status.pid !== null) {
       this.events.emitEvent("server.started", {
-        profileId: config.profileId ?? "",
+        profileId: config.profileId ?? NO_PROFILE_ID,
         pid: this.status.pid,
         args,
         reason,
@@ -571,7 +571,7 @@ export class ProcessManager extends EventEmitter {
 
   /** Classify an exit as a requested stop or a crash, and report it. */
   private onProcessExit(pid: number | null, code: number | null, signal: string | null): void {
-    const profileId = this.status.activeProfileId ?? "";
+    const profileId = this.status.activeProfileId ?? NO_PROFILE_ID;
     if (this.status.state === "stopping") {
       this.status.stopReason = this.stopReason;
       this.setState("stopped");

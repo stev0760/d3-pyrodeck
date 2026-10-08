@@ -8,10 +8,15 @@
  */
 import { EventEmitter } from "node:events";
 
+/** `profileId` of a server launched without a profile (the global `dedicated.cfg`). */
+export const NO_PROFILE_ID = "launch";
+
 /**
- * `profileId` is the server profile Pyrodeck launched, or "" for a launch
- * without one (the global `dedicated.cfg`). Events are emitted for servers
- * Pyrodeck launched or re-attached to, not in Connect mode.
+ * `profileId` names the server: the profile Pyrodeck launched,
+ * NO_PROFILE_ID for a launch without one, "connect:<host>:<port>" for a
+ * server Pyrodeck only connects to. Process events (server.*) are emitted
+ * for servers Pyrodeck launched or re-attached to, not in Connect mode;
+ * console events (level and player) for every console session.
  */
 export interface ServerEventMap {
   /** The game process was started (by hand, by a playlist or by the supervisor). */
@@ -37,10 +42,14 @@ export interface ServerEventMap {
   "server.hung": { profileId: string; pid: number; silentForMs: number };
   /** A new level started (first line of a level load seen on the console or in the log). */
   "level.started": { profileId: string; mission?: string; level?: string };
-  /** A human entered the game. Bots (`[BOT]` callsigns) are not reported. */
-  "player.joined": { profileId: string; name: string; ip?: string; slot?: number };
-  /** A human left or was disconnected. Bots are not reported. */
-  "player.left": { profileId: string; name: string; ip?: string; slot?: number };
+  /**
+   * A player entered the game; `bot` when the callsign carries the engine's
+   * [BOT] tag. The join line repeats for every player at each level start, so
+   * a join of a name already in the game is a re-entry, not a new player.
+   */
+  "player.joined": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean };
+  /** `reason`: "left the game", "disconnected" (dropped), "kicked", "banned" or "bot removed". */
+  "player.left": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean; reason?: string };
   /** Pyrodeck kicked a player (a rule or an operator). */
   "player.kicked": { profileId: string; name: string; ip?: string; reason: string };
   /** Pyrodeck banned a player (name, address or both). */
@@ -54,6 +63,12 @@ export interface ServerEventMap {
   "server.adopted": { profileId: string; pid: number; startedAt: string };
   /** A weekly-schedule start or stop did not happen; `reason` says why (ops/Scheduler.ts). */
   "schedule.skipped": { profileId: string; action: "start" | "stop"; reason: string };
+  /**
+   * A human player's new session, once Pyrodeck has looked up the slot
+   * ($players) and, when allowed, the address ($playerinfo). Not sent for
+   * bots or for level re-entries.
+   */
+  "player.identified": { profileId: string; name: string; slot?: number; ip?: string };
 }
 
 export type ServerEventName = keyof ServerEventMap;

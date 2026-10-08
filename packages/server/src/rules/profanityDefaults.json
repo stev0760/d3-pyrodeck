@@ -1,0 +1,17 @@
+{
+  "comment": "Default word list for the profanity monitor: plain profanity only. A trailing * matches any ending. Operators edit the list in the Rules tab; this file only seeds it.",
+  "words": [
+    "fuck*",
+    "motherfuck*",
+    "shit*",
+    "bullshit",
+    "asshole*",
+    "bitch*",
+    "bastard*",
+    "dickhead*",
+    "wanker*",
+    "cunt*",
+    "twat*",
+    "piss off"
+  ]
+}

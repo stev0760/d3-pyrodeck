@@ -27,9 +27,9 @@ export async function pyrodeckConfigRoutes(
   });
 
   app.put("/api/pyrodeck/config", async (request, reply) => {
-    // The mission host, the supervisor and the operations settings have their
-    // own routes (validation, applying the change to what runs, the SMTP
-    // password).
+    // The mission host, the supervisor, the operations settings, the player
+    // settings and the player rules have their own routes (validation,
+    // applying the change to what runs, the SMTP password).
     const {
       adminPasswordHash: _,
       missionHost: _host,
@@ -37,6 +37,8 @@ export async function pyrodeckConfigRoutes(
       mail: _mail,
       processPriority: _priority,
       updateCheck: _update,
+      players: _players,
+      playerRules: _rules,
       ...updates
     } = request.body as Partial<PyrodeckConfig>;
 
