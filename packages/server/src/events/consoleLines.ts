@@ -21,6 +21,10 @@
  *   leave  "*<name> has left the game"   MultiDoLeaveGame, Descent3/multi.cpp:3635
  *          "*<name> disconnected!"       MultiDisconnectPlayer, Descent3/multi_server.cpp:1108
  *                                        (time-outs, $kick, $ban)
+ *   kick   "*Kicking <name> from game"   $kick (DTXT_KICKMSG, netgames/dmfc/dmfcinputcommand.cpp:353)
+ *          "*Banning <name> from game"   $ban (DTXT_BANMSG, dmfcinputcommand.cpp:379)
+ *          A human's "disconnected!" follows; a bot is removed with no other line
+ *          (MultiDisconnectPlayer hands bots to BotRemove, multi_server.cpp:1088).
  *   bots   "Bot '<name>' added in slot <n> (ship=..., team=<t>)"  $addbot, dedicated_server.cpp:905
  *          "  Bot '<name>' spawned (ship=..., slot=<n>)"         roster load, bot.cpp:9983
  *          "Removing bot '<name>' from slot <n>"                 $removebot, dedicated_server.cpp:918
@@ -31,6 +35,13 @@
  *          as received (MultiDoMessageToServer, multi.cpp:4993), so the name is the
  *          sender's own claim. Team and private chat do not reach the console.
  *   level  "Opening level '<file>'..."  TXT_DS_OPENLEVEL, Descent3/LoadLevel.cpp:3688
+ *
+ * Some messages end without a newline, so the next one is glued to them:
+ * "Ending level." (multi.cpp:3548), "Opening level '<file>'..." and the
+ * level-load progress ("...level 2 99 Percent Complete"), which runs to
+ * thousands of characters on one line and is followed by the first player
+ * re-entering: "...100 Percent Complete*Bob has joined the Anarchy".
+ * parseConsoleLines splits a line at those points first.
  *
  * The dedicated server's own player is "-Server-" (TXT_DS_SERVERNAME,
  * dedicated_server.cpp:301); its `say` lines are not player chat.
@@ -44,6 +55,7 @@ export type ConsoleLine =
   | { kind: "bot-added"; name: string; slot: number }
   | { kind: "bot-removed"; name: string; slot: number }
   | { kind: "bots-cleared" }
+  | { kind: "removed"; name: string; how: "kicked" | "banned" }
   | { kind: "chat"; name: string; text: string }
   | { kind: "level"; level: string };
 
@@ -58,6 +70,7 @@ const JOIN_RE = new RegExp(`^\\*(.*) (?:has joined|Has Joined) ${JOIN_TAIL}$`);
 const LEFT_RE = /^\*(.*) has left the game!?$/;
 const DROPPED_RE = /^\*(.*) disconnected!$/;
 const CHAT_RE = /^\*(.*?) says: (.*)$/;
+const REMOVED_RE = /^\*(Kicking|Banning) (.*) from game$/;
 const BOT_ADDED_RE = /^Bot '(.+)' added in slot (\d+) \(/;
 const BOT_SPAWNED_RE = /^\s*Bot '(.+)' spawned \(.*slot=(\d+)\)$/;
 const BOT_REMOVED_RE = /^Removing bot '(.+)' from slot (\d+)$/;
@@ -88,6 +101,8 @@ export function parseConsoleLine(rawLine: string): ConsoleLine | null {
     if (left) return { kind: "leave", name: left[1], how: "left" };
     const dropped = DROPPED_RE.exec(line);
     if (dropped) return { kind: "leave", name: dropped[1], how: "dropped" };
+    const removed = REMOVED_RE.exec(line);
+    if (removed) return { kind: "removed", name: removed[2], how: removed[1] === "Kicking" ? "kicked" : "banned" };
     return null;
   }
 
@@ -100,7 +115,39 @@ export function parseConsoleLine(rawLine: string): ConsoleLine | null {
   return null;
 }
 
-/** Splits a console byte stream into lines, holding back a partial last line. */
+const GLUE_POINTS = /(Ending level\.|Opening level '[^']*'\.\.\.|\d+ Percent Complete)/;
+
+/** Split a console line where a message without a newline is followed by the next one. */
+export function splitGluedLine(line: string): string[] {
+  // A chat line ends with its own newline; its text may contain anything.
+  if (CHAT_RE.test(line.replace(/^\s+/, ""))) return [line];
+  const parts = line.split(GLUE_POINTS);
+  const out: string[] = [];
+  // split() with a capture group alternates text, separator, text, ...
+  for (let i = 0; i < parts.length; i += 2) {
+    const before = parts[i];
+    const sep = parts[i + 1];
+    if (sep === undefined) {
+      if (before) out.push(before);
+    } else {
+      out.push(before + sep);
+    }
+  }
+  return out;
+}
+
+/** Classify every message on one console line (see splitGluedLine). */
+export function parseConsoleLines(line: string): ConsoleLine[] {
+  return splitGluedLine(line).flatMap((part) => parseConsoleLine(part) ?? []);
+}
+
+/**
+ * Splits a console byte stream into lines, holding back a partial last line.
+ * A partial line past MAX_LINE is handed out as it is, so the level-load
+ * progress (no newline for many kilobytes) cannot hold back what follows.
+ */
+const MAX_LINE = 64 * 1024;
+
 export class LineSplitter {
   private carry = "";
 
@@ -111,8 +158,10 @@ export class LineSplitter {
     if (heldCr) text = text.slice(0, -1);
     const parts = text.split(/\r\n|\n|\r/);
     this.carry = (parts.pop() ?? "") + (heldCr ? "\r" : "");
-    // A single huge partial line (no newline for a long time) is not ours to keep.
-    if (this.carry.length > 4096) this.carry = "";
+    if (this.carry.length > MAX_LINE) {
+      parts.push(this.carry);
+      this.carry = "";
+    }
     return parts;
   }
 }

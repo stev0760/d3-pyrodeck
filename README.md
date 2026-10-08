@@ -272,6 +272,7 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 - Playlist rotation is **best-effort**: D3 has no native mission rotation, so every transition is a full server stop → config swap → relaunch. Players must manually reconnect after each rotation (D3 clients cannot be told to reconnect), and the restart can occasionally fail. Treat rotation as a convenience feature, not a guaranteed-uptime mechanism
 - Single server connection only (multi-server support planned)
 - Player history and rules see only what the server prints on its console: team and private chat are invisible, and a player who drops during a level change is recorded as gone two minutes into the next level
+- On the open-source engine and Matcen (0.9.16 tested), console text containing `%` is formatted twice by the server itself, and a `%s` in a bot name crashed it. A player whose name or chat contains `%` may crash such a server before the nickname rule can kick them; that is an engine fix, not something Pyrodeck can prevent
 - Bot team assignment in the add-bot form is not yet implemented (team assignment is available in the Bot Roster config editor for pre-launch setup)
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
 - Windows binaries are unsigned; SmartScreen will warn on first run — click **More info → Run anyway**

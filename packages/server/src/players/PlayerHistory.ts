@@ -148,6 +148,12 @@ export class PlayerHistory {
     for (const r of this.data.rows) {
       const key = r.name.toLowerCase();
       if (r.event === "join") {
+        const earlier = open.get(key);
+        if (earlier) {
+          // A second join with no leave between: Pyrodeck missed the leave (it was not watching).
+          earlier.leftAt = r.time;
+          earlier.reason = "no leave seen";
+        }
         const s: PlayerSession = { name: r.name, slot: r.slot, ip: r.ip, bot: r.bot, joinedAt: r.time, leftAt: null };
         open.set(key, s);
         all.push(s);

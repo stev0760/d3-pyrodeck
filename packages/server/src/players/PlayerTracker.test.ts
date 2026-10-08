@@ -183,6 +183,16 @@ describe("PlayerHistory", () => {
     expect(h.sessions({ q: "203.0.113" }).map((s) => s.name)).toEqual(["Bob"]);
   });
 
+  it("ends a session that never saw its leave when the same name joins again", async () => {
+    const h = await PlayerHistory.open("p1", null);
+    h.recordJoin({ name: "Bob", time: new Date("2026-10-07T18:00:00Z") });
+    h.recordJoin({ name: "Bob", time: new Date("2026-10-07T20:00:00Z") });
+    expect(h.sessions().map((s) => [s.joinedAt, s.leftAt, s.reason])).toEqual([
+      ["2026-10-07T20:00:00.000Z", null, undefined],
+      ["2026-10-07T18:00:00.000Z", "2026-10-07T20:00:00.000Z", "no leave seen"],
+    ]);
+  });
+
   it("searches by name or address, newest first", async () => {
     const h = await PlayerHistory.open("p1", null);
     h.recordJoin({ name: "Bob", ip: "203.0.113.9" });

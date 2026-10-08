@@ -21,7 +21,7 @@ export interface ServerEventMap {
   "level.started": { profileId: string; mission?: string; level?: string };
   /** `bot`: the callsign carries the engine's [BOT] tag. Repeats for every player at each level start. */
   "player.joined": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean };
-  /** `reason`: "left the game", "disconnected" (dropped, kicked or banned) or "bot removed". */
+  /** `reason`: "left the game", "disconnected" (dropped), "kicked", "banned" or "bot removed". */
   "player.left": { profileId: string; name: string; ip?: string; slot?: number; bot?: boolean; reason?: string };
   /** Pyrodeck kicked a player (a rule or an operator). */
   "player.kicked": { profileId: string; name: string; ip?: string; reason: string };

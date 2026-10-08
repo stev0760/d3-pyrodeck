@@ -8,10 +8,13 @@ import type { NicknameRules, ProfanityRules } from "./ruleSettings.js";
  * the console. The console reader drops NUL bytes and the engine's colour
  * codes (0x01 and the three bytes after it) before Pyrodeck sees a line, so a
  * name carrying those reads as its visible text. A `%` in a callsign reaches
- * printf-style calls in DMFC as part of the format (DisplayPlayerInfo,
- * dmfcbase.cpp:1654; `$banlist`, dmfcinputcommand.cpp:753). None of these
- * cases can be produced from the server console (a callsign is chosen by the
- * client), so they were not tried against a live server.
+ * printf-style calls as part of the format: in DMFC (DisplayPlayerInfo,
+ * dmfcbase.cpp:1654; `$banlist`, dmfcinputcommand.cpp:753) and in every
+ * console line, since PrintDedicatedMessage hands its formatted text to
+ * con_Printf as the format (dedicated_server.cpp:1388). On Matcen 0.9.16
+ * `$addbot Pct%sX` crashed the server at the bot's join line, so there a `%`
+ * name may crash the server before this rule acts. A client's callsign cannot
+ * be set from the server console, so the client cases were not tried.
  */
 
 export type NicknameVerdict =

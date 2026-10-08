@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { LineSplitter, isBotName, parseConsoleLine } from "./consoleLines.js";
+import { LineSplitter, isBotName, parseConsoleLine, parseConsoleLines, splitGluedLine } from "./consoleLines.js";
 import { ConsoleEventSource } from "./ConsoleEventSource.js";
 import { ServerEvents, type ServerEventMap } from "./ServerEvents.js";
 
@@ -34,6 +34,15 @@ describe("parseConsoleLine", () => {
   it("reads both leave lines", () => {
     expect(parseConsoleLine("*stvLinux has left the game")).toEqual({ kind: "leave", name: "stvLinux", how: "left" });
     expect(parseConsoleLine("*stvLinux disconnected!")).toEqual({ kind: "leave", name: "stvLinux", how: "dropped" });
+  });
+
+  it("reads DMFC's kick and ban lines", () => {
+    expect(parseConsoleLine("*Kicking Charlie[BOT] from game")).toEqual({
+      kind: "removed",
+      name: "Charlie[BOT]",
+      how: "kicked",
+    });
+    expect(parseConsoleLine("*Banning Bob from game")).toEqual({ kind: "removed", name: "Bob", how: "banned" });
   });
 
   it("reads the bot console replies with their slots", () => {
@@ -95,6 +104,28 @@ describe("parseConsoleLine", () => {
   });
 });
 
+describe("parseConsoleLines", () => {
+  // A level change as a Matcen 0.9.16 server sent it over the console (2026-10-07), progress shortened.
+  const glued =
+    "Opening level 'Plutonium.d3l'...Downloading mission data...Bedlam (4 Team) level 2 1 Percent Complete" +
+    "Downloading mission data...Bedlam (4 Team) level 2 99 Percent CompleteAnalyzing data...Bedlam (4 Team) " +
+    "level 2 100 Percent Complete*Bravo[BOT] has joined the Anarchy";
+
+  it("finds the level start and the join glued after the load progress", () => {
+    expect(parseConsoleLines(glued)).toEqual([
+      { kind: "level", level: "Plutonium" },
+      { kind: "join", name: "Bravo[BOT]" },
+    ]);
+  });
+
+  it("splits only at the messages that lack a newline", () => {
+    expect(splitGluedLine("Ending level.*Ending the level")).toEqual(["Ending level.", "*Ending the level"]);
+    expect(splitGluedLine("*Bob says: 100 Percent Complete, Ending level. ok")).toEqual([
+      "*Bob says: 100 Percent Complete, Ending level. ok",
+    ]);
+  });
+});
+
 describe("isBotName", () => {
   it("knows the engine's bot tag, old and new", () => {
     expect(isBotName("Viper[BOT]")).toBe(true);
@@ -109,6 +140,13 @@ describe("LineSplitter", () => {
     expect(s.push("*Bob has jo")).toEqual([]);
     expect(s.push("ined CTF\r\n*Eve says: hi\r")).toEqual(["*Bob has joined CTF"]);
     expect(s.push("\nnext")).toEqual(["*Eve says: hi"]);
+  });
+
+  it("hands out a huge partial line instead of holding it", () => {
+    const s = new LineSplitter();
+    const progress = "Opening level 'X.d3l'..." + "level 2 0 Percent Complete".repeat(3000);
+    expect(s.push(progress)).toEqual([progress]);
+    expect(s.push("*Bob has joined CTF\r\n")).toEqual(["*Bob has joined CTF"]);
   });
 });
 
@@ -162,6 +200,19 @@ describe("ConsoleEventSource", () => {
     src.feed("All bots removed\r\n");
     const left = events.filter(([n]) => n === "player.left").map(([, p]) => (p as { name: string }).name);
     expect(left).toEqual(["A[BOT]", "B[BOT]"]);
+  });
+
+  it("records a kicked bot as gone, and a kicked human as kicked when the drop line comes", () => {
+    vi.useFakeTimers();
+    const bus = new ServerEvents();
+    const events = collect(bus);
+    const src = new ConsoleEventSource("p1", bus);
+    src.feed("*Charlie[BOT] has joined the Anarchy\r\nBot 'Charlie[BOT]' added in slot 2 (ship=Pyro-GL)\r\n");
+    src.feed("*Kicking Charlie[BOT] from game\r\n*Banning Bob from game\r\n*Bob disconnected!\r\n");
+    expect(events.slice(1)).toEqual([
+      ["player.left", { profileId: "p1", name: "Charlie[BOT]", bot: true, slot: 2, reason: "kicked" }],
+      ["player.left", { profileId: "p1", name: "Bob", bot: false, reason: "banned" }],
+    ]);
   });
 
   it("emits human joins, leaves, chat (not the server's own) and level starts", () => {

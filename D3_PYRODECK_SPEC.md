@@ -859,8 +859,13 @@ default 20).
   time-outs, kicks and bans). Bots: `Bot '<name>' added in slot <n> (...)`
   (`dedicated_server.cpp:905`) after the join line, `  Bot '<name>' spawned (..., slot=<n>)`
   (`bot.cpp:9983`), `Removing bot '<name>' from slot <n>` (`dedicated_server.cpp:918`; a removed
-  bot prints no leave line), `All bots removed`. Chat: `*<name> says: <text>` (`TXT_HUDSAY`). Level:
-  `Opening level '<file>'...` (`LoadLevel.cpp:3688`). Emitted on the event bus as `player.joined`,
+  bot prints no leave line), `All bots removed`. `$kick`/`$ban` print `*Kicking <name> from game` /
+  `*Banning <name> from game` (`dmfcinputcommand.cpp:353`, `:379`); a human's `disconnected!`
+  follows, a bot gets no other line. Chat: `*<name> says: <text>` (`TXT_HUDSAY`). Level:
+  `Opening level '<file>'...` (`LoadLevel.cpp:3688`). `Ending level.`, `Opening level '...'...` and
+  the level-load progress have no newline, so the first player re-entering a level arrives glued to
+  kilobytes of `...level 2 99 Percent Complete` on one line; Pyrodeck splits lines at those points.
+  Emitted on the event bus as `player.joined`,
   `player.left`, `player.chat`, `level.started`; `player.identified` follows a human's new session
   once the slot and address are looked up.
 - **`$players`** lists `NN: <name>` for every player that passes `CheckPlayerNum` (connected and in
@@ -939,11 +944,18 @@ Both off by default; settings in `pyrodeck.json` → `playerRules`.
 - **Nickname rules** (`nickname: { enabled, rejectEmpty, rejectPercent, rejectControl, minLength }`),
   applied to each human's new session (`player.identified`): an empty or blank name or one with `%`
   is kicked as `INVALID NICKNAME`, one with control characters as `HACKED NICKNAME`, one shorter
-  than `minLength` (0 = off) as `INVALID NICKNAME`, the reason said first. `%` matters because DMFC
-  passes callsigns to printf-style calls as the format in places (`dmfcbase.cpp:1654`,
-  `dmfcinputcommand.cpp:753`). Not tested live: a callsign comes from the client, and none of these
-  names can be produced from the server console. The console reader drops NUL bytes and colour codes
-  (`0x01` + 3 bytes) before Pyrodeck sees a name.
+  than `minLength` (0 = off) as `INVALID NICKNAME`, the reason said first. `%` matters because
+  callsigns reach printf-style calls as the format: in DMFC (`dmfcbase.cpp:1654`,
+  `dmfcinputcommand.cpp:753`) and, worse, in the engine's own console output:
+  `PrintDedicatedMessage` formats its text and then passes the result to `con_Printf` as the format
+  (`dedicated_server.cpp:1388`, `lnxcon.cpp:144`), so every console line is formatted twice. Tested
+  2026-10-07 on Matcen 0.9.16: `$addbot Pct%sX` echoed as `Pct<newline>X` and the server died with
+  SIGSEGV at the bot's join line. A client callsign or a chat line with `%` takes the same path, so on
+  the open-source engine and Matcen such a player can crash the server before any rule acts; the
+  `%` rule helps only where the join line survives. A joining client's name cannot be produced from
+  the server console, so the client case was not tried. The console reader drops NUL bytes and
+  colour codes (`0x01` + 3 bytes) before Pyrodeck sees a name. Pyrodeck strips `%` from every chat
+  line it sends.
 - **Profanity monitor** (`profanity: { enabled, words, warnings, kicks, ban, cooldownSeconds }`),
   applied to `player.chat` (general chat only; team and private chat never reach the console).
   Words match as whole words or phrases without regard to case; a trailing `*` matches any ending.

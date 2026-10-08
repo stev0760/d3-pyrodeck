@@ -1,5 +1,5 @@
 import { serverEvents, type ServerEvents } from "./ServerEvents.js";
-import { LineSplitter, isBotName, parseConsoleLine, SERVER_CALLSIGN } from "./consoleLines.js";
+import { LineSplitter, isBotName, parseConsoleLines, SERVER_CALLSIGN, type ConsoleLine } from "./consoleLines.js";
 
 /**
  * How long a bot's join waits for the "added in slot"/"spawned" line that
@@ -19,6 +19,8 @@ export class ConsoleEventSource {
   private readonly pendingBotJoins = new Map<string, ReturnType<typeof setTimeout>>();
   /** Slots announced by a bot line before the bot's join line. */
   private readonly earlyBotSlots = new Map<string, number>();
+  /** Humans just kicked or banned, so their "disconnected!" can say so. */
+  private readonly removedHumans = new Map<string, "kicked" | "banned">();
 
   constructor(
     readonly profileId: string,
@@ -35,8 +37,10 @@ export class ConsoleEventSource {
   }
 
   private onLine(line: string): void {
-    const parsed = parseConsoleLine(line);
-    if (!parsed) return;
+    for (const parsed of parseConsoleLines(line)) this.onMessage(parsed);
+  }
+
+  private onMessage(parsed: ConsoleLine): void {
     const profileId = this.profileId;
 
     switch (parsed.kind) {
@@ -52,14 +56,32 @@ export class ConsoleEventSource {
         if (isBotName(parsed.name)) this.botJoined(parsed.name);
         else this.bus.emitEvent("player.joined", { profileId, name: parsed.name, bot: false });
         break;
-      case "leave":
+      case "leave": {
         this.bots.delete(parsed.name);
+        const removed = this.removedHumans.get(parsed.name);
+        this.removedHumans.delete(parsed.name);
         this.bus.emitEvent("player.left", {
           profileId,
           name: parsed.name,
           bot: isBotName(parsed.name),
-          reason: parsed.how === "left" ? "left the game" : "disconnected",
+          reason: parsed.how === "left" ? "left the game" : (removed ?? "disconnected"),
         });
+        break;
+      }
+      case "removed":
+        if (isBotName(parsed.name)) {
+          const slot = this.bots.get(parsed.name);
+          this.bots.delete(parsed.name);
+          this.bus.emitEvent("player.left", {
+            profileId,
+            name: parsed.name,
+            bot: true,
+            ...(slot !== undefined ? { slot } : {}),
+            reason: parsed.how,
+          });
+        } else {
+          this.removedHumans.set(parsed.name, parsed.how);
+        }
         break;
       case "bot-added": {
         const pending = this.pendingBotJoins.get(parsed.name);
