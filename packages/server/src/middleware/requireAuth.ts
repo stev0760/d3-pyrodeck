@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { pyrodeckConfig } from "../routes/pyrodeck-config.js";
+import { crossSiteRefusal, isLocalRequest, parseOriginList } from "./requestSource.js";
 
 // Routes that bypass auth even when a password is configured
 const SKIP_PREFIXES = ["/api/auth/", "/api/health", "/api/version"];
@@ -17,23 +18,33 @@ function pathMatches(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix + "/");
 }
 
-/** True for loopback peers. NOTE: behind the Vite dev proxy every request
- * arrives from 127.0.0.1, so in dev a remote browser reads as local — the
- * fail-closed guard below is only a real boundary in production (Fastify serves
- * the SPA same-origin, so request.ip is the actual peer). */
-function isLocalRequest(ip: string): boolean {
-  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
-}
-
 export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
   const path = request.url.split("?")[0];
 
-  // Never gate non-protected paths (SPA assets, etc.) or the always-open
-  // auth/health/version endpoints — this holds whether or not a password exists.
+  // Never gate non-protected paths (SPA assets, etc.), whether or not a
+  // password exists.
   if (!PROTECTED_PREFIXES.some((p) => pathMatches(path, p))) return;
+
+  // A browser request from another site is refused before anything else, the
+  // auth routes included. This is the WebSocket's only origin check (a
+  // handshake has no CORS), and the CSRF guard for the no-password local mode,
+  // where no cookie is needed; with a password the SameSite=Strict cookie
+  // already stays home.
+  const refusal = crossSiteRefusal(
+    request.headers.origin,
+    request.hostname,
+    parseOriginList(process.env.PYRODECK_CORS_ORIGIN),
+  );
+  if (refusal) {
+    request.log.warn(refusal);
+    reply.status(403).send({ error: refusal });
+    return;
+  }
+
+  // The auth, health and version endpoints are open to every same-site caller.
   if (SKIP_PREFIXES.some((p) => pathMatches(path, p))) return;
 
   const hasEnvPassword = !!process.env.PYRODECK_ADMIN_PASSWORD;
@@ -43,7 +54,8 @@ export async function requireAuth(
     // No password configured. Localhost stays open (the zero-config dev
     // workflow), but remote peers are refused rather than handed an open API —
     // so an instance exposed with `--host` and no password isn't wide open.
-    if (isLocalRequest(request.ip)) return;
+    // A request relayed by a reverse proxy is never local (requestSource.ts).
+    if (isLocalRequest(request)) return;
     reply.status(401).send({
       error:
         "This server has no admin password set. Remote access is blocked. " +

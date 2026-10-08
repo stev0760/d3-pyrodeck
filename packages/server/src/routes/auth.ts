@@ -1,6 +1,7 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
+import { isLocalRequest, rateLimitKey } from "../middleware/requestSource.js";
 
 interface RateBucket {
   count: number;
@@ -9,20 +10,25 @@ interface RateBucket {
 
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
+/**
+ * Login and setup attempts per client, keyed by rateLimitKey(request.ip):
+ * the browser's address when PYRODECK_TRUST_PROXY names the proxy in front,
+ * the proxy's own address (one bucket for everyone) when it does not.
+ */
 const rateLimitMap = new Map<string, RateBucket>();
 
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, bucket] of rateLimitMap) {
-    if (now >= bucket.resetAt) rateLimitMap.delete(ip);
+  for (const [key, bucket] of rateLimitMap) {
+    if (now >= bucket.resetAt) rateLimitMap.delete(key);
   }
-}, 5 * 60 * 1000);
+}, 5 * 60 * 1000).unref();
 
-function checkRateLimit(ip: string): boolean {
+function checkRateLimit(key: string): boolean {
   const now = Date.now();
-  const bucket = rateLimitMap.get(ip);
+  const bucket = rateLimitMap.get(key);
   if (!bucket || now >= bucket.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return true;
   }
   if (bucket.count >= RATE_LIMIT) return false;
@@ -30,8 +36,8 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-function clearRateLimit(ip: string): void {
-  rateLimitMap.delete(ip);
+function clearRateLimit(key: string): void {
+  rateLimitMap.delete(key);
 }
 
 function getPasswordSource(): "env" | "config" | null {
@@ -40,17 +46,25 @@ function getPasswordSource(): "env" | "config" | null {
   return null;
 }
 
-/** True for loopback peers (no proxy in front, so request.ip is the real peer). */
-function isLocalRequest(ip: string): boolean {
-  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+/**
+ * Session cookie attributes. `secure` when the browser reached Pyrodeck over
+ * HTTPS: request.protocol is "https" on a TLS socket, or from X-Forwarded-Proto
+ * when PYRODECK_TRUST_PROXY trusts the proxy that sent it. Plain-http
+ * localhost keeps a cookie the browser will send back.
+ */
+function sessionCookieOptions(request: FastifyRequest) {
+  return {
+    httpOnly: true,
+    sameSite: "strict" as const,
+    secure: request.protocol === "https",
+    path: "/",
+  };
 }
 
-function setSessionCookie(reply: import("fastify").FastifyReply): void {
+function setSessionCookie(request: FastifyRequest, reply: FastifyReply): void {
   reply.setCookie("pyrodeck_session", "1", {
+    ...sessionCookieOptions(request),
     signed: true,
-    httpOnly: true,
-    sameSite: "strict",
-    path: "/",
     maxAge: 86400,
   });
 }
@@ -62,8 +76,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: "Auth not configured" });
     }
 
-    const ip = request.ip;
-    if (!checkRateLimit(ip)) {
+    const key = rateLimitKey(request.ip);
+    if (!checkRateLimit(key)) {
       return reply.status(429).send({ error: "Too many attempts" });
     }
 
@@ -79,13 +93,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(401).send({ error: "Invalid password" });
     }
 
-    clearRateLimit(ip);
-    setSessionCookie(reply);
+    clearRateLimit(key);
+    setSessionCookie(request, reply);
     return { ok: true };
   });
 
-  app.post("/api/auth/logout", async (_request, reply) => {
-    reply.clearCookie("pyrodeck_session", { path: "/" });
+  app.post("/api/auth/logout", async (request, reply) => {
+    reply.clearCookie("pyrodeck_session", sessionCookieOptions(request));
     return { ok: true };
   });
 
@@ -113,9 +127,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     // Block drive-by remote setup: whoever reaches an unconfigured public
     // instance first could otherwise claim the admin password. Allow setup
-    // only from localhost, unless an operator explicitly opts in.
+    // only from localhost, unless an operator explicitly opts in. A request
+    // relayed by a reverse proxy is never local (requestSource.ts).
     const allowRemoteSetup = process.env.PYRODECK_ALLOW_REMOTE_SETUP === "1";
-    if (!allowRemoteSetup && !isLocalRequest(request.ip)) {
+    if (!allowRemoteSetup && !isLocalRequest(request)) {
       return reply.status(403).send({
         error:
           "Remote setup is disabled. Configure the password via PYRODECK_ADMIN_PASSWORD, " +
@@ -123,8 +138,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const ip = request.ip;
-    if (!checkRateLimit(ip)) {
+    const key = rateLimitKey(request.ip);
+    if (!checkRateLimit(key)) {
       return reply.status(429).send({ error: "Too many attempts" });
     }
 
@@ -140,8 +155,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const hashed = await hashPassword(password);
     await pyrodeckConfig.save({ adminPasswordHash: hashed });
 
-    clearRateLimit(ip);
-    setSessionCookie(reply);
+    clearRateLimit(key);
+    setSessionCookie(request, reply);
     return { ok: true };
   });
 }

@@ -27,6 +27,13 @@ import { playersRoutes } from "./routes/players.js";
 import { banRoutes } from "./routes/bans.js";
 import { playerRulesRoutes } from "./routes/playerRules.js";
 import { requireAuth } from "./middleware/requireAuth.js";
+import {
+  isLoopbackAddress,
+  isLoopbackName,
+  isProxiedRequest,
+  parseOriginList,
+  parseTrustProxy,
+} from "./middleware/requestSource.js";
 import { startConsoleEvents } from "./events/consoleEventHub.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
@@ -66,8 +73,7 @@ async function main() {
   const sessionSecret = await loadSessionSecret();
   const staticDir = await findStaticDir();
 
-  const isLocalhost =
-    HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost";
+  const isLocalhost = isLoopbackName(HOST);
 
   const { pyrodeckConfig } = await import("./routes/pyrodeck-config.js");
   await pyrodeckConfig.load();
@@ -75,6 +81,16 @@ async function main() {
   const hasPassword =
     !!process.env.PYRODECK_ADMIN_PASSWORD ||
     !!pyrodeckConfig.get().adminPasswordHash;
+
+  // trustProxy must be opt-in: when the server is directly exposed (no reverse
+  // proxy), trusting X-Forwarded-For lets a client spoof its IP and bypass the
+  // login rate limiter. Enable only when actually behind a trusted proxy, and
+  // then trust only that proxy's address (requestSource.ts): "1" means a proxy
+  // on this machine. Throws on a malformed value, so a typo stops the start.
+  const trustProxy = parseTrustProxy(process.env.PYRODECK_TRUST_PROXY);
+  const trustsLoopbackOnly =
+    !!trustProxy &&
+    trustProxy.every((e) => e.toLowerCase() === "loopback" || isLoopbackAddress(e.split("/")[0]));
 
   if (!hasPassword && !isLocalhost && !isSidecar) {
     console.warn(
@@ -86,24 +102,51 @@ async function main() {
         "unless PYRODECK_ALLOW_REMOTE_SETUP=1.",
     );
   }
-
-  // trustProxy must be opt-in: when the server is directly exposed (no reverse
-  // proxy), trusting X-Forwarded-For lets a client spoof its IP and bypass the
-  // login rate limiter. Enable only when actually behind a trusted proxy.
-  const trustProxy = process.env.PYRODECK_TRUST_PROXY === "1";
+  if (!hasPassword && trustProxy && !isSidecar) {
+    console.warn(
+      "[Pyrodeck] WARNING: No admin password configured. Requests through the reverse proxy are " +
+        "never local, so the panel refuses them until a password is set: set PYRODECK_ADMIN_PASSWORD, " +
+        "or set one from a browser on this machine (an SSH tunnel to " +
+        `127.0.0.1:${PORT}), not through the proxy.`,
+    );
+  }
+  if (trustsLoopbackOnly && !isLocalhost && !isSidecar) {
+    console.warn(
+      `[Pyrodeck] WARNING: PYRODECK_TRUST_PROXY trusts a reverse proxy on this machine, but Pyrodeck ` +
+        `listens on ${HOST}, so browsers can also reach it directly over plain http, around the proxy. ` +
+        "Set PYRODECK_HOST=127.0.0.1 (or keep the port closed in the firewall).",
+    );
+  }
 
   const app = Fastify({ logger: !isSidecar, trustProxy });
+
+  if (trustProxy) {
+    app.log.info(`Trusting X-Forwarded-For and X-Forwarded-Proto from: ${trustProxy.join(", ")}`);
+  } else if (!isSidecar) {
+    // Behind a proxy with trustProxy off, every client has the proxy's address:
+    // nothing relayed is local (good), but the login rate limit is one bucket
+    // for the whole internet and the session cookie is never Secure. Say so
+    // once, on the first relayed request.
+    let warned = false;
+    app.addHook("onRequest", async (request) => {
+      if (warned || !isProxiedRequest(request)) return;
+      warned = true;
+      request.log.warn(
+        `A request came through a reverse proxy (from ${request.ip}) but PYRODECK_TRUST_PROXY is not set: ` +
+          "every browser then shares the proxy's address, so the login rate limit is shared and the session " +
+          "cookie is not marked Secure. Set PYRODECK_TRUST_PROXY=1 for a proxy on this machine, or to the proxy's address.",
+      );
+    });
+  }
 
   await app.register(fastifyCookie, { secret: sessionSecret });
 
   // The SPA is served same-origin (Fastify static in prod, Vite proxy in dev),
   // so cross-origin access is disabled by default. Set PYRODECK_CORS_ORIGIN to
   // a comma-separated allowlist only if you front the API from another origin.
-  const corsOrigin = process.env.PYRODECK_CORS_ORIGIN;
+  const corsOrigins = parseOriginList(process.env.PYRODECK_CORS_ORIGIN);
   await app.register(fastifyCors, {
-    origin: corsOrigin
-      ? corsOrigin.split(",").map((o) => o.trim()).filter(Boolean)
-      : false,
+    origin: corsOrigins.length > 0 ? corsOrigins : false,
     credentials: true,
   });
   await app.register(fastifyHelmet, { contentSecurityPolicy: false });
