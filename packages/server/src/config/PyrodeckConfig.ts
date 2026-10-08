@@ -10,6 +10,7 @@ import {
   sanitizeStoredPlayerSettings,
   type PlayerSettings,
 } from "../players/playerSettings.js";
+import { DEFAULT_PLAYER_RULES, sanitizeStoredPlayerRules, type PlayerRules } from "../rules/ruleSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -32,6 +33,8 @@ export interface PyrodeckConfig {
   missionHost: MissionHostSettings;
   /** Player history, bans and join rules (players/playerSettings.ts). Set via /api/players/settings only. */
   players: PlayerSettings;
+  /** Nickname rules and the profanity monitor (rules/ruleSettings.ts). Set via /api/players/rules only. */
+  playerRules: PlayerRules;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -52,6 +55,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
   players: { ...DEFAULT_PLAYER_SETTINGS },
+  playerRules: DEFAULT_PLAYER_RULES,
 };
 
 /**
@@ -111,6 +115,9 @@ function migrateConfig(
   }
   if ("players" in raw) {
     migrated.players = sanitizeStoredPlayerSettings(raw.players);
+  }
+  if ("playerRules" in raw) {
+    migrated.playerRules = sanitizeStoredPlayerRules(raw.playerRules);
   }
 
   return migrated;

@@ -53,10 +53,11 @@ export function isBotName(name: string): boolean {
 }
 
 const JOIN_TAIL = "(?:CTF|the Anarchy|the Hyper Anarchy!|the Hoard|the game|[Tt]he .+ Team)";
-const JOIN_RE = new RegExp(`^\\*(.+) (?:has joined|Has Joined) ${JOIN_TAIL}$`);
-const LEFT_RE = /^\*(.+) has left the game!?$/;
-const DROPPED_RE = /^\*(.+) disconnected!$/;
-const CHAT_RE = /^\*(.+?) says: (.*)$/;
+// Names may be empty or blank (a modified client), hence (.*).
+const JOIN_RE = new RegExp(`^\\*(.*) (?:has joined|Has Joined) ${JOIN_TAIL}$`);
+const LEFT_RE = /^\*(.*) has left the game!?$/;
+const DROPPED_RE = /^\*(.*) disconnected!$/;
+const CHAT_RE = /^\*(.*?) says: (.*)$/;
 const BOT_ADDED_RE = /^Bot '(.+)' added in slot (\d+) \(/;
 const BOT_SPAWNED_RE = /^\s*Bot '(.+)' spawned \(.*slot=(\d+)\)$/;
 const BOT_REMOVED_RE = /^Removing bot '(.+)' from slot (\d+)$/;
@@ -70,7 +71,8 @@ const OPENING_RE = /Opening level '([^']+)'/;
 export function parseConsoleLine(rawLine: string): ConsoleLine | null {
   // "Ending level." is printed without a newline, so the next line can follow
   // it on the same line (see PlaylistManager).
-  let line = rawLine.trim().replace(/^(?:Ending level\.)+/, "");
+  // Trim only line ends and leading space: a blank callsign's join line is "*   has joined ...".
+  let line = rawLine.replace(/^\s+/, "").replace(/[\r\n]+$/, "").replace(/^(?:Ending level\.)+/, "");
   if (!line) return null;
 
   const opening = OPENING_RE.exec(line);

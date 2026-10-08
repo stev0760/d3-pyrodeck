@@ -25,6 +25,12 @@ describe("parseConsoleLine", () => {
     ]);
   });
 
+  it("reads empty and blank names (modified clients)", () => {
+    expect(parseConsoleLine("* has joined the Anarchy")).toEqual({ kind: "join", name: "" });
+    expect(parseConsoleLine("*   has joined CTF")).toEqual({ kind: "join", name: "  " });
+    expect(parseConsoleLine("* disconnected!")).toEqual({ kind: "leave", name: "", how: "dropped" });
+  });
+
   it("reads both leave lines", () => {
     expect(parseConsoleLine("*stvLinux has left the game")).toEqual({ kind: "leave", name: "stvLinux", how: "left" });
     expect(parseConsoleLine("*stvLinux disconnected!")).toEqual({ kind: "leave", name: "stvLinux", how: "dropped" });

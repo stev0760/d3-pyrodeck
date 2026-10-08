@@ -926,6 +926,34 @@ entries live in `<config dir>/bans.json`.
   `GetMessageDestination`, `hudmessage.cpp:737`), so public lines carry no colon and `say <slot>:
   <text>` reaches one player. The engine has no name ban: a name on the list is kicked on join.
 
+### 8.9 Join rules and the profanity monitor
+
+Both off by default; settings in `pyrodeck.json` → `playerRules`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/players/rules` | `{ rules, defaultWords, recent: [{ time, profileId, name, rule, action, detail, ok }], offenders }` (`offenders`: this run's profanity counts on the open server) |
+| `PUT` | `/api/players/rules` | Body `{ nickname?: {...}, profanity?: {...} }`, any subset; 400 with `errors` on a bad value |
+| `POST` | `/api/players/rules/forgive` | Body `{ name }`: clear a player's profanity count |
+
+- **Nickname rules** (`nickname: { enabled, rejectEmpty, rejectPercent, rejectControl, minLength }`),
+  applied to each human's new session (`player.identified`): an empty or blank name or one with `%`
+  is kicked as `INVALID NICKNAME`, one with control characters as `HACKED NICKNAME`, one shorter
+  than `minLength` (0 = off) as `INVALID NICKNAME`, the reason said first. `%` matters because DMFC
+  passes callsigns to printf-style calls as the format in places (`dmfcbase.cpp:1654`,
+  `dmfcinputcommand.cpp:753`). Not tested live: a callsign comes from the client, and none of these
+  names can be produced from the server console. The console reader drops NUL bytes and colour codes
+  (`0x01` + 3 bytes) before Pyrodeck sees a name.
+- **Profanity monitor** (`profanity: { enabled, words, warnings, kicks, ban, cooldownSeconds }`),
+  applied to `player.chat` (general chat only; team and private chat never reach the console).
+  Words match as whole words or phrases without regard to case; a trailing `*` matches any ending.
+  The default list ships as data (`rules/profanityDefaults.json`): plain profanity, no slurs. Per
+  player and server run: `warnings` private warnings (`say <slot>: ...`), then `kicks` kicks, then a
+  ban of the name and the address (§8.8), or more kicks when `ban` is off. Matches within
+  `cooldownSeconds` of the last action are not counted. A chat line's name is the sender's own
+  claim (the client writes `<name> says: <text>`, `hudmessage.cpp:828`), so a modified client can
+  put words in another player's mouth; the bans that follow go by that name's slot and address.
+
 ---
 
 ## 9. Project Structure
