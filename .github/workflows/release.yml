@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # Manual dry run: builds + uploads artifacts, skips the GitHub Release.
+  # Manual dry run: builds the packages and SHA256SUMS.txt and uploads them as
+  # the run's artifacts, but publishes no GitHub Release.
   workflow_dispatch:
 
 jobs:
@@ -21,14 +22,16 @@ jobs:
       - run: pnpm test
       - run: node scripts/package-server.mjs --linux
       - name: Package Linux release
+        # The tag (v0.5.3), or the branch of a dry run with any "/" made "-".
         run: |
+          label="${GITHUB_REF_NAME//\//-}"
           cd dist-server
-          tar -czf ../pyrodeck-${{ github.ref_name }}-linux-x64.tar.gz \
-            pyrodeck-server resources/
+          tar -czf "../pyrodeck-${label}-linux-x64.tar.gz" pyrodeck-server resources/
       - uses: actions/upload-artifact@v7
         with:
           name: linux-release
-          path: pyrodeck-${{ github.ref_name }}-linux-x64.tar.gz
+          path: pyrodeck-*-linux-x64.tar.gz
+          if-no-files-found: error
 
   # ── Windows binary (cross-compiled from Linux, unsigned) ──────────────
   # Code signing (SignPath/Azure) is deferred — see PLAN.md Phase 6.
@@ -45,23 +48,64 @@ jobs:
       - run: node scripts/package-server.mjs --windows
       - name: Package Windows release
         run: |
+          label="${GITHUB_REF_NAME//\//-}"
           cd dist-server
-          zip -r ../pyrodeck-${{ github.ref_name }}-windows-x64.zip \
-            pyrodeck-server.exe resources/
+          zip -r "../pyrodeck-${label}-windows-x64.zip" pyrodeck-server.exe resources/
       - uses: actions/upload-artifact@v7
         with:
           name: windows-release
-          path: pyrodeck-${{ github.ref_name }}-windows-x64.zip
+          path: pyrodeck-*-windows-x64.zip
+          if-no-files-found: error
+
+  # ── SHA256SUMS.txt over every release asset (tag builds and dry runs) ─
+  # The release publishes exactly this job's artifact: the packages and the
+  # checksum file listing each of them.
+  checksums:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: '*-release'
+          path: release
+          merge-multiple: true
+      - name: Write SHA256SUMS.txt
+        working-directory: release
+        run: |
+          shopt -s nullglob
+          assets=(*)
+          if [ "${#assets[@]}" -lt 2 ]; then
+            echo "::error::Expected the Linux and Windows packages, found: ${assets[*]:-nothing}"
+            exit 1
+          fi
+          # Written outside the directory first, so it does not list itself.
+          sha256sum -- "${assets[@]}" > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
+          sha256sum --check --strict SHA256SUMS.txt
+          {
+            echo '### SHA256SUMS.txt'
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: release/
+          if-no-files-found: error
 
   # ── Create GitHub Release ─────────────────────────────────────────────
   release:
-    needs: [build-linux, build-windows]
+    needs: [checksums]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release
       - uses: softprops/action-gh-release@v3
         with:
           draft: false
@@ -75,7 +119,17 @@ jobs:
             > The Windows binary is not code-signed yet, so SmartScreen will warn on first run.
             > Click **More info → Run anyway**.
 
+            ## Verify the download
+
+            `SHA256SUMS.txt` holds the SHA-256 of every file in this release, in `sha256sum` format.
+            Download it next to the package, then:
+
+            ```
+            sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux
+            shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS
+            ```
+
+            On Windows, `Get-FileHash <file>.zip` (PowerShell) prints the hash to compare with the file's line.
+
             See [README](https://github.com/${{ github.repository }}#readme) for configuration and auth setup.
-          files: |
-            linux-release/*.tar.gz
-            windows-release/*.zip
+          files: release/*
