@@ -6,6 +6,7 @@ import type { PostStartSettings } from "../launcher/postStartSettings.js";
 import type { LaunchOptions } from "../launcher/launchOptions.js";
 import type { TeamSettings } from "../launcher/teamSettings.js";
 import type { PeriodicCommandSettings } from "../launcher/periodicCommands.js";
+import type { RespawnScaling } from "../launcher/respawnScaling.js";
 
 /** Per-profile settings stored as one object each; null in an update clears it. */
 export interface ProfileSettingsUpdate {
@@ -13,9 +14,10 @@ export interface ProfileSettingsUpdate {
   launchOptions?: LaunchOptions | null;
   teamSettings?: TeamSettings | null;
   periodicCommands?: PeriodicCommandSettings | null;
+  respawnScaling?: RespawnScaling | null;
 }
 
-const SETTINGS_KEYS = ["postStart", "launchOptions", "teamSettings", "periodicCommands"] as const;
+const SETTINGS_KEYS = ["postStart", "launchOptions", "teamSettings", "periodicCommands", "respawnScaling"] as const;
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -57,6 +59,8 @@ export interface ServerProfile {
   teamSettings?: TeamSettings;
   /** Console lines sent at start and every N minutes while the server runs. */
   periodicCommands?: PeriodicCommandSettings;
+  /** Powerup respawn time scaled by the human player count. */
+  respawnScaling?: RespawnScaling;
   createdAt: string;
   lastLaunchedAt?: string;
 }

@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { LaunchOptions, PeriodicCommandSettings, TeamKey, TeamSettings } from "../hooks/useLauncher.ts";
+import type {
+  LaunchOptions,
+  PeriodicCommandSettings,
+  RespawnScaling,
+  TeamKey,
+  TeamSettings,
+} from "../hooks/useLauncher.ts";
 
 /**
  * Profile settings that shape a launch (Launch panel → Edit). The server
@@ -395,6 +401,80 @@ export function PeriodicFields({ values, onChange }: { values: PeriodicForm; onC
           </select>
         </label>
       </div>
+    </SettingsSection>
+  );
+}
+
+// ── Respawn scaling ──────────────────────────────────────────────────────────
+
+export interface RespawnForm {
+  enabled: boolean;
+  minSeconds: string;
+  maxSeconds: string;
+  playersForMin: string;
+}
+
+export function respawnToForm(r: RespawnScaling | undefined): RespawnForm {
+  return {
+    enabled: r?.enabled ?? false,
+    minSeconds: r ? String(r.minSeconds) : "",
+    maxSeconds: r ? String(r.maxSeconds) : "",
+    playersForMin: r ? String(r.playersForMin) : "",
+  };
+}
+
+/** The PATCH value: null for an untouched, disabled form. */
+export function respawnPayload(f: RespawnForm): Record<string, unknown> | null {
+  if (!f.enabled && !f.minSeconds.trim() && !f.maxSeconds.trim()) return null;
+  return {
+    enabled: f.enabled,
+    minSeconds: f.minSeconds.trim(),
+    maxSeconds: f.maxSeconds.trim(),
+    playersForMin: f.playersForMin.trim(),
+  };
+}
+
+/** $setrespawntime between a longest and a shortest time as human players come and go. */
+export function RespawnFields({ values, onChange }: { values: RespawnForm; onChange: (v: RespawnForm) => void }) {
+  const set = (patch: Partial<RespawnForm>) => onChange({ ...values, ...patch });
+  const summary = values.enabled
+    ? `${values.maxSeconds || "?"}s → ${values.minSeconds || "?"}s`
+    : "Off";
+  return (
+    <SettingsSection title="Respawn by Players" summary={summary}>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Powerup respawn time follows the number of human players (bots don't count): the longest with two players or
+        fewer, falling evenly to the shortest at "Shortest at". Pyrodeck sends <code>$setrespawntime</code> when the
+        console connects and 15 s after the player count settles, only when the value changes; it applies to the
+        next powerups picked up.
+      </p>
+      <label className="flex items-center gap-2 text-xs text-foreground/80">
+        <input type="checkbox" checked={values.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+        Scale respawn time by players
+      </label>
+      <div className="grid grid-cols-3 gap-1.5">
+        <TextField
+          label="Longest (s)"
+          value={values.maxSeconds}
+          onChange={(maxSeconds) => set({ maxSeconds })}
+          placeholder="60"
+        />
+        <TextField
+          label="Shortest (s)"
+          value={values.minSeconds}
+          onChange={(minSeconds) => set({ minSeconds })}
+          placeholder="20"
+        />
+        <TextField
+          label="Shortest at"
+          value={values.playersForMin}
+          onChange={(playersForMin) => set({ playersForMin })}
+          placeholder="8"
+        />
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Joins and leaves come from the server's player events; without them the time stays at the longest.
+      </p>
     </SettingsSection>
   );
 }

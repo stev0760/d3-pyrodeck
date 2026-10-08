@@ -833,6 +833,7 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 |-------|-------|--------|
 | `launchOptions` | `{ bindIp?, gamePort?, frameCap?, noMultiBmp?, gameSpyPort?, gameSpyFile? }` or `null` | Flags after `-dedicated <cfg>`: `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport`, `-gspyfile` |
 | `teamSettings` | `{ allowTeamChange?, autoBalance?, teamNames?: { red?, blue?, green?, yellow? }, hoardMinOrbs? }` or `null` | Lines in the Startup Commands block at launch: `$allowteamchange on\|off`, `$autobalance on\|off`, `$setteamname <0-3> <name>`, `$mincount <1-12>` |
+| `respawnScaling` | `{ enabled, minSeconds, maxSeconds, playersForMin }` or `null` | `$setrespawntime` from `maxSeconds` (two humans or fewer) down to `minSeconds` (at `playersForMin`, 3-32), linear between; 1-10000 s |
 | `periodicCommands` | `{ enabled, startLines: string[], lines: string[], intervalMinutes, mode: "all"\|"sequential"\|"random" }` or `null` | Console lines: `startLines` once per launch when the console session is ready, `lines` every `intervalMinutes` (1-1440) |
 
 Invalid values are refused with 400 and `details: string[]`; the stored profile is untouched. The response is the
@@ -869,6 +870,15 @@ for the same pid is ignored. Lines must start with `$` or `say `, be printable A
 5 lines; `startLines` and `all`-mode `lines` are capped at 5, the others at 20. Verified live: `[127.0.0.1] say PRO
 start line: welcome` / `*-Server- says: PRO start line: welcome`, then one minute apart `*-Server- says: PRO periodic
 tick A` and `... tick B`.
+
+Respawn scaling (`launcher/respawnScaling.ts`) rides the same run. It counts human players from `player.joined` and
+`player.left` for the launched profile (names ending in `[BOT]`, with or without a space, are bots), starting from zero
+at each `server.started`. At console ready it sends the value for the current count, then recomputes 15 s after the
+last join or leave and sends `$setrespawntime <n>` only when `n` differs from the last value sent. DMFC
+(`dmfcinputcommand.cpp:672-700`) clamps below 1, has no upper limit and syncs the netgame to clients; the engine times
+each powerup's return at pickup (`object.cpp:1917-1918`: `respawn_time` × the powerup's `respawn_scalar`), so a change
+applies from the next pickup. Pyrodeck does not itself emit `player.joined`/`player.left`; whichever module parses joins
+and leaves does.
 
 ---
 

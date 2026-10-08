@@ -26,6 +26,7 @@ import {
 } from "../launcher/launchOptions.js";
 import { validateTeamSettings } from "../launcher/teamSettings.js";
 import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
+import { validateRespawnScaling } from "../launcher/respawnScaling.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -235,8 +236,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       launchOptions?: unknown;
       teamSettings?: unknown;
       periodicCommands?: unknown;
+      respawnScaling?: unknown;
     };
-    const { postStart, launchOptions, teamSettings, periodicCommands, ...rest } = body;
+    const { postStart, launchOptions, teamSettings, periodicCommands, respawnScaling, ...rest } = body;
     const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
     // Whitelisted values only; null or nothing valid clears the settings.
     if (postStart !== undefined) updates.postStart = sanitizePostStart(postStart);
@@ -258,6 +260,11 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const check = validatePeriodicSettings(periodicCommands);
       errors.push(...check.errors);
       updates.periodicCommands = check.settings;
+    }
+    if (respawnScaling !== undefined) {
+      const check = validateRespawnScaling(respawnScaling);
+      errors.push(...check.errors);
+      updates.respawnScaling = check.settings;
     }
     if (errors.length > 0) {
       return reply.status(400).send({ error: errors.join(" "), details: errors });

@@ -307,7 +307,7 @@ Both local console and telnet use identical code paths — there is no privilege
 | `$setgoallimit [points]` | Change kill/point goal |
 | `$setmaxplayers [max]` | Change max players |
 | `$setpps [pps]` | Change packets per second |
-| `$setrespawntime [seconds]` | Change powerup respawn time |
+| `$setrespawntime [seconds]` | Change powerup respawn time (below 1 becomes 1, no upper limit, synced to clients; `dmfcinputcommand.cpp:672-700`). A powerup returns `respawn_time` × its type's `respawn_scalar` seconds after pickup, timed at the pickup (`object.cpp:1917`), so a change applies to later pickups. Default 60 |
 
 ### Server Control
 

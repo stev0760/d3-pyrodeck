@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ServerEvents } from "../events/ServerEvents.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { PeriodicCommandScheduler } from "./periodicCommands.js";
+import { RESPAWN_DEBOUNCE_MS, RespawnScaler } from "./respawnScaling.js";
 import { ProfileAutomation, type AutomationSettings } from "./profileAutomation.js";
 
 const MINUTE = 60_000;
@@ -32,6 +33,10 @@ const PROFILE: AutomationSettings = {
   },
 };
 
+const SCALED: AutomationSettings = {
+  respawnScaling: { enabled: true, minSeconds: 20, maxSeconds: 60, playersForMin: 4 },
+};
+
 describe("ProfileAutomation", () => {
   let bus: ServerEvents;
   let sent: string[];
@@ -44,8 +49,9 @@ describe("ProfileAutomation", () => {
     bus = new ServerEvents();
     sent = [];
     auto = new ProfileAutomation({
-      loadProfile: async (id) => (id === "p1" ? PROFILE : null),
+      loadProfile: async (id) => (id === "p1" ? PROFILE : id === "p3" ? SCALED : null),
       periodic: new PeriodicCommandScheduler({ log: () => {} }),
+      respawn: new RespawnScaler({ log: () => {} }),
     });
     auto.listen(bus);
   });
@@ -107,5 +113,31 @@ describe("ProfileAutomation", () => {
     await auto.consoleReady("p2", fakeConnection(sent));
     await vi.advanceTimersByTimeAsync(5 * MINUTE);
     expect(sent).toEqual([]);
+  });
+
+  it("scales the respawn time from the launched profile's player events, bots excluded", async () => {
+    const join = (name: string, profileId = "p3") => bus.emitEvent("player.joined", { profileId, name });
+    started(200, "p3");
+    await auto.consoleReady("p3", fakeConnection(sent));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(["$setrespawntime 60"]);
+
+    join("alpha");
+    join("bravo");
+    join("Viper[BOT]");
+    join("charlie");
+    join("delta", "other-profile");
+    await vi.advanceTimersByTimeAsync(RESPAWN_DEBOUNCE_MS);
+    expect(sent).toEqual(["$setrespawntime 60", "$setrespawntime 40"]);
+
+    bus.emitEvent("player.left", { profileId: "p3", name: "charlie" });
+    await vi.advanceTimersByTimeAsync(RESPAWN_DEBOUNCE_MS);
+    expect(sent.at(-1)).toBe("$setrespawntime 60");
+
+    // A relaunch starts the count over.
+    started(201, "p3");
+    await auto.consoleReady("p3", fakeConnection(sent));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(auto.respawn.humanCount()).toBe(0);
   });
 });

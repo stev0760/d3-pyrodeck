@@ -67,6 +67,14 @@ export interface PeriodicCommandSettings {
   mode: "all" | "sequential" | "random";
 }
 
+/** Powerup respawn time scaled by human players (server: launcher/respawnScaling.ts). */
+export interface RespawnScaling {
+  enabled: boolean;
+  minSeconds: number;
+  maxSeconds: number;
+  playersForMin: number;
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -81,6 +89,7 @@ export interface ServerProfile {
   launchOptions?: LaunchOptions;
   teamSettings?: TeamSettings;
   periodicCommands?: PeriodicCommandSettings;
+  respawnScaling?: RespawnScaling;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -91,6 +100,7 @@ export interface ProfileSettingsPayload {
   launchOptions?: Record<string, string | number | boolean> | null;
   teamSettings?: Record<string, unknown> | null;
   periodicCommands?: Record<string, unknown> | null;
+  respawnScaling?: Record<string, unknown> | null;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */

@@ -35,7 +35,7 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
 
-/** Periodic commands for the launched profile (server.started → console ready → exit). */
+/** Periodic commands and respawn scaling for the launched profile (server.started → console ready → exit). */
 export const profileAutomation = new ProfileAutomation({
   loadProfile: (id) => new ServerProfileManager(CONFIG_DIR, "").read(id).catch(() => null),
 });

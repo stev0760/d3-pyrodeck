@@ -7,15 +7,19 @@ import { Separator } from "@/components/ui/separator";
 import {
   LaunchOptionsFields,
   PeriodicFields,
+  RespawnFields,
   TeamSettingsFields,
   launchOptionsPayload,
   launchOptionsToForm,
   periodicPayload,
   periodicToForm,
+  respawnPayload,
+  respawnToForm,
   teamSettingsPayload,
   teamSettingsToForm,
   type LaunchOptionsForm,
   type PeriodicForm,
+  type RespawnForm,
   type TeamSettingsForm,
 } from "./ProfileLaunchSettings";
 
@@ -43,6 +47,7 @@ interface PathFormState {
   launchOptions: LaunchOptionsForm;
   teamSettings: TeamSettingsForm;
   periodic: PeriodicForm;
+  respawn: RespawnForm;
 }
 
 const EMPTY_FORM: PathFormState = {
@@ -53,6 +58,7 @@ const EMPTY_FORM: PathFormState = {
   launchOptions: launchOptionsToForm(undefined),
   teamSettings: teamSettingsToForm(undefined),
   periodic: periodicToForm(undefined),
+  respawn: respawnToForm(undefined),
 };
 
 type OnOff = "default" | "on" | "off";
@@ -269,6 +275,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       launchOptions: launchOptionsToForm(selectedProfile.launchOptions),
       teamSettings: teamSettingsToForm(selectedProfile.teamSettings),
       periodic: periodicToForm(selectedProfile.periodicCommands),
+      respawn: respawnToForm(selectedProfile.respawnScaling),
     });
     setValidationErrors([]);
     setSaveWarnings([]);
@@ -338,6 +345,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       launchOptions: launchOptionsPayload(form.launchOptions),
       teamSettings: teamSettingsPayload(form.teamSettings),
       periodicCommands: periodicPayload(form.periodic),
+      respawnScaling: respawnPayload(form.respawn),
     });
     setSaving(false);
     if (updated) {
@@ -419,6 +427,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <PeriodicFields
             values={form.periodic}
             onChange={(periodic) => setForm((prev) => ({ ...prev, periodic }))}
+          />
+        )}
+
+        {!isCreate && (
+          <RespawnFields
+            values={form.respawn}
+            onChange={(respawn) => setForm((prev) => ({ ...prev, respawn }))}
           />
         )}
 
