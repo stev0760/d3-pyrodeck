@@ -33,7 +33,7 @@ export interface PublicBaseUrlCheck {
 }
 
 /** Hosts players outside the local network cannot reach. */
-function isLocalHost(hostname: string): boolean {
+export function isLocalHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".lan")) return true;
   if (h.includes(":")) return h === "::1" || /^f[cd]/.test(h) || h.startsWith("fe80:");

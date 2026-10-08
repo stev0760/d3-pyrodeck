@@ -6,6 +6,7 @@ import {
   type PyrodeckConfig,
 } from "../config/PyrodeckConfig.js";
 import { validateLogDir } from "../launcher/logPaths.js";
+import { checkJoinHost } from "../launcher/joinAddress.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 export const pyrodeckConfig = new PyrodeckConfigManager(CONFIG_DIR);
@@ -64,6 +65,17 @@ export async function pyrodeckConfigRoutes(
       updates.logDir = updates.logDir.trim();
     } else if (updates.logDir !== undefined) {
       updates.logDir = null;
+    }
+
+    // Join Host: a host name or IPv4 address; blank/null clears it
+    if (typeof updates.joinHost === "string" && updates.joinHost.trim()) {
+      const check = checkJoinHost(updates.joinHost);
+      if ("error" in check) {
+        return reply.status(400).send({ error: check.error, details: [check.error] });
+      }
+      updates.joinHost = check.host;
+    } else if (updates.joinHost !== undefined) {
+      updates.joinHost = null;
     }
 
     const saved = await pyrodeckConfig.save(updates);

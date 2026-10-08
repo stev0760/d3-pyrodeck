@@ -27,6 +27,7 @@ import {
 import { validateTeamSettings } from "../launcher/teamSettings.js";
 import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
 import { validateRespawnScaling } from "../launcher/respawnScaling.js";
+import { resolveJoinAddress } from "../launcher/joinAddress.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -278,6 +279,26 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
     if (launchOptions !== undefined) warnings.push(...(await portConflictWarnings(profile)));
     return { ...profile, warnings };
+  });
+
+  /**
+   * The address players join this profile's server at: host (Join Host
+   * setting, -useip, or the mission host's public URL) and game port.
+   */
+  app.get("/api/profiles/:id/join-address", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    let profile: ServerProfile;
+    try {
+      profile = await getMetadataManager().read(id);
+    } catch {
+      return reply.status(404).send({ error: "Profile not found" });
+    }
+    const config = pyrodeckConfig.get();
+    return resolveJoinAddress(
+      sanitizeStoredLaunchOptions(profile.launchOptions),
+      config.joinHost,
+      config.missionHost.publicBaseUrl,
+    );
   });
 
   /** Delete a profile (metadata only — config files in gamePath are preserved). */

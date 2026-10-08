@@ -5,6 +5,7 @@ import {
   sanitizeStoredMissionHost,
   type MissionHostSettings,
 } from "../gamefiles/missionHostSettings.js";
+import { checkJoinHost } from "../launcher/joinAddress.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -25,6 +26,8 @@ export interface PyrodeckConfig {
   adminPasswordHash: string | null;
   /** Mission download listener (gamefiles/MissionHost.ts). Set via /api/mission-host only. */
   missionHost: MissionHostSettings;
+  /** Host name or IPv4 address players join at, shown with the game port in the Launch panel. Null = unknown. */
+  joinHost: string | null;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -44,6 +47,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   preferredMode: "connect",
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
+  joinHost: null,
 };
 
 /**
@@ -100,6 +104,10 @@ function migrateConfig(
   }
   if ("missionHost" in raw) {
     migrated.missionHost = sanitizeStoredMissionHost(raw.missionHost);
+  }
+  if (typeof raw.joinHost === "string") {
+    const check = checkJoinHost(raw.joinHost);
+    migrated.joinHost = "host" in check ? check.host : null;
   }
 
   return migrated;

@@ -8,6 +8,8 @@ export interface PyrodeckConfig {
   logDir: string | null;
   defaultTelnetPort: number;
   preferredMode: "connect" | "launch";
+  /** Host players join at (Launch panel join address); null = unknown. */
+  joinHost?: string | null;
   needsSetup: boolean;
 }
 

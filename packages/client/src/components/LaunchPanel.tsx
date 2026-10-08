@@ -3,6 +3,7 @@ import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/use
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
+import { JoinAddressRow } from "./JoinAddressRow";
 import { Separator } from "@/components/ui/separator";
 import {
   LaunchOptionsFields,
@@ -549,6 +550,8 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               )}
             </div>
           )}
+
+          {selectedProfile && <JoinAddressRow profileId={selectedProfile.id} refreshKey={selectedProfile} />}
 
           {saveWarnings.length > 0 && (
             <div className="space-y-0.5">

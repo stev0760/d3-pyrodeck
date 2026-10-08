@@ -815,6 +815,13 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 | `POST` | `/api/launcher/stop` | Stop local server (graceful) |
 | `GET` | `/api/launcher/status` | Process state (running / stopped / crashed) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
+| `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.4.21) |
+
+**Join address (v0.4.21).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
+(`Descent3/descent.h`). `host` is the first of: the global `joinHost` setting (`PUT /api/pyrodeck/config`
+`{ joinHost }`, a host name or IPv4 address without scheme, port or path; empty clears it), the profile's `bindIp` when
+it is public, the host of `missionHost.publicBaseUrl`, the `bindIp` when it is a LAN address. `lanOnly` marks a loopback
+or private host. The Launch panel shows `address` with a Copy button and edits `joinHost` in place.
 
 **Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
 auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the
