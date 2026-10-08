@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import Fastify, { type FastifyInstance } from "fastify";
-import { DEFAULT_LOG_RETENTION, type LogRetentionSettings } from "../launcher/logRetention.js";
+import { DEFAULT_LOG_RETENTION, RECOMMENDED_LOG_RETENTION, type LogRetentionSettings } from "../launcher/logRetention.js";
 import { logsRoutes } from "./logs.js";
 
 /**
@@ -117,15 +117,36 @@ describe("compressed logs in the Logs tab", () => {
 });
 
 describe("retention settings", () => {
-  it("shows the settings in force, the stored ones and the environment's", async () => {
+  it("is off until the operator sets it, and shows the stored and environment values", async () => {
     app = await buildApp();
     const res = await app.inject({ url: "/api/logs/retention" });
     expect(res.json()).toMatchObject({
-      settings: { days: 30, maxMb: 2048, compress: true },
-      stored: { days: 30, maxMb: 2048, compress: true },
-      env: { days: null, maxMb: null },
+      settings: { days: 0, maxMb: 0, compress: false },
+      stored: { days: 0, maxMb: 0, compress: false },
+      env: { days: null, maxMb: null, compress: null },
       dirs: [path.resolve(dir)],
     });
+  });
+
+  it("reports the over-1 GB warning to the Logs tab while retention is off, and clears it once set", async () => {
+    const huge = await fs.open(path.join(dir, "testing-2026-08-01T10-00-00.log"), "w");
+    await huge.truncate(1100 * 1024 * 1024); // sparse: no disk space
+    await huge.close();
+    const old = new Date(Date.now() - 60 * 86_400_000);
+    await fs.utimes(path.join(dir, "testing-2026-08-01T10-00-00.log"), old, old);
+    app = await buildApp();
+    await app.inject({ method: "PUT", url: "/api/logs/retention", payload: { ...DEFAULT_LOG_RETENTION } });
+    await vi.waitFor(async () => {
+      expect((await app.inject({ url: "/api/logs/retention" })).json().lastRun?.warning).toMatch(/Log retention is off/);
+    });
+    expect((await fs.readdir(dir)).sort()).toEqual(["notes.txt", PLAIN, PACKED, "testing-2026-08-01T10-00-00.log"].sort());
+
+    await app.inject({ method: "PUT", url: "/api/logs/retention", payload: { ...RECOMMENDED_LOG_RETENTION } });
+    await vi.waitFor(async () => {
+      const lastRun = (await app.inject({ url: "/api/logs/retention" })).json().lastRun;
+      expect(lastRun).toMatchObject({ warning: null, deleted: 1 });
+    });
+    expect((await fs.readdir(dir)).sort()).toEqual(["notes.txt", PLAIN, PACKED].sort());
   });
 
   it("saves the Logs tab's settings and runs retention with them", async () => {
@@ -148,15 +169,16 @@ describe("retention settings", () => {
     expect(mocks.config.logRetention).toEqual(DEFAULT_LOG_RETENTION);
   });
 
-  it("lets PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB win over what is saved", async () => {
+  it("lets the three environment variables win over what is saved", async () => {
     vi.stubEnv("PYRODECK_LOG_RETENTION_DAYS", "90");
     vi.stubEnv("PYRODECK_LOG_MAX_MB", "0");
+    vi.stubEnv("PYRODECK_LOG_COMPRESS", "1");
     app = await buildApp();
-    const res = await app.inject({ method: "PUT", url: "/api/logs/retention", payload: { days: 7, maxMb: 100, compress: true } });
+    const res = await app.inject({ method: "PUT", url: "/api/logs/retention", payload: { days: 7, maxMb: 100, compress: false } });
     expect(res.json()).toMatchObject({
       settings: { days: 90, maxMb: 0, compress: true },
-      stored: { days: 7, maxMb: 100, compress: true },
-      env: { days: 90, maxMb: 0 },
+      stored: { days: 7, maxMb: 100, compress: false },
+      env: { days: 90, maxMb: 0, compress: true },
     });
   });
 

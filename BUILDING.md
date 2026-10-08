@@ -347,8 +347,9 @@ The admin password can also be set via the web UI on first run (stored as a scry
 | `PYRODECK_SESSION_SECRET` | *(auto-generated)* | Cookie signing secret. Auto-generated and saved to `config/session-secret` on first run. Changing it invalidates every cookie. Sessions themselves are kept in memory, so a restart logs everyone out whatever this is. |
 | `PYRODECK_SESSION_TTL_HOURS` | `12` | A login session ends this long after login, however busy. The cookie lasts as long. Decimals allowed. |
 | `PYRODECK_SESSION_IDLE_MINUTES` | `120` | A login session ends after this long without a request. An open panel polls, so it stays in use. |
-| `PYRODECK_LOG_RETENTION_DAYS` | `30` | Delete Pyrodeck's game-server logs last written more than this many days ago; `0` keeps them. Wins over the Logs tab. |
-| `PYRODECK_LOG_MAX_MB` | `2048` | Then delete the oldest until Pyrodeck's logs take at most this many MB; `0` is no cap. Wins over the Logs tab. Closed logs are gzipped first unless compression is unticked in the Logs tab. |
+| `PYRODECK_LOG_RETENTION_DAYS` | `0` | Delete Pyrodeck's game-server logs last written more than this many days ago; `0` keeps them. `30` suits a public server. Wins over the Logs tab. |
+| `PYRODECK_LOG_MAX_MB` | `0` | Then delete the oldest until Pyrodeck's logs take at most this many MB; `0` is no cap. `2048` suits a public server. Wins over the Logs tab. |
+| `PYRODECK_LOG_COMPRESS` | *(unset: Logs tab, off)* | `1` gzips closed logs to `.log.gz` before the size cap is applied; `0` leaves them as written. Wins over the Logs tab. |
 | `PYRODECK_STATIC_DIR` | *(auto-detected)* | Path to the `resources/` SPA directory. Auto-detected from the executable's location in binary mode. Set manually if needed. |
 | `PYRODECK_SIDECAR` | *(unset)* | Set to `1` by the Tauri wrapper. Binds loopback-only on an ephemeral port and writes `sidecar-port:{n}` to stdout. |
 

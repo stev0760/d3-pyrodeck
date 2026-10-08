@@ -836,7 +836,8 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
 
-**Log retention (v0.5.2, `launcher/logRetention.ts`).** At startup (after 5 s), every hour and after
+**Log retention (v0.5.2, `launcher/logRetention.ts`), opt-in.** Off by default (days 0, maxMb 0,
+compress false): an upgrade deletes and compresses nothing. At startup (after 5 s), every hour and after
 `PUT /api/logs/retention`, in the Log Directory and the folder of the last launch's log: (1) delete
 Pyrodeck's logs last written more than `days` ago, (2) gzip each closed `.log` to `.log.gz` (written
 as `.log.gz.partial`, synced, given the original's times, renamed; the original is kept if it changed
@@ -844,11 +845,14 @@ meanwhile), (3) delete the oldest until the total is at most `maxMb`. Only names
 buildLogFilename's output (`^[a-z0-9_-]{1,48}-YYYY-MM-DDTHH-MM-SS\.log(\.gz)?$`, a real UTC time) and
 regular files (lstat; never symlinks) are touched. The running server's log and files written in the
 last 10 minutes are never compressed or deleted. Each deletion and compression is logged at info.
-Settings `{ days, maxMb, compress }` (default 30, 2048, true; 0 turns a limit off) live in
-`pyrodeck.json` `logRetention`; `PYRODECK_LOG_RETENTION_DAYS` and `PYRODECK_LOG_MAX_MB` win over
-`days` and `maxMb`, and a malformed value stops startup. `GET /api/logs/retention` returns
-`{ settings (in force), stored, env: { days, maxMb } (null when unset), dirs, lastRun }`; `lastRun`
-is `{ at, compressed, deleted, freedBytes, files, totalBytes, errors }`. `GET /api/logs` items carry
+With days and maxMb both 0, a run only measures: when Pyrodeck's logs there take more than 1 GiB it
+warns (log and `lastRun.warning`) with the total, the directories and the variables to set.
+Settings `{ days, maxMb, compress }` (default 0, 0, false; recommended 30, 2048, true; 0 turns a limit
+off) live in `pyrodeck.json` `logRetention`; `PYRODECK_LOG_RETENTION_DAYS`, `PYRODECK_LOG_MAX_MB` and
+`PYRODECK_LOG_COMPRESS` (1/0) win over them, and a malformed value stops startup.
+`GET /api/logs/retention` returns `{ settings (in force), stored, env: { days, maxMb, compress } (null
+when unset), dirs, lastRun }`; `lastRun` is `{ at, compressed, deleted, freedBytes, files, totalBytes,
+errors, warning }`. `GET /api/logs` items carry
 `compressed`; `GET /api/logs/:name` decompresses a `.log.gz` (with `?tail=1`, the last 256 KB and
 `X-Log-Truncated`/`X-Log-Total-Size` of the decompressed text) and `?download=1` sends the `.gz` as is.
 

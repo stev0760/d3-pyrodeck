@@ -14,13 +14,14 @@ The second hardening release for running Pyrodeck on the public internet: real l
 - A malformed `PYRODECK_PORT`, `PYRODECK_SESSION_*` or `PYRODECK_LOG_*` value stops Pyrodeck at startup with an error naming the variable.
 
 ### Added
-- **Log retention**, on by default, for the game-server logs Pyrodeck writes, one per launch (a server writes 12-28 MB an hour, and nothing pruned them). Closed logs are gzipped in place (`.log.gz`, keeping their modification time); logs last written more than `PYRODECK_LOG_RETENTION_DAYS` ago (default 30) are deleted, then the oldest until the total fits in `PYRODECK_LOG_MAX_MB` (default 2048). It runs at startup, every hour and when its settings are saved, and logs each compression and deletion at info level. It touches only files named the way Pyrodeck names its logs (`<profile>-YYYY-MM-DDTHH-MM-SS.log`), never anything else in the Log Directory, which may be the game's own folder; symlinks and directories are skipped. The running server's log, and any log written in the last ten minutes, is never compressed or deleted. **To keep every log, set both variables to 0 (or 0 in the Logs tab) and untick compression.**
+- **Log retention, opt-in**, for the game-server logs Pyrodeck writes, one per launch (a server writes 12-28 MB an hour, and nothing pruned them). **It is off by default: an upgrade deletes and compresses nothing.** Once set, closed logs are gzipped in place (renamed to `.log.gz`, keeping their modification time), logs last written more than `PYRODECK_LOG_RETENTION_DAYS` ago are deleted, then the oldest until the total fits in `PYRODECK_LOG_MAX_MB`; `PYRODECK_LOG_COMPRESS=1` turns compression on. For a public server, 30 days, 2048 MB and compression on are recommended (the service unit in `docs/running-as-a-service.md` sets them). Retention runs at startup, every hour and when its settings are saved, and logs each compression and deletion at info level. It touches only files named the way Pyrodeck names its logs (`<profile>-YYYY-MM-DDTHH-MM-SS.log`), never anything else in the Log Directory, which may be the game's own folder; symlinks and directories are skipped. The running server's log, and any log written in the last ten minutes, is never compressed or deleted.
+- While retention is off, Pyrodeck's log warns at startup and on each hourly check once its logs take more than 1 GB, with the total, the directory and the variables to set; the Logs tab shows the same notice.
 - Logs tab → **Retention**: days, size cap and compression, saved in `config/pyrodeck.json`. A value set in the environment wins and shows as locked. `GET` and `PUT /api/logs/retention`.
 
 ### Changed
 - The Logs tab lists compressed logs too. View decompresses them (the last 256 KB, as for any large log); Download saves the `.log.gz` itself.
 - The Vite dev proxy targets `127.0.0.1:3001` instead of `localhost:3001`.
-- `docs/behind-a-reverse-proxy.md` and `docs/running-as-a-service.md` rely on the new default address; the service unit lists the session and log retention variables.
+- `docs/behind-a-reverse-proxy.md` and `docs/running-as-a-service.md` rely on the new default address and set the session and recommended log retention variables explicitly.
 
 ## [0.5.1] - 2026-10-08
 

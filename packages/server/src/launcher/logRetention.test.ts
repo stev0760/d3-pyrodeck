@@ -3,9 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
 import { buildLogFilename } from "./logPaths.js";
 import {
   DEFAULT_LOG_RETENTION,
+  RECOMMENDED_LOG_RETENTION,
+  UNBOUNDED_WARN_BYTES,
   LogRetentionService,
   effectiveLogRetention,
   gzipLog,
@@ -52,8 +55,10 @@ describe("pyrodeckLogKind", () => {
 });
 
 describe("settings", () => {
-  it("defaults to 30 days, 2048 MB and compression", () => {
-    expect(DEFAULT_LOG_RETENTION).toEqual({ days: 30, maxMb: 2048, compress: true });
+  it("is off by default; 30 days, 2048 MB and compression are the recommended values", () => {
+    expect(DEFAULT_LOG_RETENTION).toEqual({ days: 0, maxMb: 0, compress: false });
+    expect(RECOMMENDED_LOG_RETENTION).toEqual({ days: 30, maxMb: 2048, compress: true });
+    expect(UNBOUNDED_WARN_BYTES).toBe(1024 ** 3);
     expect(sanitizeStoredLogRetention(undefined)).toEqual(DEFAULT_LOG_RETENTION);
     expect(sanitizeStoredLogRetention({ days: -3, maxMb: "x", compress: "yes" })).toEqual(DEFAULT_LOG_RETENTION);
     expect(sanitizeStoredLogRetention({ days: 0, maxMb: 0, compress: false })).toEqual({ days: 0, maxMb: 0, compress: false });
@@ -66,9 +71,15 @@ describe("settings", () => {
     expect(validateLogRetention({ days: 7, maxMb: 500 })).toHaveProperty("error");
   });
 
-  it("reads PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB, unset meaning the Logs tab decides", () => {
-    expect(parseLogRetentionEnv({})).toEqual({ days: null, maxMb: null });
-    expect(parseLogRetentionEnv({ PYRODECK_LOG_RETENTION_DAYS: " 14 ", PYRODECK_LOG_MAX_MB: "0" })).toEqual({ days: 14, maxMb: 0 });
+  it("reads the three variables, unset meaning the Logs tab decides", () => {
+    expect(parseLogRetentionEnv({})).toEqual({ days: null, maxMb: null, compress: null });
+    expect(parseLogRetentionEnv({ PYRODECK_LOG_RETENTION_DAYS: " 14 ", PYRODECK_LOG_MAX_MB: "0" })).toEqual({
+      days: 14,
+      maxMb: 0,
+      compress: null,
+    });
+    for (const on of ["1", "true", "YES", "on"]) expect(parseLogRetentionEnv({ PYRODECK_LOG_COMPRESS: on }).compress).toBe(true);
+    for (const off of ["0", "false", "no", "Off"]) expect(parseLogRetentionEnv({ PYRODECK_LOG_COMPRESS: off }).compress).toBe(false);
   });
 
   it.each([
@@ -78,14 +89,15 @@ describe("settings", () => {
     ["PYRODECK_LOG_RETENTION_DAYS", "4000"],
     ["PYRODECK_LOG_MAX_MB", "2G"],
     ["PYRODECK_LOG_MAX_MB", "99999999"],
+    ["PYRODECK_LOG_COMPRESS", "gzip"],
   ])("refuses %s=%s at startup", (name, value) => {
     expect(() => parseLogRetentionEnv({ [name]: value })).toThrow(new RegExp(name));
   });
 
   it("lets the environment win over the stored settings", () => {
     const stored = { days: 7, maxMb: 100, compress: false };
-    expect(effectiveLogRetention(stored, { days: null, maxMb: null })).toEqual(stored);
-    expect(effectiveLogRetention(stored, { days: 90, maxMb: 0 })).toEqual({ days: 90, maxMb: 0, compress: false });
+    expect(effectiveLogRetention(stored, { days: null, maxMb: null, compress: null })).toEqual(stored);
+    expect(effectiveLogRetention(stored, { days: 90, maxMb: 0, compress: true })).toEqual({ days: 90, maxMb: 0, compress: true });
   });
 });
 
@@ -133,6 +145,88 @@ describe("runLogRetention on a directory", () => {
       now: NOW,
     });
   }
+
+  /** A file of `bytes` that takes no disk space (sparse), last written `ageDays` before NOW. */
+  async function putSparse(name: string, bytes: number, ageDays: number): Promise<string> {
+    const full = path.join(dir, name);
+    const handle = await fs.open(full, "w");
+    await handle.truncate(bytes);
+    await handle.close();
+    const t = new Date(NOW - ageDays * DAY);
+    await fs.utimes(full, t, t);
+    return full;
+  }
+
+  it("does nothing with the defaults, however old and large the logs", async () => {
+    const files = [
+      await put(logName("ancient", 1), "first soak\n".repeat(50_000), 900),
+      await put(`${logName("packed", 2)}.gz`, Buffer.from([0x1f, 0x8b, 0x08]), 400),
+      await put(logName("big", 3), Buffer.alloc(3 * MB, "x"), 60),
+      await putSparse(logName("huge", 4), 1100 * MB, 45),
+      await put(logName("closed", 5), "closed an hour ago\n", 1 / 24),
+    ];
+    const before = await Promise.all(files.map(async (f) => [f, (await fs.stat(f)).size, (await fs.stat(f)).mtimeMs]));
+
+    const result = await run({ ...DEFAULT_LOG_RETENTION });
+
+    expect(result).toMatchObject({ deleted: 0, compressed: 0, freedBytes: 0, files: 5, errors: [] });
+    const after = await Promise.all(files.map(async (f) => [f, (await fs.stat(f)).size, (await fs.stat(f)).mtimeMs]));
+    expect(after).toEqual(before);
+    expect(await names()).toEqual(files.map((f) => path.basename(f)).sort());
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("with retention off, warns once Pyrodeck's logs pass 1 GB, naming the total, the directory and the variables", async () => {
+    await putSparse(logName("a", 1), 512 * MB, 10);
+    await putSparse(`${logName("b", 2)}.gz`, 512 * MB, 9); // exactly 1 GB: not more than
+    await putSparse("unrelated.log", 4096 * MB, 9); // not Pyrodeck's: not counted
+
+    expect((await run({ ...DEFAULT_LOG_RETENTION })).warning).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+
+    await put(logName("c", 3), "one more line\n", 1);
+    const result = await run({ ...DEFAULT_LOG_RETENTION });
+
+    expect(result.warning).toMatch(/^Log retention is off and Pyrodeck's logs take 1\.0 GB in /);
+    expect(result.warning).toContain(dir);
+    expect(result.warning).toMatch(/PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB/);
+    expect(warn).toHaveBeenCalledWith(result.warning);
+    expect(result).toMatchObject({ deleted: 0, compressed: 0 });
+  });
+
+  it("warns with compression alone too, since nothing bounds the total, and not once a limit is set", async () => {
+    await put(logName("a", 1), randomBytes(2 * MB), 10); // gzip cannot shrink it under the 1 MB used here
+    const compressOnly = await runLogRetention({
+      dirs: [dir],
+      settings: { days: 0, maxMb: 0, compress: true },
+      activeLogPath: null,
+      log,
+      now: NOW,
+      warnAboveBytes: MB,
+    });
+    expect(compressOnly.warning).not.toBeNull();
+    await put(logName("b", 2), Buffer.alloc(2 * MB, "y"), 10);
+    for (const settings of [
+      { days: 30, maxMb: 0, compress: false },
+      { days: 0, maxMb: 2048, compress: false },
+    ]) {
+      const result = await runLogRetention({ dirs: [dir], settings, activeLogPath: null, log, now: NOW, warnAboveBytes: MB });
+      expect(result.warning).toBeNull();
+    }
+  });
+
+  it("applies the recommended values once they are set", async () => {
+    const content = "Opening level 1\n".repeat(5000);
+    await put(logName("old", 1), content, 45);
+    const closed = await put(logName("week", 2), content, 7);
+    const running = await put(logName("live", 3), content, 0.5);
+
+    const result = await run({ ...RECOMMENDED_LOG_RETENTION }, running);
+
+    expect(result).toMatchObject({ deleted: 1, compressed: 1, warning: null });
+    expect(await names()).toEqual([`${logName("week", 2)}.gz`, logName("live", 3)].sort());
+    expect(gunzipSync(await fs.readFile(`${closed}.gz`)).toString()).toBe(content);
+  });
 
   it("deletes Pyrodeck's logs older than the retention days and nothing else, however old", async () => {
     const old = await put(logName("testing", 1), "old run\n", 40);

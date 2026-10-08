@@ -125,8 +125,9 @@ function resolveLogFile(name: string): { filePath: string } | { status: number; 
 }
 
 export async function logsRoutes(app: FastifyInstance): Promise<void> {
-  // Log retention: PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB win
-  // over the Logs tab's settings. A malformed value stops the start here.
+  // Log retention, off unless the operator sets it: PYRODECK_LOG_RETENTION_DAYS,
+  // PYRODECK_LOG_MAX_MB and PYRODECK_LOG_COMPRESS win over the Logs tab's
+  // settings. A malformed value stops the start here.
   const retentionEnv: LogRetentionEnv = parseLogRetentionEnv(process.env);
   const storedRetention = () => sanitizeStoredLogRetention(pyrodeckConfig.get().logRetention);
   const retentionSettings = () => effectiveLogRetention(storedRetention(), retentionEnv);
@@ -150,8 +151,8 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/logs/retention", async () => retentionState());
 
-  // Save the Logs tab's retention settings and run retention with them. Days
-  // and the size cap set in the environment stay in force whatever is saved.
+  // Save the Logs tab's retention settings and run retention with them. Values
+  // set in the environment stay in force whatever is saved.
   app.put("/api/logs/retention", async (request, reply) => {
     const checked = validateLogRetention(request.body);
     if ("error" in checked) return reply.status(400).send({ error: checked.error });

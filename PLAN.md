@@ -362,8 +362,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       guard; launched consoles stay local with `AllowRemoteConsole=0`; `docs/behind-a-reverse-proxy.md`
 - [x] Hardening (v0.5.2): real server-side sessions (random id per login, logout and "log out all sessions" revoke,
       12 h absolute and 120 min idle lifetimes, new id on login, `/ws` closed with its session); `PYRODECK_HOST`
-      defaults to 127.0.0.1; game-server log retention (gzip closed logs, prune by age then total size, Pyrodeck's
-      own file names only)
+      defaults to 127.0.0.1; opt-in game-server log retention (gzip closed logs, prune by age then total size,
+      Pyrodeck's own file names only; a warning above 1 GB while it is off)
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no

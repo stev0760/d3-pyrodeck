@@ -31,6 +31,11 @@ Replace both. The commands are for Ubuntu LTS. Other distributions differ only i
 ```ini
 Environment=PYRODECK_PORT=3001
 Environment=PYRODECK_TRUST_PROXY=1
+Environment=PYRODECK_SESSION_TTL_HOURS=12
+Environment=PYRODECK_SESSION_IDLE_MINUTES=120
+Environment=PYRODECK_LOG_RETENTION_DAYS=30
+Environment=PYRODECK_LOG_MAX_MB=2048
+Environment=PYRODECK_LOG_COMPRESS=1
 ```
 
 - Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` says otherwise (the default since 0.5.2), so its port is off
@@ -41,13 +46,15 @@ Environment=PYRODECK_TRUST_PROXY=1
   `PYRODECK_TRUST_PROXY=10.0.0.5`, or a list of addresses and CIDR blocks (`10.0.0.0/24,fd00::/8`). Any other value
   stops Pyrodeck at startup with an error. With a proxy on another machine, Pyrodeck must also listen where that
   proxy reaches it: set `PYRODECK_HOST` to this machine's address on the private network.
+- A login session ends 12 hours after login or after 120 minutes without a request (the defaults, set here so they
+  are visible).
+- Log retention is off unless set. These values gzip closed game-server logs to `.log.gz`, delete Pyrodeck's logs
+  last written more than 30 days ago, then the oldest beyond 2048 MB in total; nothing else in the Log Directory is
+  touched. A game server writes 12-28 MB an hour.
 
 At startup Pyrodeck's log says `Trusting X-Forwarded-For and X-Forwarded-Proto from: loopback`. It warns when
 `PYRODECK_TRUST_PROXY` is set but `PYRODECK_HOST` is a public address, when no admin password is set, and, the first
 time a proxied request arrives, when `PYRODECK_TRUST_PROXY` is not set.
-
-Sessions (12 hours from login, 2 hours unused) and log retention (30 days, 2048 MB) have defaults that suit a public
-server; [running-as-a-service.md](running-as-a-service.md) lists their variables.
 
 ### What Pyrodeck reads from a proxied request
 

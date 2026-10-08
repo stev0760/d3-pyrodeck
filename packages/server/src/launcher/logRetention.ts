@@ -10,10 +10,15 @@ import { createGzip } from "node:zlib";
  * A server writes 12-28 MB an hour and nothing pruned them, so a Log
  * Directory grew without bound.
  *
- * Each run, at startup and then about once an hour:
+ * Retention is opt-in: by default nothing is deleted or compressed, so an
+ * upgrade never touches logs the operator already has (analysis tools read
+ * them as `.log`). Once the operator sets values, each run, at startup and
+ * then about once an hour:
  * 1. deletes Pyrodeck's logs last written more than `days` ago;
  * 2. gzips each closed log (`.log` → `.log.gz`, keeping its modification time);
  * 3. deletes the oldest of what is left until Pyrodeck's logs fit in `maxMb`.
+ * With neither a day limit nor a size cap, a run only measures, and warns
+ * when Pyrodeck's logs take more than 1 GB.
  *
  * Only files whose names Pyrodeck generates are touched: the Log Directory may
  * be the game's own folder, so every other file there, a `.log` of another
@@ -32,7 +37,14 @@ export interface LogRetentionSettings {
   compress: boolean;
 }
 
-export const DEFAULT_LOG_RETENTION: LogRetentionSettings = { days: 30, maxMb: 2048, compress: true };
+/** Off: keep every log, uncompressed, until the operator says otherwise. */
+export const DEFAULT_LOG_RETENTION: LogRetentionSettings = { days: 0, maxMb: 0, compress: false };
+
+/** What the docs recommend for a public server. */
+export const RECOMMENDED_LOG_RETENTION: LogRetentionSettings = { days: 30, maxMb: 2048, compress: true };
+
+/** With retention off, warn when Pyrodeck's logs take more than this. */
+export const UNBOUNDED_WARN_BYTES = 1024 * 1024 * 1024;
 
 export const MAX_RETENTION_DAYS = 3650;
 export const MAX_LOG_MB = 1_048_576;
@@ -73,17 +85,22 @@ export function validateLogRetention(body: unknown): { settings: LogRetentionSet
   return { settings: { days, maxMb, compress: b.compress } };
 }
 
-/** PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB; null where unset. They win over the Logs tab. */
+/**
+ * PYRODECK_LOG_RETENTION_DAYS, PYRODECK_LOG_MAX_MB and PYRODECK_LOG_COMPRESS;
+ * null where unset. They win over the Logs tab.
+ */
 export interface LogRetentionEnv {
   days: number | null;
   maxMb: number | null;
+  compress: boolean | null;
 }
 
 /**
- * Read PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB. Unset or blank
- * leaves the setting to the Logs tab (default 30 days, 2048 MB); 0 turns that
- * limit off. A value that is not a whole number in range throws, so a typo
- * stops Pyrodeck at startup instead of deleting logs by a guess.
+ * Read PYRODECK_LOG_RETENTION_DAYS, PYRODECK_LOG_MAX_MB and
+ * PYRODECK_LOG_COMPRESS. Unset or blank leaves the setting to the Logs tab
+ * (default: off); 0 turns a limit off; PYRODECK_LOG_COMPRESS takes 1/0
+ * (true/false, yes/no, on/off). Anything else throws, so a typo stops
+ * Pyrodeck at startup instead of deleting logs by a guess.
  */
 export function parseLogRetentionEnv(env: Record<string, string | undefined>): LogRetentionEnv {
   const read = (name: string, max: number, meaning: string): number | null => {
@@ -93,9 +110,17 @@ export function parseLogRetentionEnv(env: Record<string, string | undefined>): L
     if (!(n >= 0 && n <= max)) throw new Error(`${name}: "${raw}" is not a whole number from 0 (${meaning}) to ${max}.`);
     return n;
   };
+  const rawCompress = (env.PYRODECK_LOG_COMPRESS ?? "").trim().toLowerCase();
+  let compress: boolean | null = null;
+  if (["1", "true", "yes", "on"].includes(rawCompress)) compress = true;
+  else if (["0", "false", "no", "off"].includes(rawCompress)) compress = false;
+  else if (rawCompress !== "") {
+    throw new Error(`PYRODECK_LOG_COMPRESS: "${env.PYRODECK_LOG_COMPRESS?.trim()}" is not 1 (gzip closed logs) or 0.`);
+  }
   return {
     days: read("PYRODECK_LOG_RETENTION_DAYS", MAX_RETENTION_DAYS, "keep forever"),
     maxMb: read("PYRODECK_LOG_MAX_MB", MAX_LOG_MB, "no size cap"),
+    compress,
   };
 }
 
@@ -104,11 +129,22 @@ export function effectiveLogRetention(stored: LogRetentionSettings, env: LogRete
   return {
     days: env.days ?? stored.days,
     maxMb: env.maxMb ?? stored.maxMb,
-    compress: stored.compress,
+    compress: env.compress ?? stored.compress,
   };
 }
 
+/** Neither a day limit nor a size cap: nothing is ever deleted. */
+export function isRetentionOff(s: LogRetentionSettings): boolean {
+  return s.days === 0 && s.maxMb === 0;
+}
+
 export function describeLogRetention(s: LogRetentionSettings): string {
+  if (isRetentionOff(s) && !s.compress) {
+    return (
+      "off, every log is kept as written (set PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB, " +
+      "or the Logs tab, to prune them)"
+    );
+  }
   const parts = [
     s.days > 0 ? `delete Pyrodeck's logs older than ${s.days} days` : "keep logs whatever their age",
     s.maxMb > 0 ? `keep them under ${s.maxMb} MB in total` : "no size cap",
@@ -169,6 +205,8 @@ export interface LogRetentionRunOptions {
   now?: number;
   /** Logs written within this many ms are left alone (default LOG_QUIET_MS). */
   quietMs?: number;
+  /** With retention off, warn above this many bytes of logs (default UNBOUNDED_WARN_BYTES). */
+  warnAboveBytes?: number;
 }
 
 export interface LogRetentionResult {
@@ -182,6 +220,8 @@ export interface LogRetentionResult {
   files: number;
   totalBytes: number;
   errors: string[];
+  /** Retention is off and the logs have grown past the warning size: what to do about it. */
+  warning: string | null;
 }
 
 interface Entry {
@@ -194,6 +234,7 @@ interface Entry {
 }
 
 function formatMb(bytes: number): string {
+  if (bytes >= 1024 * MB) return `${(bytes / (1024 * MB)).toFixed(1)} GB`;
   return bytes < MB ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / MB).toFixed(1)} MB`;
 }
 
@@ -275,6 +316,7 @@ export async function runLogRetention(options: LogRetentionRunOptions): Promise<
     files: 0,
     totalBytes: 0,
     errors: [],
+    warning: null,
   };
   const fail = (message: string) => {
     result.errors.push(message);
@@ -367,6 +409,17 @@ export async function runLogRetention(options: LogRetentionRunOptions): Promise<
 
   result.files = entries.length;
   result.totalBytes = entries.reduce((sum, e) => sum + e.size, 0);
+
+  // Retention off: nothing bounds the logs, so say when they get big.
+  if (isRetentionOff(settings) && result.totalBytes > (options.warnAboveBytes ?? UNBOUNDED_WARN_BYTES)) {
+    const where = [...new Set(entries.map((e) => path.dirname(e.path)))].join(", ");
+    result.warning =
+      `Log retention is off and Pyrodeck's logs take ${formatMb(result.totalBytes)} in ${where}. ` +
+      "Set PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB (30 and 2048 suit a public server), " +
+      "or the Logs tab, to prune them.";
+    log.warn(result.warning);
+  }
+
   result.at = new Date().toISOString();
   return result;
 }
@@ -455,6 +508,7 @@ export class LogRetentionService {
         files: 0,
         totalBytes: 0,
         errors: [message],
+        warning: null,
       };
     }
     return this.last;

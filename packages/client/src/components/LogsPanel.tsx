@@ -22,8 +22,8 @@ interface RetentionSettings {
 interface RetentionState {
   settings: RetentionSettings;
   stored: RetentionSettings;
-  /** PYRODECK_LOG_RETENTION_DAYS / PYRODECK_LOG_MAX_MB when set; they win over the stored values. */
-  env: { days: number | null; maxMb: number | null };
+  /** PYRODECK_LOG_RETENTION_DAYS / _MAX_MB / _COMPRESS when set; they win over the stored values. */
+  env: { days: number | null; maxMb: number | null; compress: boolean | null };
   dirs: string[];
   lastRun: {
     at: string;
@@ -33,6 +33,8 @@ interface RetentionState {
     files: number;
     totalBytes: number;
     errors: string[];
+    /** Retention is off and Pyrodeck's logs take more than 1 GB. */
+    warning: string | null;
   } | null;
 }
 
@@ -75,7 +77,7 @@ function LogRetention({ onSaved }: { onSaved: () => void }) {
         body: JSON.stringify({
           days: state.env.days !== null ? state.stored.days : Number(days),
           maxMb: state.env.maxMb !== null ? state.stored.maxMb : Number(maxMb),
-          compress,
+          compress: state.env.compress !== null ? state.stored.compress : compress,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -126,16 +128,24 @@ function LogRetention({ onSaved }: { onSaved: () => void }) {
         </label>
       </div>
       <label className="flex items-center gap-2 text-xs text-foreground/80">
-        <input type="checkbox" checked={compress} onChange={(e) => setCompress(e.target.checked)} />
-        Compress closed logs (gzip)
+        <input
+          type="checkbox"
+          checked={compress}
+          disabled={state.env.compress !== null}
+          onChange={(e) => setCompress(e.target.checked)}
+        />
+        Compress closed logs (gzip, renamed to .log.gz)
+        {state.env.compress !== null && <span className="text-[10px] text-muted-foreground">Set by PYRODECK_LOG_COMPRESS</span>}
       </label>
       <Button size="xs" onClick={() => void save()} disabled={saving} className="font-score tracking-wide">
         {saving ? "Saving..." : "Save"}
       </Button>
       {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {last?.warning && <p className="text-[11px] text-amber-400 leading-snug break-words">{last.warning}</p>}
       <p className="text-[10px] text-muted-foreground leading-snug">
-        Applies to the logs Pyrodeck writes (named <span className="font-mono">profile-YYYY-MM-DDTHH-MM-SS.log</span>) and
-        to nothing else in the directory. The running server's log, and any log written in the last ten minutes, is never
+        Off by default: Pyrodeck keeps every log as written until you set a limit here or in the environment. For a public
+        server, 30 days, 2048 MB and compression on are a good start. Applies to the logs Pyrodeck writes (named{" "}
+        <span className="font-mono">profile-YYYY-MM-DDTHH-MM-SS.log</span>) and to nothing else in the directory. The running server's log, and any log written in the last ten minutes, is never
         compressed or deleted. Old logs go first by age, then the oldest until the total fits the cap. Pyrodeck applies
         this at startup, every hour and when you save.
       </p>
