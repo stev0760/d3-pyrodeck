@@ -202,6 +202,8 @@ tab.
   `+`; the first one wins), shows where it found the game, program and config, and creates a profile linked to that
   config. Flags a profile cannot hold yet (ports, frame cap, tracker files) are kept on the profile as "imported flags"
   for reference. The config must already be in the game directory.
+- **Running as a service.** [docs/running-as-a-service.md](docs/running-as-a-service.md): NSSM, `schtasks` and a
+  systemd user unit, with the working directory and log location each one needs.
 
 ## Hosting mission downloads
 
@@ -252,6 +254,7 @@ docs/
 - [`BUILDING.md`](BUILDING.md) — building from source and running on all platforms (Windows, Ubuntu, Rocky Linux/RHEL, Arch)
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
 - `docs/D3SERVER3_AUDIT.md` — feature audit of D3Server3 3.0.83 (2010) against Pyrodeck 0.4.20, with a ranked list of what Pyrodeck lacks
+- `docs/running-as-a-service.md` — running Pyrodeck unattended (NSSM, schtasks, systemd)
 
 ## Releases
 

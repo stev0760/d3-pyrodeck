@@ -1323,6 +1323,12 @@ emails, service mode and priority class). No `$` command or console output chang
   `importedArgs`, shown in the Launch panel. The client creates the profile with `POST /api/profiles`
   (`existingConfigFile`), so a config missing from the game path is refused there.
 
+### D.7 Service mode
+
+Documentation only: `docs/running-as-a-service.md` (NSSM, `sc.exe` and why it needs a wrapper, `schtasks`, a systemd
+user unit; working directory, `PYRODECK_CONFIG_DIR`, log capture; `KillMode=process` / `AppKillProcessTree 0` to keep
+the game server running across a Pyrodeck restart).
+
 ---
 
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*
