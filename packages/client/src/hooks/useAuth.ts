@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { SESSION_ENDED_EVENT } from "@/lib/session";
 
 interface AuthState {
   authenticated: boolean;
@@ -38,6 +39,14 @@ export function useAuth() {
           needsSetup: false,
         });
       });
+  }, []);
+
+  // The server ended this session (a WebSocket closed with 4401, a reconnect
+  // found no session, or "log out all sessions"): back to the login page.
+  useEffect(() => {
+    const onEnded = () => setState((s) => (s.authRequired ? { ...s, authenticated: false, checking: false } : s));
+    window.addEventListener(SESSION_ENDED_EVENT, onEnded);
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, onEnded);
   }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {

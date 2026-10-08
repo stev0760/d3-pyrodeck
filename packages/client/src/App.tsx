@@ -426,7 +426,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           </TabsContent>
 
           <TabsContent value="settings" className="p-3 min-h-0">
-            <SettingsPanel notify={addToast} />
+            <SettingsPanel notify={addToast} showSessions={showLogout} />
           </TabsContent>
         </Tabs>
 

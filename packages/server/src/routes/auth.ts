@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { isLocalRequest, rateLimitKey } from "../middleware/requestSource.js";
+import { SESSION_COOKIE, sessionIdFromRequest, sessions, sessionTag } from "../auth/sessions.js";
 
 interface RateBucket {
   count: number;
@@ -61,12 +62,27 @@ function sessionCookieOptions(request: FastifyRequest) {
   };
 }
 
-function setSessionCookie(request: FastifyRequest, reply: FastifyReply): void {
-  reply.setCookie("pyrodeck_session", "1", {
+/**
+ * Start a new session for this browser and set its cookie. A session id the
+ * browser already carried ends first, so an id planted before login (session
+ * fixation) is never the one that gets logged in. The cookie lasts as long as
+ * the session's absolute lifetime; the idle timeout is enforced here, on the
+ * server.
+ */
+function startSession(request: FastifyRequest, reply: FastifyReply): string {
+  const previous = sessionIdFromRequest(request);
+  if (previous) sessions.destroy(previous, "replaced");
+  const id = sessions.create({ ip: request.ip, userAgent: request.headers["user-agent"] ?? null });
+  reply.setCookie(SESSION_COOKIE, id, {
     ...sessionCookieOptions(request),
     signed: true,
-    maxAge: 86400,
+    maxAge: sessions.cookieMaxAgeSeconds(),
   });
+  return id;
+}
+
+function clearSessionCookie(request: FastifyRequest, reply: FastifyReply): void {
+  reply.clearCookie(SESSION_COOKIE, sessionCookieOptions(request));
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
@@ -94,12 +110,17 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     clearRateLimit(key);
-    setSessionCookie(request, reply);
+    const id = startSession(request, reply);
+    request.log.info(`Login from ${request.ip}: session ${sessionTag(id)} started.`);
     return { ok: true };
   });
 
   app.post("/api/auth/logout", async (request, reply) => {
-    reply.clearCookie("pyrodeck_session", sessionCookieOptions(request));
+    const id = sessionIdFromRequest(request);
+    if (id && sessions.destroy(id, "logout")) {
+      request.log.info(`Logout from ${request.ip}: session ${sessionTag(id)} ended.`);
+    }
+    clearSessionCookie(request, reply);
     return { ok: true };
   });
 
@@ -108,10 +129,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!source) {
       return { authenticated: true, required: false, needsSetup: true };
     }
-    const result = request.unsignCookie(
-      request.cookies["pyrodeck_session"] ?? "",
-    );
-    if (result.valid && result.value === "1") {
+    const id = sessionIdFromRequest(request);
+    if (id && sessions.touch(id)) {
       return { authenticated: true, required: true, needsSetup: false };
     }
     return reply
@@ -155,9 +174,38 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const hashed = await hashPassword(password);
     await pyrodeckConfig.save({ adminPasswordHash: hashed });
 
+    // Pyrodeck has no password change: first-run setup is the only place it
+    // writes one. Any session that exists ends, and this browser gets a new one.
+    const ended = sessions.destroyAll("password");
+    if (ended > 0) request.log.info(`Admin password set: ${ended} session(s) ended.`);
     clearRateLimit(key);
-    setSessionCookie(request, reply);
+    startSession(request, reply);
     return { ok: true };
+  });
+
+  // Sessions. These are under /api/ but not /api/auth/, so requireAuth guards
+  // them: a live session, or a local browser while no password is set.
+
+  /** The live sessions, most recently used first, without their ids. */
+  app.get("/api/sessions", async (request) => {
+    const current = sessionIdFromRequest(request);
+    const { ttlMs, idleMs } = sessions.getLifetimes();
+    return {
+      ttlHours: ttlMs / 3_600_000,
+      idleMinutes: idleMs / 60_000,
+      sessions: sessions.list().map(({ id, ...info }) => ({ ...info, current: id === current })),
+    };
+  });
+
+  /**
+   * Log out every session, this one included. Their console WebSockets
+   * close, and every browser (this one too) is back at the login page.
+   */
+  app.delete("/api/sessions", async (request, reply) => {
+    const revoked = sessions.destroyAll("revoked");
+    request.log.info(`All sessions logged out from ${request.ip}: ${revoked} ended.`);
+    clearSessionCookie(request, reply);
+    return { ok: true, revoked };
   });
 }
 

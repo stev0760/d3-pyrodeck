@@ -3,6 +3,7 @@ import type { WebSocket } from "ws";
 import { sessionManager, responseParser, serializeCaps } from "./server.js";
 import { playlistManager } from "../launcher/playlistInstance.js";
 import type { AddBotResult } from "../parser/parsers/addbot.js";
+import { WS_SESSION_ENDED, bindSocketToSession, sessions } from "../auth/sessions.js";
 
 interface WsCommand {
   type: "command";
@@ -83,9 +84,14 @@ export function wireSessionToClients(): void {
 }
 
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/ws", { websocket: true }, (socket: AliveWebSocket, _request) => {
+  app.get("/ws", { websocket: true }, (socket: AliveWebSocket, request) => {
     socket.isAlive = true;
     wsClients.add(socket);
+
+    // requireAuth let the handshake through. When it came with a session,
+    // the socket closes as soon as that session ends (logout, "log out all
+    // sessions", lifetime or idle timeout).
+    const sessionId = bindSocketToSession(socket, request);
 
     app.log.info("WebSocket client connected");
 
@@ -133,6 +139,12 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
     }
 
     socket.on("message", async (msg: Buffer | string) => {
+      // A command is activity on the session; a session that ended in the
+      // meantime takes no more commands.
+      if (sessionId && !sessions.touch(sessionId)) {
+        socket.close(WS_SESSION_ENDED, "Session ended");
+        return;
+      }
       try {
         const data = JSON.parse(msg.toString()) as WsCommand;
 

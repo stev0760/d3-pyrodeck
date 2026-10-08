@@ -12,6 +12,7 @@ import {
   type PriorityState,
   type UpdateStatus,
 } from "@/lib/ops";
+import { notifySessionEnded, type SessionsState } from "@/lib/session";
 
 const INPUT_CLASS =
   "w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
@@ -299,8 +300,86 @@ function UpdateCheckSetting() {
   );
 }
 
-/** Settings tab: email alerts, process priority, update notice. */
-export function SettingsPanel({ notify }: { notify: Notify }) {
+/** A browser's user agent cut down to "Firefox on Linux"-style text. */
+function describeAgent(ua: string | null): string {
+  if (!ua) return "unknown browser";
+  const browser =
+    /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "browser";
+  const os =
+    /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : null;
+  return os ? `${browser} on ${os}` : browser;
+}
+
+function Sessions({ notify }: { notify: Notify }) {
+  const [state, setState] = useState<SessionsState | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void getJson<SessionsState>("/api/sessions").then((s) => s && setState(s));
+  }, []);
+
+  // Two clicks: the first arms the button, the second logs every session out,
+  // this browser's included (it goes back to the login page).
+  const logOutAll = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/sessions", { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        notify(body.error ?? `Could not log out the sessions (${res.status}).`);
+        return;
+      }
+      notifySessionEnded();
+    } catch {
+      notify("Could not log out the sessions.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!state) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  return (
+    <div className="space-y-2">
+      <ul className="space-y-1">
+        {state.sessions.map((s, i) => (
+          <li key={i} className="text-[11px] text-foreground/80 leading-snug">
+            <span className="font-mono">{s.ip ?? "unknown address"}</span> · {describeAgent(s.userAgent)}
+            {s.current && <span className="text-primary"> · this browser</span>}
+            <br />
+            <span className="text-[10px] text-muted-foreground">
+              Logged in {new Date(s.createdAt).toLocaleString()}, last used {new Date(s.lastSeenAt).toLocaleString()}
+            </span>
+          </li>
+        ))}
+        {state.sessions.length === 0 && <li className="text-[11px] text-muted-foreground">No sessions.</li>}
+      </ul>
+      <Button
+        size="xs"
+        variant="outline"
+        onClick={() => void logOutAll()}
+        onBlur={() => setConfirming(false)}
+        disabled={busy}
+        className={`font-score tracking-wide ${confirming ? "text-destructive hover:text-destructive" : ""}`}
+      >
+        {busy ? "Logging out..." : confirming ? "Confirm: log out every session" : "Log out all sessions"}
+      </Button>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        A session ends {state.ttlHours} h after login, or after {state.idleMinutes} min without use (an open panel keeps
+        its session in use). Logging out all sessions ends this one too, and closes every open console. Sessions are kept
+        in memory, so restarting Pyrodeck also logs everyone out.
+      </p>
+    </div>
+  );
+}
+
+/** Settings tab: email alerts, process priority, update notice, login sessions. */
+export function SettingsPanel({ notify, showSessions = true }: { notify: Notify; showSessions?: boolean }) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-xl space-y-3">
@@ -316,6 +395,12 @@ export function SettingsPanel({ notify }: { notify: Notify }) {
           <h3 className="text-sm font-score tracking-wide text-muted-foreground">Updates</h3>
           <UpdateCheckSetting />
         </section>
+        {showSessions && (
+          <section className={SECTION_CLASS}>
+            <h3 className="text-sm font-score tracking-wide text-muted-foreground">Sessions</h3>
+            <Sessions notify={notify} />
+          </section>
+        )}
       </div>
     </div>
   );

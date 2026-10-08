@@ -35,6 +35,7 @@ import {
   parseTrustProxy,
 } from "./middleware/requestSource.js";
 import { startConsoleEvents } from "./events/consoleEventHub.js";
+import { parseSessionLifetimes, sessions } from "./auth/sessions.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
 const HOST = process.env.PYRODECK_HOST ?? "0.0.0.0";
@@ -70,6 +71,9 @@ async function findStaticDir(): Promise<string | null> {
 }
 
 async function main() {
+  // Environment checks first: a malformed value stops the start here.
+  sessions.setLifetimes(parseSessionLifetimes(process.env));
+
   const sessionSecret = await loadSessionSecret();
   const staticDir = await findStaticDir();
 
@@ -119,6 +123,13 @@ async function main() {
   }
 
   const app = Fastify({ logger: !isSidecar, trustProxy });
+
+  const { ttlMs, idleMs } = sessions.getLifetimes();
+  sessions.setLogger((message) => app.log.info(message));
+  app.log.info(
+    `Sessions end ${ttlMs / 3_600_000} h after login, or after ${idleMs / 60_000} min unused. ` +
+      "They are kept in memory: restarting Pyrodeck logs everyone out.",
+  );
 
   if (trustProxy) {
     app.log.info(`Trusting X-Forwarded-For and X-Forwarded-Proto from: ${trustProxy.join(", ")}`);

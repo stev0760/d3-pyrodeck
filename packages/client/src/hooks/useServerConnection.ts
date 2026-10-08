@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { WS_SESSION_ENDED, notifySessionEnded, sessionIsGone } from "@/lib/session";
 
 export type ConnectionState =
   | "disconnected"
@@ -169,13 +170,30 @@ export function useServerConnection() {
       wsRef.current = null;
       setWsConnected(false);
 
+      // The login session behind this socket ended: no reconnect, log in again.
+      if (event.code === WS_SESSION_ENDED) {
+        shouldReconnectRef.current = false;
+        setWsReconnecting(false);
+        notifySessionEnded();
+        return;
+      }
+
       // Auto-reconnect with exponential backoff
       if (shouldReconnectRef.current) {
         const delay = reconnectDelayRef.current;
         console.log(`[Pyrodeck] Reconnecting in ${delay}ms...`);
         setWsReconnecting(true);
-        reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = setTimeout(async () => {
           reconnectTimerRef.current = null;
+          // A refused handshake (401) looks like any other failed connection
+          // to the browser, so ask first: after a Pyrodeck restart, or once
+          // the session expired, there is no session to reconnect with.
+          if (shouldReconnectRef.current && (await sessionIsGone())) {
+            shouldReconnectRef.current = false;
+            setWsReconnecting(false);
+            notifySessionEnded();
+            return;
+          }
           if (shouldReconnectRef.current) {
             connectWs();
           }

@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { pyrodeckConfig } from "../routes/pyrodeck-config.js";
 import { crossSiteRefusal, isLocalRequest, parseOriginList } from "./requestSource.js";
+import { sessionIdFromRequest, sessions } from "../auth/sessions.js";
 
 // Routes that bypass auth even when a password is configured
 const SKIP_PREFIXES = ["/api/auth/", "/api/health", "/api/version"];
@@ -64,10 +65,10 @@ export async function requireAuth(
     return;
   }
 
-  const result = request.unsignCookie(
-    request.cookies["pyrodeck_session"] ?? "",
-  );
-  if (result.valid && result.value === "1") return;
+  // A password is set: the request needs a live session (auth/sessions.ts).
+  // Using it restarts the session's idle clock.
+  const sessionId = sessionIdFromRequest(request);
+  if (sessionId && sessions.touch(sessionId)) return;
 
   reply.status(401).send({ error: "Unauthorized" });
 }
