@@ -90,6 +90,26 @@ describe("parseConsoleLine", () => {
     expect(parseConsoleLine("Ending level.*Bob has joined CTF")).toEqual({ kind: "join", name: "Bob" });
   });
 
+  it("reads a line the level-load progress erased itself in front of", () => {
+    expect(parseConsoleLine("\b\b\b\b*Hunter has left the game\r")).toEqual({
+      kind: "leave",
+      name: "Hunter",
+      how: "left",
+    });
+  });
+
+  it("reads the bot population's leave lines, for bots only", () => {
+    expect(parseConsoleLine("*Reaper[BOT] left to make room for a player.")).toEqual({
+      kind: "bot-yielded",
+      name: "Reaper[BOT]",
+    });
+    expect(parseConsoleLine("*Reaper[BOT] left to keep the game at 6 players.")).toEqual({
+      kind: "bot-yielded",
+      name: "Reaper[BOT]",
+    });
+    expect(parseConsoleLine("*Bob left to make room for a player.")).toBeNull();
+  });
+
   it("ignores echoes, replies and other HUD lines", () => {
     for (const line of [
       "[127.0.0.1] say hello",
@@ -124,12 +144,20 @@ describe("parseConsoleLines", () => {
       "*Bob says: 100 Percent Complete, Ending level. ok",
     ]);
   });
+
+  it("keeps a chat line glued after the load progress whole", () => {
+    expect(
+      parseConsoleLines("level 2 100 Percent Complete\b\b\b*Eve says: 5 Percent Complete*Bob has joined CTF"),
+    ).toEqual([{ kind: "chat", name: "Eve", text: "5 Percent Complete*Bob has joined CTF" }]);
+  });
 });
 
 describe("isBotName", () => {
   it("knows the engine's bot tag, old and new", () => {
     expect(isBotName("Viper[BOT]")).toBe(true);
     expect(isBotName("[BOT] Reaper")).toBe(true);
+    expect(isBotName("Viper [BOT]")).toBe(true);
+    expect(isBotName("[BOT]Hunter")).toBe(false);
     expect(isBotName("stvLinux")).toBe(false);
   });
 });
@@ -188,6 +216,18 @@ describe("ConsoleEventSource", () => {
     expect(events).toEqual([]);
     vi.advanceTimersByTime(600);
     expect(events).toEqual([["player.joined", { profileId: "p1", name: "Viper[BOT]", bot: true }]]);
+  });
+
+  it("emits a bot's leave when the bot population takes it out", () => {
+    vi.useFakeTimers();
+    const bus = new ServerEvents();
+    const events = collect(bus);
+    const src = new ConsoleEventSource("p1", bus);
+    src.feed("*Reaper[BOT] has joined CTF\r\nBot 'Reaper[BOT]' added in slot 3 (ship=Pyro-GL, diff=Ace, team=0)\r\n");
+    src.feed("*Reaper[BOT] left to make room for a player.\r\n");
+    expect(events.slice(1)).toEqual([
+      ["player.left", { profileId: "p1", name: "Reaper[BOT]", slot: 3, bot: true, reason: "bot removed" }],
+    ]);
   });
 
   it("removes every bot it knows on 'All bots removed'", () => {

@@ -1,5 +1,5 @@
 import { sessionManager } from "../routes/server.js";
-import { activeConsoleProfileId } from "../events/consoleEventHub.js";
+import { activeConsoleProfileId, isThisMachine } from "../events/consoleEventHub.js";
 import type { ConsoleLink } from "./consoleLink.js";
 
 /** The open console session, when it belongs to `profileId`. */
@@ -24,6 +24,5 @@ export function openConsoleLink(): ConsoleLink | null {
 export function openConsoleIsLocal(): boolean | null {
   const session = sessionManager.getActive();
   if (!session) return null;
-  const host = session.connectionInfo.host;
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return isThisMachine(session.connectionInfo.host);
 }

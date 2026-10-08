@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   RESPAWN_DEBOUNCE_MS,
   RespawnScaler,
-  isBotName,
   sanitizeStoredRespawnScaling,
   scaledRespawnSeconds,
   validateRespawnScaling,
@@ -62,16 +61,6 @@ describe("validateRespawnScaling", () => {
 
   it("turns off stored settings that no longer validate", () => {
     expect(sanitizeStoredRespawnScaling({ enabled: true, minSeconds: 90, maxSeconds: 10 })).toBeNull();
-  });
-});
-
-describe("isBotName", () => {
-  it("matches the [BOT] suffix with or without a space", () => {
-    expect(isBotName("Viper[BOT]")).toBe(true);
-    expect(isBotName("Viper [BOT]")).toBe(true);
-    expect(isBotName("Viper[bot] ")).toBe(true);
-    expect(isBotName("[BOT]Hunter")).toBe(false);
-    expect(isBotName("Viper")).toBe(false);
   });
 });
 
@@ -135,11 +124,12 @@ describe("RespawnScaler", () => {
     expect(sent).toEqual(["$setrespawntime 60"]);
   });
 
-  it("counts two players with the same name twice", async () => {
+  it("counts a player once however often the join line repeats (every level start)", async () => {
     scaler.arm(S);
     for (const name of ["pilot", "pilot", "pilot"]) scaler.playerJoined(name);
+    expect(scaler.humanCount()).toBe(1);
     scaler.playerLeft("pilot");
-    expect(scaler.humanCount()).toBe(2);
+    expect(scaler.humanCount()).toBe(0);
   });
 
   it("sends nothing when disabled, before the console is ready, or after stop", async () => {

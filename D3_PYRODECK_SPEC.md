@@ -882,13 +882,12 @@ start line: welcome` / `*-Server- says: PRO start line: welcome`, then one minut
 tick A` and `... tick B`.
 
 Respawn scaling (`launcher/respawnScaling.ts`) rides the same run. It counts human players from `player.joined` and
-`player.left` for the launched profile (names ending in `[BOT]`, with or without a space, are bots), starting from zero
-at each `server.started`. At console ready it sends the value for the current count, then recomputes 15 s after the
+`player.left` for the launched profile (`[BOT]` callsigns are bots; each callsign counts once, since the join line
+repeats for everyone at each level start), starting from zero at each `server.started`. At console ready it sends the value for the current count, then recomputes 15 s after the
 last join or leave and sends `$setrespawntime <n>` only when `n` differs from the last value sent. DMFC
 (`dmfcinputcommand.cpp:672-700`) clamps below 1, has no upper limit and syncs the netgame to clients; the engine times
 each powerup's return at pickup (`object.cpp:1917-1918`: `respawn_time` × the powerup's `respawn_scalar`), so a change
-applies from the next pickup. Pyrodeck does not itself emit `player.joined`/`player.left`; whichever module parses joins
-and leaves does.
+applies from the next pickup. The console event hub emits `player.joined`/`player.left` (Supervisor addendum, D.1).
 ### 8.7 Operations (Addendum D)
 
 | Method | Path | Description |
@@ -1547,22 +1546,15 @@ the Matcen tree (`Descent3/`, `netgames/`).
 `Quit` is a console variable whose setter leaves the game, `SetCVarNone`) is a stop on request:
 state `stopped`, `server.stopped` with `reason: "manual", via: "console"`.
 
-`ServerLineMonitor` reads the launched process's stdout (the console when re-attached, D.5) and emits:
-
-| Event | Line (English string tables) | Source |
-|---|---|---|
-| `player.joined` | `*<name> has joined the Anarchy` / `CTF` / `the Hyper Anarchy!` / `the Hoard` / `the game` / `the <team> Team` (Entropy and Monsterball capitalise `Has Joined The`) | each mode's `DisplayWelcomeMessage` (e.g. `netgames/anarchy/anarchy.cpp`, `ctf/ctf.cpp`), called from `OnClientPlayerEntersGame` |
-| `player.left` | `*<name> has left the game` (D3.STR 147), `*<name> disconnected!` (D3.STR 247) | `MultiDoLeaveGame` (multi.cpp, the client quit), `MultiDisconnectPlayer` (multi_server.cpp, timeout or kick) |
-| `player.chat` | `*<name> says: <text>` (D3.STR 117) | |
-| `level.started` | `Opening level '<file>.d3l'...` | `LoadLevel` (LoadLevel.cpp, `TXT_DS_OPENLEVEL`) |
-
-HUD messages reach the console as `*<text>` on a dedicated server (`AddLineToHUDMessages`,
-hudmessage.cpp), and `PrintDedicatedMessage` (dedicated_server.cpp) writes every one of these lines to
-stdout and to each remote console. Bots (`[BOT]` callsigns, bot.h `BOT_NAME_SUFFIX`) are not reported.
-Chat is matched before joins and leaves, so typed text cannot pose as one. A HUD line glued after the
-level-load status (`... 100 Percent Complete*X has joined CTF`; the status is printed without a
-newline, Mission.cpp) is still read. A server running other string tables prints other words and is
-not read. No line carries the player's address.
+`launcher/consoleQuit.ts` watches the launched process's stdout (the console when re-attached, D.5)
+for that echo. Joins, leaves, chat and level starts come from the console event hub
+(`events/consoleEventHub.ts`, `events/consoleLines.ts`; the Players part of this addendum lists the
+lines): it reads Pyrodeck's console session from its login, so it also works in Connect mode and for a
+re-attached server, and it is the only emitter of `player.joined`, `player.left`, `player.chat` and
+`level.started`. The join line repeats for every player at each level start (`OnClientPlayerEntersGame`
+runs per level), so the supervisor and the respawn scaler count callsigns as a set: a join of a name
+already in the game is a re-entry. Bots (`[BOT]` callsigns) are reported with `bot: true` and never
+counted as players.
 
 ### D.2 Relaunch after a crash
 
@@ -1615,7 +1607,7 @@ prompts for the password is still found hung.
 Off by default. Checked every 15 s (D3Server3's timer): uptime above `emptyRestartAfterHours`
 (default 24), no human on the server, and at least `emptyRestartGraceSec` (default 130, D3Server3's
 value) since the last one left (since the start if nobody joined). Humans are counted from
-`player.joined`/`player.left` (D.1; `[BOT]` callsigns never count) and from every `$players` reply
+`player.joined`/`player.left` (D.1; `[BOT]` callsigns never count, a callsign counts once) and from every `$players` reply
 (slot 0 is the server itself). Before restarting, `$players` is sent once more and the restart
 happens only if its reply parses and lists no human. Then `server.stopped{reason:"empty-restart"}`
 and an immediate relaunch (`server.started{reason:"relaunch"}`), not counted as a failure. Not

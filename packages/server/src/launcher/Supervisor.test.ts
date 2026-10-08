@@ -229,6 +229,19 @@ describe("Supervisor", () => {
       expect(sup.snapshot().recentFailures).toBe(0);
     });
 
+    it("counts a player once however often the join line repeats (every level start)", async () => {
+      reply = async () => "PNum Name\n00: Server\n";
+      start();
+      for (let level = 0; level < 3; level++) {
+        events.emitEvent("level.started", { profileId: "p1", level: `L${level}` });
+        events.emitEvent("player.joined", { profileId: "p1", name: "Hunter", bot: false });
+      }
+      expect(sup.snapshot().humans).toBe(1);
+      events.emitEvent("player.left", { profileId: "p1", name: "Hunter", bot: false, reason: "left the game" });
+      expect(sup.snapshot().humans).toBe(0);
+      expect(sup.snapshot().emptySince).not.toBeNull();
+    });
+
     it("bots do not count as players", async () => {
       reply = async () => "PNum Name\n00: Server\n01: Phantom[BOT]\n02: Reaper[BOT]\n";
       start();

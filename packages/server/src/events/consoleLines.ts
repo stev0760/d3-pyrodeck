@@ -30,6 +30,10 @@
  *          "Removing bot '<name>' from slot <n>"                 $removebot, dedicated_server.cpp:918
  *          "All bots removed"                                    $removebots, dedicated_server.cpp:930
  *          A removed bot prints no "has left" line (BotRemove, bot.cpp:9115).
+ *          "*<name> left to make room for a player."      bot population yields a seat
+ *          "*<name> left to keep the game at <n> players." bot population target
+ *                                        (PopRemoveOne/PopAnnounce, Descent3/bot_population.cpp:312-342;
+ *                                        Matcen 0.10, a server message, so a HUD line)
  *   chat   "*<name> says: <text>"  TXT_HUDSAY (stringtable.h:148). A client builds this
  *          text itself (SendHUDChatText, hudmessage.cpp:828) and the server prints it
  *          as received (MultiDoMessageToServer, multi.cpp:4993), so the name is the
@@ -41,7 +45,9 @@
  * level-load progress ("...level 2 99 Percent Complete"), which runs to
  * thousands of characters on one line and is followed by the first player
  * re-entering: "...100 Percent Complete*Bob has joined the Anarchy".
- * parseConsoleLines splits a line at those points first.
+ * parseConsoleLines splits a line at those points first. The progress erases
+ * itself with backspaces before each update (LoadLevelProgress,
+ * Descent3/Mission.cpp:1401-1403), so a part can start with a run of them.
  *
  * The dedicated server's own player is "-Server-" (TXT_DS_SERVERNAME,
  * dedicated_server.cpp:301); its `say` lines are not player chat.
@@ -55,6 +61,7 @@ export type ConsoleLine =
   | { kind: "bot-added"; name: string; slot: number }
   | { kind: "bot-removed"; name: string; slot: number }
   | { kind: "bots-cleared" }
+  | { kind: "bot-yielded"; name: string }
   | { kind: "removed"; name: string; how: "kicked" | "banned" }
   | { kind: "chat"; name: string; text: string }
   | { kind: "level"; level: string };
@@ -71,6 +78,7 @@ const LEFT_RE = /^\*(.*) has left the game!?$/;
 const DROPPED_RE = /^\*(.*) disconnected!$/;
 const CHAT_RE = /^\*(.*?) says: (.*)$/;
 const REMOVED_RE = /^\*(Kicking|Banning) (.*) from game$/;
+const YIELDED_RE = /^\*(.+) left to (?:make room for a player|keep the game at \d+ players)\.$/;
 const BOT_ADDED_RE = /^Bot '(.+)' added in slot (\d+) \(/;
 const BOT_SPAWNED_RE = /^\s*Bot '(.+)' spawned \(.*slot=(\d+)\)$/;
 const BOT_REMOVED_RE = /^Removing bot '(.+)' from slot (\d+)$/;
@@ -84,8 +92,9 @@ const OPENING_RE = /Opening level '([^']+)'/;
 export function parseConsoleLine(rawLine: string): ConsoleLine | null {
   // "Ending level." is printed without a newline, so the next line can follow
   // it on the same line (see PlaylistManager).
-  // Trim only line ends and leading space: a blank callsign's join line is "*   has joined ...".
-  let line = rawLine.replace(/^\s+/, "").replace(/[\r\n]+$/, "").replace(/^(?:Ending level\.)+/, "");
+  // Trim only line ends and leading space and backspaces: a blank callsign's
+  // join line is "*   has joined ...".
+  let line = rawLine.replace(/^[\s\b]+/, "").replace(/[\r\n]+$/, "").replace(/^(?:Ending level\.)+/, "");
   if (!line) return null;
 
   const opening = OPENING_RE.exec(line);
@@ -103,6 +112,8 @@ export function parseConsoleLine(rawLine: string): ConsoleLine | null {
     if (dropped) return { kind: "leave", name: dropped[1], how: "dropped" };
     const removed = REMOVED_RE.exec(line);
     if (removed) return { kind: "removed", name: removed[2], how: removed[1] === "Kicking" ? "kicked" : "banned" };
+    const yielded = YIELDED_RE.exec(line);
+    if (yielded && isBotName(yielded[1])) return { kind: "bot-yielded", name: yielded[1] };
     return null;
   }
 
@@ -115,24 +126,25 @@ export function parseConsoleLine(rawLine: string): ConsoleLine | null {
   return null;
 }
 
-const GLUE_POINTS = /(Ending level\.|Opening level '[^']*'\.\.\.|\d+ Percent Complete)/;
+const GLUE_POINT = /Ending level\.|Opening level '[^']*'\.\.\.|\d+ Percent Complete/;
 
-/** Split a console line where a message without a newline is followed by the next one. */
+/**
+ * Split a console line where a message without a newline is followed by the
+ * next one. A chat line ends with its own newline and its text may contain
+ * anything, so whatever follows a glue point is taken whole once it reads as
+ * chat: a player cannot type a glue point and a join after it.
+ */
 export function splitGluedLine(line: string): string[] {
-  // A chat line ends with its own newline; its text may contain anything.
-  if (CHAT_RE.test(line.replace(/^\s+/, ""))) return [line];
-  const parts = line.split(GLUE_POINTS);
   const out: string[] = [];
-  // split() with a capture group alternates text, separator, text, ...
-  for (let i = 0; i < parts.length; i += 2) {
-    const before = parts[i];
-    const sep = parts[i + 1];
-    if (sep === undefined) {
-      if (before) out.push(before);
-    } else {
-      out.push(before + sep);
-    }
+  let rest = line;
+  while (!CHAT_RE.test(rest.replace(/^[\s\b]+/, ""))) {
+    const glue = GLUE_POINT.exec(rest);
+    if (!glue) break;
+    const end = glue.index + glue[0].length;
+    out.push(rest.slice(0, end));
+    rest = rest.slice(end);
   }
+  if (rest) out.push(rest);
   return out;
 }
 

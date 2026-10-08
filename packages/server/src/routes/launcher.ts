@@ -33,7 +33,7 @@ import { ProfileAutomation } from "../launcher/profileAutomation.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 import { serverEvents } from "../events/ServerEvents.js";
-import { ServerLineMonitor } from "../launcher/ServerLineMonitor.js";
+import { ConsoleQuitWatch } from "../launcher/consoleQuit.js";
 import { Supervisor } from "../launcher/Supervisor.js";
 import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
 import {
@@ -52,12 +52,13 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
 
-// Joins, leaves, chat and level starts onto the event bus, read from the
-// launched process's stdout (from the console for a re-attached one).
-const lineMonitor = new ServerLineMonitor();
-lineMonitor.onConsoleQuit = () => processManager.noteConsoleQuit();
-serverEvents.onEvent("server.started", ({ profileId }) => lineMonitor.reset(profileId));
-serverEvents.onEvent("server.adopted", ({ profileId }) => lineMonitor.reset(profileId));
+// A `quit` typed at a remote console, read from the launched process's
+// stdout (from the console for a re-attached one): its exit is then a stop
+// on request, not a crash. Joins, leaves, chat and level starts reach the bus
+// from the console event hub (events/consoleEventHub.ts).
+const quitWatch = new ConsoleQuitWatch(() => processManager.noteConsoleQuit());
+serverEvents.onEvent("server.started", () => quitWatch.reset());
+serverEvents.onEvent("server.adopted", () => quitWatch.reset());
 
 // One line per event in Pyrodeck's own log: the history D3Server3 kept in
 // its event log.
@@ -73,8 +74,16 @@ serverEvents.onEvent("server.hung", (e) =>
 );
 serverEvents.onEvent("server.adopted", (e) => console.log(`[Server] re-attached, pid ${e.pid} (started ${e.startedAt})`));
 serverEvents.onEvent("level.started", (e) => console.log(`[Server] level ${e.level ?? "?"} started`));
-serverEvents.onEvent("player.joined", (e) => console.log(`[Server] ${e.name} joined`));
-serverEvents.onEvent("player.left", (e) => console.log(`[Server] ${e.name} left`));
+// Humans only, one line per session: player.identified is a new session
+// (not a level re-entry), with the slot and address once looked up.
+serverEvents.onEvent("player.identified", (e) =>
+  console.log(
+    `[Server] ${e.name} joined${e.slot !== undefined ? `, slot ${e.slot}` : ""}${e.ip ? `, ${e.ip}` : ""}`,
+  ),
+);
+serverEvents.onEvent("player.left", (e) => {
+  if (!e.bot) console.log(`[Server] ${e.name} left${e.reason ? ` (${e.reason})` : ""}`);
+});
 
 // The running server's PID and launch, on disk, so the next Pyrodeck can
 // re-attach to it (reattachToRunningServer). Writes and removals are queued
@@ -747,13 +756,13 @@ export const supervisor = new Supervisor({
 /**
  * Feed a logged-in console to the supervisor, and log in again if the link
  * drops while the server runs. A re-attached server has no stdout, so its
- * console also feeds the line monitor and the playlist's level detection.
+ * console also feeds the quit watch and the playlist's level detection.
  */
 function watchConsole(connection: ServerConnection, host: string, port: number, telnetPassword: string): void {
   connection.onData((text) => {
     supervisor.consoleActivity();
     if (processManager.getStatus().adopted) {
-      lineMonitor.push(text);
+      quitWatch.push(text);
       playlistManager.onStdoutChunk(text);
     }
   });
@@ -859,7 +868,7 @@ processManager.on("stdout", (data: string) => {
   queueProcessOutput("stdout", data);
   // Feed to playlist manager unbatched — level-end detection stays immediate
   playlistManager.onStdoutChunk(data);
-  lineMonitor.push(data);
+  quitWatch.push(data);
 });
 
 processManager.on("stderr", (data: string) => {

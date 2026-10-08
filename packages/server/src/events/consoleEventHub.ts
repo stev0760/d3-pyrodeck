@@ -5,15 +5,25 @@ import { NO_PROFILE_ID } from "./ServerEvents.js";
 import type { ServerSession } from "../session/SessionManager.js";
 
 /**
+ * Whether a console host is this machine: a loopback name, or the address a
+ * server Pyrodeck launched with -useip has its console on.
+ */
+export function isThisMachine(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === processManager.consoleHost();
+}
+
+/**
  * The profile a console session belongs to: the launched profile when the
- * session is Pyrodeck's own launch, otherwise "connect:<host>:<port>". A
- * launch without a profile is NO_PROFILE_ID.
+ * session is to Pyrodeck's own launch (this machine, its console port),
+ * otherwise "connect:<host>:<port>". A launch without a profile is
+ * NO_PROFILE_ID.
  */
 export function consoleProfileId(host: string, port: number): string {
   const status = processManager.getStatus();
   const launched = status.state === "running" || status.state === "starting";
-  const local = host === "localhost" || host === "127.0.0.1" || host === "::1";
-  if (launched && local) return status.activeProfileId ?? NO_PROFILE_ID;
+  if (launched && isThisMachine(host) && port === processManager.getLaunchConfig()?.telnetPort) {
+    return status.activeProfileId ?? NO_PROFILE_ID;
+  }
   return `connect:${host}:${port}`;
 }
 

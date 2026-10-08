@@ -2,7 +2,8 @@ import { serverEvents, type ServerEvents } from "../events/ServerEvents.js";
 import { HangWatch, type HangWatchSnapshot } from "./HangWatch.js";
 import { RelaunchBackoff, type RelaunchBackoffOptions } from "./RelaunchBackoff.js";
 import { emptyRestartDecision, formatDuration } from "./emptyRestart.js";
-import { humansIn, isBotCallsign, parsePlayersReply } from "./serverLines.js";
+import { isBotName } from "../events/consoleLines.js";
+import { humansIn, parsePlayers } from "../parser/parsers/players.js";
 import type { StopReason } from "./ProcessManager.js";
 import { DEFAULT_SUPERVISOR_SETTINGS, type SupervisorSettings } from "./supervisorSettings.js";
 
@@ -106,8 +107,13 @@ export class Supervisor {
   private gaveUp: { at: number; reason: string } | null = null;
   private lastCrash: { at: number; code: number | null; signal: string | null } | null = null;
   private lastHang: { at: number; silentForMs: number } | null = null;
-  /** Humans by callsign (a count, in case two share one); null = not known. */
-  private humans: Map<string, number> | null = null;
+  /**
+   * Humans by callsign; null = not known. A set: the join line repeats for
+   * everyone at each level start, so a join of a name already here is a
+   * re-entry. Two humans sharing a callsign count once, and $players
+   * confirms an empty server before a restart.
+   */
+  private humans: Set<string> | null = null;
   private emptySince: number | null = null;
   private emptyNote: string | null = null;
   private emptyCheckRunning = false;
@@ -164,7 +170,7 @@ export class Supervisor {
     }
     this.running = { profileId, pid, startedAt: Date.now(), adopted: false };
     // A fresh server is empty until someone joins.
-    this.humans = new Map();
+    this.humans = new Set();
     this.emptySince = Date.now();
     this.emptyNote = null;
     this.hang.stop();
@@ -217,16 +223,14 @@ export class Supervisor {
   }
 
   playerJoined(name: string): void {
-    if (!this.humans || isBotCallsign(name)) return;
-    this.humans.set(name, (this.humans.get(name) ?? 0) + 1);
+    if (!this.humans || isBotName(name)) return;
+    this.humans.add(name);
     this.emptySince = null;
   }
 
   playerLeft(name: string): void {
-    if (!this.humans || isBotCallsign(name)) return;
-    const n = this.humans.get(name) ?? 0;
-    if (n <= 1) this.humans.delete(name);
-    else this.humans.set(name, n - 1);
+    if (!this.humans || isBotName(name)) return;
+    this.humans.delete(name);
     if (this.humanCount() === 0 && this.emptySince === null) this.emptySince = Date.now();
   }
 
@@ -314,8 +318,8 @@ export class Supervisor {
     this.actions
       .command(PROBE_COMMAND)
       .then((reply) => {
-        const entries = parsePlayersReply(reply);
-        if (entries) this.setRoster(humansIn(entries));
+        const parsed = parsePlayers(reply);
+        if (parsed) this.setRoster(humansIn(parsed).map((p) => p.name));
       })
       .catch(() => {
         // No console: the silence keeps counting.
@@ -343,16 +347,11 @@ export class Supervisor {
   // ---------------------------------------------------------------------------
 
   private humanCount(): number | null {
-    if (!this.humans) return null;
-    let n = 0;
-    for (const c of this.humans.values()) n += c;
-    return n;
+    return this.humans ? this.humans.size : null;
   }
 
   private setRoster(names: string[]): void {
-    const roster = new Map<string, number>();
-    for (const name of names) roster.set(name, (roster.get(name) ?? 0) + 1);
-    this.humans = roster;
+    this.humans = new Set(names);
     if (names.length > 0) this.emptySince = null;
     else if (this.emptySince === null) this.emptySince = Date.now();
   }
@@ -387,12 +386,12 @@ export class Supervisor {
     // another language would never have reached the roster.
     this.emptyCheckRunning = true;
     try {
-      const entries = parsePlayersReply(await this.actions.command(PROBE_COMMAND));
-      if (!entries) {
+      const parsed = parsePlayers(await this.actions.command(PROBE_COMMAND));
+      if (!parsed) {
         this.emptyNote = `could not read ${PROBE_COMMAND}; not restarting`;
         return;
       }
-      this.setRoster(humansIn(entries));
+      this.setRoster(humansIn(parsed).map((p) => p.name));
       const confirmed = this.decideEmpty(Date.now());
       this.emptyNote = confirmed.reason;
       if (!confirmed.due || !this.running) return;

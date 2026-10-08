@@ -14,6 +14,7 @@
  * (Descent3/multi_server.cpp:2841).
  */
 import type { SendLine } from "./periodicCommands.js";
+import { isBotName } from "../events/consoleLines.js";
 
 export const RESPAWN_SECONDS_MIN = 1;
 export const RESPAWN_SECONDS_MAX = 10000;
@@ -93,11 +94,6 @@ export function scaledRespawnSeconds(humans: number, s: RespawnScaling): number 
   return Math.round(s.maxSeconds - t * (s.maxSeconds - s.minSeconds));
 }
 
-/** Bots carry a [BOT] suffix (Matcen prints "Name[BOT]"; builds before 0.9.9 "Name [BOT]"). */
-export function isBotName(name: string): boolean {
-  return /\[BOT\]$/i.test(name.trim());
-}
-
 export interface RespawnScalerOptions {
   debounceMs?: number;
   log?: (message: string) => void;
@@ -112,7 +108,11 @@ export interface RespawnScalerOptions {
 export class RespawnScaler {
   private settings: RespawnScaling | null = null;
   private send: SendLine | null = null;
-  private humans = new Map<string, number>();
+  /**
+   * Humans by callsign. A set: the join line repeats for everyone at each
+   * level start, so a join of a name already here is a re-entry.
+   */
+  private humans = new Set<string>();
   private lastSent: number | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly debounceMs: number;
@@ -149,23 +149,19 @@ export class RespawnScaler {
   }
 
   humanCount(): number {
-    let n = 0;
-    for (const c of this.humans.values()) n += c;
-    return n;
+    return this.humans.size;
   }
 
   playerJoined(name: string): void {
     if (!this.settings || isBotName(name)) return;
-    this.humans.set(name, (this.humans.get(name) ?? 0) + 1);
+    if (this.humans.has(name)) return;
+    this.humans.add(name);
     this.schedule();
   }
 
   playerLeft(name: string): void {
     if (!this.settings || isBotName(name)) return;
-    const c = this.humans.get(name);
-    if (c === undefined) return;
-    if (c <= 1) this.humans.delete(name);
-    else this.humans.set(name, c - 1);
+    if (!this.humans.delete(name)) return;
     this.schedule();
   }
 

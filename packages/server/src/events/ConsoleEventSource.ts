@@ -104,6 +104,18 @@ export class ConsoleEventSource {
           reason: "bot removed",
         });
         break;
+      case "bot-yielded": {
+        const slot = this.bots.get(parsed.name);
+        this.bots.delete(parsed.name);
+        this.bus.emitEvent("player.left", {
+          profileId,
+          name: parsed.name,
+          ...(slot !== undefined ? { slot } : {}),
+          bot: true,
+          reason: "bot removed",
+        });
+        break;
+      }
       case "bots-cleared":
         for (const [name, slot] of this.bots) {
           this.bus.emitEvent("player.left", { profileId, name, slot, bot: true, reason: "bot removed" });
