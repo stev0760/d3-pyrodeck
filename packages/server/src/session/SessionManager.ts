@@ -29,6 +29,16 @@ export interface ServerSession {
  */
 export class SessionManager {
   private sessions = new Map<string, ServerSession>();
+  private stateListeners: Array<(session: ServerSession) => void> = [];
+
+  /** Called after every state change of any session, removal ("disconnected") included. */
+  onStateChange(listener: (session: ServerSession) => void): void {
+    this.stateListeners.push(listener);
+  }
+
+  private notify(session: ServerSession): void {
+    for (const listener of this.stateListeners) listener(session);
+  }
 
   create(
     connection: ServerConnection,
@@ -70,6 +80,7 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (session) {
       session.state = state;
+      this.notify(session);
     }
   }
 
@@ -86,6 +97,7 @@ export class SessionManager {
       session.state = "disconnected";
       session.connection.disconnect();
       this.sessions.delete(id);
+      this.notify(session);
     }
   }
 

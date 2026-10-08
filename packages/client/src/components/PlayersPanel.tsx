@@ -12,8 +12,9 @@ interface PlayersPanelProps {
 
 /** The Players tab: who is on now, and the join/leave history. */
 export function PlayersPanel({ connected, sendCommand, onPlayers, notify }: PlayersPanelProps) {
-  const [view, setView] = useState<"live" | "history">(connected ? "live" : "history");
-  const shown = connected ? view : "history";
+  // null: follow the connection (in game while connected, history otherwise).
+  const [view, setView] = useState<"live" | "history" | null>(null);
+  const shown = connected ? (view ?? "live") : "history";
 
   return (
     <div className="h-full flex flex-col gap-2 min-h-0">

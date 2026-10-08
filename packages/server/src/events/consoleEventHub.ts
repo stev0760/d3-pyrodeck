@@ -1,9 +1,7 @@
 import { sessionManager } from "../routes/server.js";
 import { processManager } from "../routes/launcher.js";
 import { ConsoleEventSource } from "./ConsoleEventSource.js";
-
-/** How often to look for a new console session to read. */
-const SESSION_CHECK_MS = 1000;
+import type { ServerSession } from "../session/SessionManager.js";
 
 /**
  * The profile a console session belongs to: the launched profile when the
@@ -20,16 +18,16 @@ export function consoleProfileId(host: string, port: number): string {
 
 let current: { sessionId: string; source: ConsoleEventSource } | null = null;
 
-function attachToActiveSession(): void {
-  const session = sessionManager.getActive();
-  if (!session || session.state !== "ready") {
-    if (current && (!session || session.id !== current.sessionId)) {
+/** Read a session from its login on, so nothing printed after the connect is missed. */
+function onSessionState(session: ServerSession): void {
+  if (session.state === "disconnected") {
+    if (current?.sessionId === session.id) {
       current.source.dispose();
       current = null;
     }
     return;
   }
-  if (current?.sessionId === session.id) return;
+  if (session.state === "connecting" || current?.sessionId === session.id) return;
   current?.source.dispose();
   const { host, port } = session.connectionInfo;
   const source = new ConsoleEventSource(consoleProfileId(host, port));
@@ -46,5 +44,5 @@ export function activeConsoleProfileId(): string | null {
 
 /** Start reading every console session Pyrodeck opens (Connect and Launch mode). */
 export function startConsoleEvents(): void {
-  setInterval(attachToActiveSession, SESSION_CHECK_MS).unref();
+  sessionManager.onStateChange(onSessionState);
 }
