@@ -4,11 +4,150 @@ interface LogFile {
   name: string;
   size: number;
   mtimeMs: number;
+  /** A .log.gz that log retention compressed: viewed decompressed, downloaded as is. */
+  compressed?: boolean;
 }
 
 interface LogsResponse {
   logDir: string | null;
   files: LogFile[];
+}
+
+interface RetentionSettings {
+  days: number;
+  maxMb: number;
+  compress: boolean;
+}
+
+interface RetentionState {
+  settings: RetentionSettings;
+  stored: RetentionSettings;
+  /** PYRODECK_LOG_RETENTION_DAYS / PYRODECK_LOG_MAX_MB when set; they win over the stored values. */
+  env: { days: number | null; maxMb: number | null };
+  dirs: string[];
+  lastRun: {
+    at: string;
+    compressed: number;
+    deleted: number;
+    freedBytes: number;
+    files: number;
+    totalBytes: number;
+    errors: string[];
+  } | null;
+}
+
+const RETENTION_INPUT =
+  "w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60";
+
+/** Logs tab: how long Pyrodeck keeps its logs, how much space they may take, and whether closed ones are gzipped. */
+function LogRetention({ onSaved }: { onSaved: () => void }) {
+  const [state, setState] = useState<RetentionState | null>(null);
+  const [days, setDays] = useState("");
+  const [maxMb, setMaxMb] = useState("");
+  const [compress, setCompress] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = (s: RetentionState) => {
+    setState(s);
+    setDays(String(s.settings.days));
+    setMaxMb(String(s.settings.maxMb));
+    setCompress(s.settings.compress);
+  };
+
+  useEffect(() => {
+    fetch("/api/logs/retention", { credentials: "include" })
+      .then((r) => (r.ok ? (r.json() as Promise<RetentionState>) : null))
+      .then((s) => s && load(s))
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!state) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/logs/retention", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        // A value the environment sets is sent as stored, unchanged.
+        body: JSON.stringify({
+          days: state.env.days !== null ? state.stored.days : Number(days),
+          maxMb: state.env.maxMb !== null ? state.stored.maxMb : Number(maxMb),
+          compress,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError((body as { error?: string }).error ?? "Failed to save the retention settings");
+        return;
+      }
+      load(body as RetentionState);
+      // Retention runs right after a save; list the files again once it is done.
+      setTimeout(onSaved, 1500);
+    } catch {
+      setError("Failed to save the retention settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!state) return null;
+  const last = state.lastRun;
+  return (
+    <div className="space-y-2 border border-border rounded-md p-3 bg-card">
+      <h3 className="text-sm font-score tracking-wide text-muted-foreground">Retention</h3>
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="text-[10px] text-muted-foreground">
+          Delete after (days, 0 = never)
+          <input
+            type="number"
+            min={0}
+            max={3650}
+            value={days}
+            disabled={state.env.days !== null}
+            onChange={(e) => setDays(e.target.value)}
+            className={`${RETENTION_INPUT} mt-0.5`}
+          />
+          {state.env.days !== null && <span className="block mt-0.5">Set by PYRODECK_LOG_RETENTION_DAYS</span>}
+        </label>
+        <label className="text-[10px] text-muted-foreground">
+          Total size cap (MB, 0 = none)
+          <input
+            type="number"
+            min={0}
+            value={maxMb}
+            disabled={state.env.maxMb !== null}
+            onChange={(e) => setMaxMb(e.target.value)}
+            className={`${RETENTION_INPUT} mt-0.5`}
+          />
+          {state.env.maxMb !== null && <span className="block mt-0.5">Set by PYRODECK_LOG_MAX_MB</span>}
+        </label>
+      </div>
+      <label className="flex items-center gap-2 text-xs text-foreground/80">
+        <input type="checkbox" checked={compress} onChange={(e) => setCompress(e.target.checked)} />
+        Compress closed logs (gzip)
+      </label>
+      <Button size="xs" onClick={() => void save()} disabled={saving} className="font-score tracking-wide">
+        {saving ? "Saving..." : "Save"}
+      </Button>
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Applies to the logs Pyrodeck writes (named <span className="font-mono">profile-YYYY-MM-DDTHH-MM-SS.log</span>) and
+        to nothing else in the directory. The running server's log, and any log written in the last ten minutes, is never
+        compressed or deleted. Old logs go first by age, then the oldest until the total fits the cap. Pyrodeck applies
+        this at startup, every hour and when you save.
+      </p>
+      {last && (
+        <p className={`text-[10px] leading-snug ${last.errors.length ? "text-amber-400" : "text-muted-foreground"}`}>
+          Last run {new Date(last.at).toLocaleString()}: {last.compressed} compressed, {last.deleted} deleted,{" "}
+          {formatBytes(last.freedBytes)} freed; {last.files} logs take {formatBytes(last.totalBytes)}.
+          {last.errors.length > 0 && ` ${last.errors.join(" ")}`}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function formatBytes(bytes: number): string {
@@ -193,6 +332,8 @@ export function LogsPanel() {
         )}
       </div>
 
+      <LogRetention onSaved={() => void refresh()} />
+
       {/* Inline viewer — rendered above the file list so the user sees the
           result of clicking View without scrolling past 100+ rows. The ref
           scrolls it to the top of the panel once the fetch resolves. */}
@@ -247,7 +388,8 @@ export function LogsPanel() {
                   {f.name}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  {formatBytes(f.size)} · {formatTime(f.mtimeMs)}
+                  {formatBytes(f.size)}
+                  {f.compressed ? " compressed" : ""} · {formatTime(f.mtimeMs)}
                 </p>
               </div>
               <Button

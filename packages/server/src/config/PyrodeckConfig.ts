@@ -20,6 +20,11 @@ import {
   type PlayerSettings,
 } from "../players/playerSettings.js";
 import { DEFAULT_PLAYER_RULES, sanitizeStoredPlayerRules, type PlayerRules } from "../rules/ruleSettings.js";
+import {
+  DEFAULT_LOG_RETENTION,
+  sanitizeStoredLogRetention,
+  type LogRetentionSettings,
+} from "../launcher/logRetention.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -32,6 +37,12 @@ export interface PyrodeckConfig {
    * sit alongside the install rather than buried in a Pyrodeck-internal path.
    */
   logDir: string | null;
+  /**
+   * Retention for the logs Pyrodeck writes (launcher/logRetention.ts). Set via
+   * /api/logs/retention only; PYRODECK_LOG_RETENTION_DAYS and
+   * PYRODECK_LOG_MAX_MB win over days and maxMb.
+   */
+  logRetention: LogRetentionSettings;
   /** Default telnet port for D3 remote console. */
   defaultTelnetPort: number;
   /** Preferred UI mode on startup. */
@@ -69,6 +80,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   gamePath: null,
   executablePath: null,
   logDir: null,
+  logRetention: { ...DEFAULT_LOG_RETENTION },
   defaultTelnetPort: 2092,
   preferredMode: "connect",
   adminPasswordHash: null,
@@ -103,6 +115,9 @@ function migrateConfig(
   }
   if ("logDir" in raw) {
     migrated.logDir = (raw.logDir as string | null) ?? null;
+  }
+  if ("logRetention" in raw) {
+    migrated.logRetention = sanitizeStoredLogRetention(raw.logRetention);
   }
 
   // Migrate legacy fields

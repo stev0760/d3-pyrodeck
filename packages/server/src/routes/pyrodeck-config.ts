@@ -28,10 +28,11 @@ export async function pyrodeckConfigRoutes(
 
   app.put("/api/pyrodeck/config", async (request, reply) => {
     // The mission host, the supervisor, the operations settings, the player
-    // settings and the player rules have their own routes (validation,
-    // applying the change to what runs, the SMTP password).
+    // settings, the player rules and log retention have their own routes
+    // (validation, applying the change to what runs, the SMTP password).
     const {
       adminPasswordHash: _,
+      logRetention: _retention,
       missionHost: _host,
       supervisor: _supervisor,
       mail: _mail,

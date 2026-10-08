@@ -2,8 +2,20 @@ import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
+import { createGunzip } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { Writable } from "node:stream";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { resolveLogDir } from "../launcher/logPaths.js";
+import {
+  LogRetentionService,
+  describeLogRetention,
+  effectiveLogRetention,
+  parseLogRetentionEnv,
+  sanitizeStoredLogRetention,
+  validateLogRetention,
+  type LogRetentionEnv,
+} from "../launcher/logRetention.js";
 import { processManager } from "./launcher.js";
 
 /**
@@ -27,6 +39,16 @@ function viewerLogDir(): string | null {
 /** How much of a log the in-browser viewer fetches with ?tail=1 (last N bytes). */
 const TAIL_BYTES = 256 * 1024;
 
+/** A log the viewer lists: `.log`, or `.log.gz` (log retention compresses closed logs). */
+function isLogFileName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".log") || lower.endsWith(".log.gz");
+}
+
+function isCompressed(name: string): boolean {
+  return name.toLowerCase().endsWith(".gz");
+}
+
 /** Reject path traversal / non-log filenames. Returns the safe basename or null. */
 function safeLogName(name: string): string | null {
   if (
@@ -35,11 +57,51 @@ function safeLogName(name: string): string | null {
     name.includes("/") ||
     name.includes("\\") ||
     name.includes("\0") ||
-    !name.toLowerCase().endsWith(".log")
+    !isLogFileName(name)
   ) {
     return null;
   }
   return name;
+}
+
+/**
+ * The last `TAIL_BYTES` of a gzipped log, decompressed, and its full
+ * decompressed size. A gzip stream has no index, so this reads the whole file
+ * and keeps only the end.
+ */
+async function gunzipTail(filePath: string): Promise<{ tail: Buffer; total: number }> {
+  let chunks: Buffer[] = [];
+  let held = 0;
+  let total = 0;
+  await pipeline(
+    createReadStream(filePath),
+    createGunzip(),
+    new Writable({
+      write(chunk: Buffer, _enc, done) {
+        chunks.push(chunk);
+        held += chunk.length;
+        total += chunk.length;
+        if (held > 2 * TAIL_BYTES) {
+          const joined = Buffer.concat(chunks);
+          chunks = [joined.subarray(joined.length - TAIL_BYTES)];
+          held = TAIL_BYTES;
+        }
+        done();
+      },
+    }),
+  );
+  const joined = Buffer.concat(chunks);
+  return { tail: joined.length > TAIL_BYTES ? joined.subarray(joined.length - TAIL_BYTES) : joined, total };
+}
+
+/** Directories log retention looks in: the Log Directory, and the folder of the last launch's log. */
+function retentionDirs(): string[] {
+  const dirs: string[] = [];
+  const viewer = viewerLogDir();
+  if (viewer) dirs.push(viewer);
+  const last = processManager.getLaunchConfig()?.logPath;
+  if (last) dirs.push(path.dirname(last));
+  return dirs;
 }
 
 /**
@@ -63,6 +125,42 @@ function resolveLogFile(name: string): { filePath: string } | { status: number; 
 }
 
 export async function logsRoutes(app: FastifyInstance): Promise<void> {
+  // Log retention: PYRODECK_LOG_RETENTION_DAYS and PYRODECK_LOG_MAX_MB win
+  // over the Logs tab's settings. A malformed value stops the start here.
+  const retentionEnv: LogRetentionEnv = parseLogRetentionEnv(process.env);
+  const storedRetention = () => sanitizeStoredLogRetention(pyrodeckConfig.get().logRetention);
+  const retentionSettings = () => effectiveLogRetention(storedRetention(), retentionEnv);
+  const retention = new LogRetentionService({
+    dirs: retentionDirs,
+    activeLogPath: () => processManager.getActiveLogPath(),
+    settings: retentionSettings,
+    log: { info: (m) => app.log.info(m), warn: (m) => app.log.warn(m) },
+  });
+  app.log.info(`Log retention: ${describeLogRetention(retentionSettings())}; at startup and every hour.`);
+  retention.start();
+  app.addHook("onClose", async () => retention.stop());
+
+  const retentionState = () => ({
+    settings: retentionSettings(),
+    stored: storedRetention(),
+    env: retentionEnv,
+    dirs: [...new Set(retentionDirs().map((d) => path.resolve(d)))],
+    lastRun: retention.getLastResult(),
+  });
+
+  app.get("/api/logs/retention", async () => retentionState());
+
+  // Save the Logs tab's retention settings and run retention with them. Days
+  // and the size cap set in the environment stay in force whatever is saved.
+  app.put("/api/logs/retention", async (request, reply) => {
+    const checked = validateLogRetention(request.body);
+    if ("error" in checked) return reply.status(400).send({ error: checked.error });
+    await pyrodeckConfig.save({ logRetention: checked.settings });
+    app.log.info(`Log retention settings saved: ${describeLogRetention(retentionSettings())}.`);
+    void retention.runAfterChange();
+    return retentionState();
+  });
+
   // List available log files in the resolved log directory.
   app.get("/api/logs", async () => {
     const logDir = viewerLogDir();
@@ -78,18 +176,18 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
     const files = (
       await Promise.all(
         entries
-          .filter((f) => f.toLowerCase().endsWith(".log"))
+          .filter(isLogFileName)
           .map(async (name) => {
             try {
               const st = await fs.stat(path.join(logDir, name));
               if (!st.isFile()) return null;
-              return { name, size: st.size, mtimeMs: st.mtimeMs };
+              return { name, size: st.size, mtimeMs: st.mtimeMs, compressed: isCompressed(name) };
             } catch {
               return null;
             }
           }),
       )
-    ).filter((f): f is { name: string; size: number; mtimeMs: number } => f !== null);
+    ).filter((f): f is { name: string; size: number; mtimeMs: number; compressed: boolean } => f !== null);
 
     // Newest first — that's the run you almost always want.
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -113,6 +211,36 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { download, tail } = request.query as { download?: string; tail?: string };
+
+    // A compressed log downloads as the .gz file itself and is decompressed
+    // for viewing.
+    if (isCompressed(filePath)) {
+      if (download === "1") {
+        reply.type("application/gzip");
+        reply.header("Content-Disposition", `attachment; filename="${path.basename(filePath)}"`);
+        return reply.send(createReadStream(filePath));
+      }
+      if (tail === "1") {
+        let decompressed: { tail: Buffer; total: number };
+        try {
+          decompressed = await gunzipTail(filePath);
+        } catch (err) {
+          return reply.status(500).send({ error: `Cannot decompress ${path.basename(filePath)}: ${(err as Error).message}` });
+        }
+        reply.type("text/plain; charset=utf-8");
+        if (decompressed.total > decompressed.tail.length) {
+          reply.header("X-Log-Truncated", "1");
+          reply.header("X-Log-Total-Size", String(decompressed.total));
+        }
+        return reply.send(decompressed.tail);
+      }
+      const source = createReadStream(filePath);
+      const gunzip = createGunzip();
+      source.on("error", (err) => gunzip.destroy(err));
+      reply.type("text/plain; charset=utf-8");
+      return reply.send(source.pipe(gunzip));
+    }
+
     reply.type("text/plain; charset=utf-8");
     if (download === "1") {
       reply.header("Content-Disposition", `attachment; filename="${path.basename(filePath)}"`);
