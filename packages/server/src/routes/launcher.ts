@@ -28,6 +28,15 @@ import { serverEvents } from "../events/ServerEvents.js";
 import { ServerLineMonitor } from "../launcher/ServerLineMonitor.js";
 import { Supervisor } from "../launcher/Supervisor.js";
 import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
+import {
+  clearRunRecord,
+  decideAdopt,
+  readLinuxIdentity,
+  readProcessFacts,
+  readRunRecord,
+  writeRunRecord,
+  type RunRecord,
+} from "../launcher/runRecord.js";
 
 export { playlistManager };
 
@@ -36,10 +45,44 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 export const processManager = new ProcessManager();
 
 // Joins, leaves, chat and level starts onto the event bus, read from the
-// launched process's stdout.
+// launched process's stdout (from the console for a re-attached one).
 const lineMonitor = new ServerLineMonitor();
 lineMonitor.onConsoleQuit = () => processManager.noteConsoleQuit();
 serverEvents.onEvent("server.started", ({ profileId }) => lineMonitor.reset(profileId));
+serverEvents.onEvent("server.adopted", ({ profileId }) => lineMonitor.reset(profileId));
+
+// The running server's PID and launch, on disk, so the next Pyrodeck can
+// re-attach to it (reattachToRunningServer). Writes and removals are queued
+// so a quick exit cannot leave a stale record behind.
+let runRecordQueue: Promise<void> = Promise.resolve();
+function queueRunRecord(task: () => Promise<void>): void {
+  runRecordQueue = runRecordQueue.then(task).catch((err) => {
+    console.warn(`[Pyrodeck] Could not update ${CONFIG_DIR}/running-server.json: ${err instanceof Error ? err.message : err}`);
+  });
+}
+serverEvents.onEvent("server.started", ({ pid, args }) => {
+  queueRunRecord(async () => {
+    const config = processManager.getLaunchConfig();
+    const status = processManager.getStatus();
+    if (!config || status.pid !== pid) return;
+    const linux = process.platform === "linux" ? await readLinuxIdentity(pid) : null;
+    const record: RunRecord = {
+      version: 1,
+      pid,
+      profileId: config.profileId ?? null,
+      executablePath: config.executablePath,
+      gamePath: config.gamePath,
+      configFile: config.configFile,
+      args,
+      logPath: config.logPath ?? null,
+      telnetPort: config.telnetPort,
+      startedAt: (status.startedAt ?? new Date()).toISOString(),
+      ...(linux ? { linux: { startTicks: linux.startTicks, bootId: linux.bootId } } : {}),
+    };
+    if (processManager.getStatus().pid !== pid) return; // already gone
+    await writeRunRecord(CONFIG_DIR, record);
+  });
+});
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -633,9 +676,19 @@ export const supervisor = new Supervisor({
   },
 });
 
-/** Feed a logged-in console to the supervisor, and log in again if the link drops while the server runs. */
+/**
+ * Feed a logged-in console to the supervisor, and log in again if the link
+ * drops while the server runs. A re-attached server has no stdout, so its
+ * console also feeds the line monitor and the playlist's level detection.
+ */
 function watchConsole(connection: ServerConnection, port: number, telnetPassword: string): void {
-  connection.onData(() => supervisor.consoleActivity());
+  connection.onData((text) => {
+    supervisor.consoleActivity();
+    if (processManager.getStatus().adopted) {
+      lineMonitor.push(text);
+      playlistManager.onStdoutChunk(text);
+    }
+  });
   connection.onDisconnect(() => scheduleConsoleReconnect(port, telnetPassword));
   stopConsoleReconnect();
   supervisor.consoleReady();
@@ -690,6 +743,7 @@ processManager.on("stateChange", (state: string) => {
   }
   if (state === "stopped" || state === "crashed") {
     stopConsoleReconnect();
+    queueRunRecord(() => clearRunRecord(CONFIG_DIR));
     const { exitCode, exitSignal, stopReason } = processManager.getStatus();
     supervisor.processDown({
       crashed: state === "crashed",
@@ -751,10 +805,88 @@ processManager.on("logWarning", (message: string) => {
   wsBroadcast("error", { message });
 });
 
+/**
+ * Re-attach to the server the previous Pyrodeck run launched, if it is still
+ * running (D3Server3 does the same with its saved process IDs). What works
+ * afterwards: status, console, Stop, the supervisor, playlist level
+ * detection (from the console). What does not: the server's stdout is gone
+ * with the old Pyrodeck, so the Output tab and the log file get nothing more,
+ * and its exit code is not known.
+ */
+async function reattachToRunningServer(): Promise<void> {
+  const record = await readRunRecord(CONFIG_DIR);
+  if (!record) return;
+  const forget = async (why: string) => {
+    console.log(`[Pyrodeck] Not re-attaching to server PID ${record.pid}: ${why}`);
+    await clearRunRecord(CONFIG_DIR);
+  };
+
+  const decision = decideAdopt(record, await readProcessFacts(record.pid), process.platform);
+  if (!decision.adopt) return forget(decision.reason);
+
+  let password: string | null;
+  try {
+    const cfg = await fs.readFile(path.join(record.gamePath, record.configFile), "utf-8");
+    password = extractTelnetConfig(parseDedicatedCfg(cfg)).password ?? null;
+  } catch {
+    password = null;
+  }
+  if (!password) {
+    // Leave the record: the server runs, Pyrodeck just cannot log in to it.
+    console.warn(`[Pyrodeck] Server PID ${record.pid} is still running, but ${record.configFile} has no console password; not re-attaching.`);
+    return;
+  }
+
+  if (process.platform !== "linux") {
+    // Only "a process with this PID is alive" is known here; prove it is the
+    // server by logging in to its console first.
+    const probe = new TelnetConnection();
+    try {
+      await probe.connect("localhost", record.telnetPort, password);
+    } catch (err) {
+      return forget(`no server answers on console port ${record.telnetPort} (${err instanceof Error ? err.message : err})`);
+    } finally {
+      await probe.disconnect();
+    }
+  }
+
+  const linux = record.linux;
+  const isAlive = async (): Promise<boolean> => {
+    const facts = await readProcessFacts(record.pid);
+    return facts.alive && (!linux || facts.linux?.startTicks === linux.startTicks);
+  };
+  const config: LaunchConfig = {
+    executablePath: record.executablePath,
+    gamePath: record.gamePath,
+    configFile: record.configFile,
+    logPath: record.logPath ?? undefined,
+    telnetPort: record.telnetPort,
+    telnetPassword: password,
+    profileId: record.profileId ?? undefined,
+  };
+
+  processManager.removeAllListeners("telnetReady");
+  processManager.once("telnetReady", (port: number) => {
+    connectConsole(port, password, { again: true, anchorPlaylist: true }).catch((err) => {
+      wsBroadcast("error", {
+        message: `Re-attached to the running server, but its console login failed (${err instanceof Error ? err.message : err}). Retrying every 5 s.`,
+      });
+      scheduleConsoleReconnect(port, password);
+    });
+  });
+  processManager.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
+  console.log(`[Pyrodeck] Re-attached to the server Pyrodeck launched before it restarted (PID ${record.pid})`);
+}
+
 export async function launcherRoutes(app: FastifyInstance): Promise<void> {
   // pyrodeck.json is loaded by now (it was not when this module was evaluated).
   supervisor.applySettings(pyrodeckConfig.get().supervisor);
   app.addHook("onClose", async () => supervisor.dispose());
+  try {
+    await reattachToRunningServer();
+  } catch (err) {
+    console.warn(`[Pyrodeck] Re-attach failed: ${err instanceof Error ? err.message : err}`);
+  }
 
   app.post("/api/launcher/start", async (request, reply) => {
     if (processManager.isRunning()) {

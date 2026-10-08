@@ -1329,6 +1329,33 @@ signal}`, `lastHang {at, silentForMs}`, `hang {state: off|listening|probing|load
 probeAt, restartAt}`, `uptimeMs`, `humans` (null = unknown), `emptySince`, `emptyRestart` (why not
 yet, null when off), `adopted`. The process status also carries `stopReason`.
 
+### D.5 Re-attach after Pyrodeck restarts
+
+For the server to outlive Pyrodeck, `ProcessManager.start` spawns it `detached` (its own process
+group on POSIX, so a Ctrl+C or SIGHUP to Pyrodeck's group does not reach it; outside libuv's
+kill-on-close job object on Windows), and on POSIX through
+`/bin/sh -c 'trap "" PIPE; exec "$0" "$@"' <exe> <args>`. Without that, the first write to stdout
+after Pyrodeck exits raises SIGPIPE, which kills the server: the engine installs no SIGPIPE handler
+(`install_signal_handlers`, sdlmain.cpp) and libuv resets every signal in the child. An ignored
+signal survives `exec`; the PID and `/proc/<pid>/cmdline` are the server's.
+
+`config/running-server.json` (`launcher/runRecord.ts`) holds `pid`, `profileId`, `executablePath`,
+`gamePath`, `configFile`, `args`, `logPath`, `telnetPort`, `startedAt` and, on Linux, the process's
+start time in clock ticks (`/proc/<pid>/stat` field 22) and `/proc/sys/kernel/random/boot_id`. It is
+written on `server.started` and removed when the process goes down; the console password is not
+stored. At startup Pyrodeck adopts the process only if (Linux) it is alive and not a zombie, the
+boot ID and start ticks match (so a reused PID is never taken), argv[0] is the executable and
+`-dedicated` is among the arguments; elsewhere if `process.kill(pid, 0)` finds it, it started after
+the last boot, and a login to its console port with the config file's password succeeds. Anything
+else removes the record and logs why.
+
+An adopted process: state `running`, `adopted: true`, `server.adopted` on the bus; the console logs
+in (no post-start settings; the playlist timer is anchored once); Stop sends `quit`, then SIGTERM
+and SIGKILL by PID; its exit is found by polling every second (exit code unknown, so an exit
+without a request is a crash and the supervisor relaunches it). Its stdout went to the old
+Pyrodeck, so the Output tab and log get nothing more; the console then feeds the line monitor
+(D.1) and the playlist's level detection instead.
+
 ---
 
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*

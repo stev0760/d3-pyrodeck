@@ -129,6 +129,7 @@ export class Supervisor {
     this.hang.on("hung", (silentForMs: number) => void this.onHung(silentForMs));
 
     this.events.onEvent("server.started", (p) => this.processStarted(p.profileId, p.pid, p.reason));
+    this.events.onEvent("server.adopted", (p) => this.processAdopted(p.profileId, p.pid, Date.parse(p.startedAt)));
     this.events.onEvent("player.joined", (p) => this.playerJoined(p.name));
     this.events.onEvent("player.left", (p) => this.playerLeft(p.name));
     this.events.onEvent("level.started", () => this.hang.levelLoad());
