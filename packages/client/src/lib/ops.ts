@@ -78,6 +78,20 @@ export interface MailTestResult {
   error: string | null;
 }
 
+export type PriorityClass = "below-normal" | "normal" | "above-normal" | "high";
+
+export interface PriorityState {
+  priorityClass: PriorityClass;
+  platform: string;
+  last: {
+    pid: number;
+    priorityClass: PriorityClass;
+    value: number;
+    applied: number;
+    warning: string | null;
+  } | null;
+}
+
 /** GET a JSON resource; null on any failure. */
 export async function getJson<T>(url: string): Promise<T | null> {
   try {

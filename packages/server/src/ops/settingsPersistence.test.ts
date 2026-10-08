@@ -14,9 +14,10 @@ describe("operations settings in pyrodeck.json", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it("defaults to mail off", async () => {
+  it("defaults to mail off and normal priority", async () => {
     const config = await new PyrodeckConfigManager(dir).load();
     expect(config.mail).toEqual(DEFAULT_MAIL_SETTINGS);
+    expect(config.processPriority).toBe("normal");
   });
 
   it("round-trips the settings and writes the file owner-only", async () => {
@@ -24,9 +25,11 @@ describe("operations settings in pyrodeck.json", () => {
     await m.load();
     await m.save({
       mail: { ...DEFAULT_MAIL_SETTINGS, host: "smtp.example.org", password: "hunter2" },
+      processPriority: "below-normal",
     });
     const again = await new PyrodeckConfigManager(dir).load();
     expect(again.mail.password).toBe("hunter2");
+    expect(again.processPriority).toBe("below-normal");
     if (process.platform !== "win32") {
       expect((await fs.stat(path.join(dir, "pyrodeck.json"))).mode & 0o777).toBe(0o600);
     }
@@ -35,9 +38,10 @@ describe("operations settings in pyrodeck.json", () => {
   it("loads hand-edited bad values safely", async () => {
     await fs.writeFile(
       path.join(dir, "pyrodeck.json"),
-      JSON.stringify({ mail: { enabled: true, host: "" } }),
+      JSON.stringify({ mail: { enabled: true, host: "" }, processPriority: "realtime" }),
     );
     const config = await new PyrodeckConfigManager(dir).load();
     expect(config.mail.enabled).toBe(false);
+    expect(config.processPriority).toBe("normal");
   });
 });

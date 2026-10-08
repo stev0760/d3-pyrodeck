@@ -8,6 +8,8 @@ import {
   type MailState,
   type MailTestResult,
   type MailTlsMode,
+  type PriorityClass,
+  type PriorityState,
 } from "@/lib/ops";
 
 const INPUT_CLASS =
@@ -206,7 +208,68 @@ function EmailAlerts({ notify }: { notify: Notify }) {
   );
 }
 
-/** Settings tab: email alerts. */
+const PRIORITY_OPTIONS: { value: PriorityClass; label: string }[] = [
+  { value: "below-normal", label: "Below normal" },
+  { value: "normal", label: "Normal" },
+  { value: "above-normal", label: "Above normal" },
+  { value: "high", label: "High" },
+];
+
+function ProcessPriority({ notify }: { notify: Notify }) {
+  const [state, setState] = useState<PriorityState | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void getJson<PriorityState>("/api/process-priority").then((s) => s && setState(s));
+  }, []);
+
+  const save = async (priorityClass: PriorityClass) => {
+    setSaving(true);
+    const res = await sendJson<PriorityState>("PUT", "/api/process-priority", { priorityClass });
+    setSaving(false);
+    if (res.error !== null) {
+      notify(res.error);
+      return;
+    }
+    setState(res.data);
+    if (!res.data.last?.warning) notify(`Process priority set to ${priorityClass}.`, "info");
+  };
+
+  if (!state) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  const windows = state.platform === "win32";
+  return (
+    <div className="space-y-2">
+      <select
+        value={state.priorityClass}
+        disabled={saving}
+        onChange={(e) => void save(e.target.value as PriorityClass)}
+        className={INPUT_CLASS}
+      >
+        {PRIORITY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {state.last?.warning && <p className="text-[11px] text-amber-400 break-words">{state.last.warning}</p>}
+      {state.last && !state.last.warning && (
+        <p className="text-[10px] text-muted-foreground">
+          Applied to PID {state.last.pid} ({windows ? "priority class" : `nice ${state.last.value}`}).
+        </p>
+      )}
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Applied to the game server after every launch, playlist restart, scheduled start and relaunch, and to a
+        running server when you change it. Normal leaves a new server at the priority Pyrodeck itself runs at.{" "}
+        {windows
+          ? "On Windows these are the process priority classes of the same names; High may need an administrator account."
+          : "On Linux and macOS: Below normal (nice 10) needs no privilege; Above normal (−7) and High (−14), and going back to Normal from Below normal on a running server, need root or CAP_SYS_NICE."}{" "}
+        If the system refuses, Pyrodeck shows a warning and the server keeps running at its current priority.
+      </p>
+    </div>
+  );
+}
+
+/** Settings tab: email alerts, process priority. */
 export function SettingsPanel({ notify }: { notify: Notify }) {
   return (
     <div className="h-full overflow-y-auto">
@@ -214,6 +277,10 @@ export function SettingsPanel({ notify }: { notify: Notify }) {
         <section className={SECTION_CLASS}>
           <h3 className="text-sm font-score tracking-wide text-muted-foreground">Email Alerts</h3>
           <EmailAlerts notify={notify} />
+        </section>
+        <section className={SECTION_CLASS}>
+          <h3 className="text-sm font-score tracking-wide text-muted-foreground">Process Priority</h3>
+          <ProcessPriority notify={notify} />
         </section>
       </div>
     </div>

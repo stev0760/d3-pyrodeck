@@ -190,6 +190,10 @@ tab.
   actions. Off by default. Events that arrive together go out in one mail, at most one mail a minute. **Send test mail**
   tries the settings on screen before you save them. The SMTP password is kept in `config/pyrodeck.json` (now
   written readable by its owner only) and never sent back to the browser.
+- **Process priority.** Below normal, normal, above normal or high, applied to the game server after every launch,
+  playlist restart, scheduled start and relaunch. On Linux, lowering needs no privilege and raising needs root or
+  `CAP_SYS_NICE`; a refused change is a warning, and the server keeps running. On Windows these are the priority
+  classes of the same names.
 
 ## Hosting mission downloads
 

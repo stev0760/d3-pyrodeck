@@ -32,6 +32,7 @@ export async function pyrodeckConfigRoutes(
       adminPasswordHash: _,
       missionHost: _host,
       mail: _mail,
+      processPriority: _priority,
       ...updates
     } = request.body as Partial<PyrodeckConfig>;
 

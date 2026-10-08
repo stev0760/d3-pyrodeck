@@ -836,8 +836,11 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 | `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
 | `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
 | `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
+| `GET` | `/api/process-priority` | `{ priorityClass, platform, last: { pid, priorityClass, value, applied, warning } \| null }` |
+| `PUT` | `/api/process-priority` | Body `{ priorityClass: "below-normal"\|"normal"\|"above-normal"\|"high" }`; saves and applies to a running server |
 
-`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`: it has its own route.
+`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`
+and `processPriority`: each has its own route.
 
 ---
 
@@ -1247,6 +1250,8 @@ emails, service mode and priority class). No `$` command or console output chang
   (`CheckPlayerNum`, `dmfcbase.cpp` :1801). On a dedicated server slot 0 is the server (`multi_server.cpp` :757, named
   `-Server-` at `dedicated_server.cpp` :301). Verified on the Matcen Debug build: an empty server answers
   `PNum Name` / `00: -Server-`, after the console's own echo line.
+- **Process priority** is not an engine setting. Linux nice values are per thread; the dedicated server runs three
+  threads, the SDL audio hotplug thread at nice 19 of its own accord (seen with `ps -L`).
 
 ### D.2 Weekly schedule (`ops/schedule.ts`, `ops/Scheduler.ts`, `routes/schedule.ts`)
 
@@ -1278,6 +1283,14 @@ emails, service mode and priority class). No `$` command or console output chang
 - Batching: a burst is sent 10 s after its first event, never sooner than 60 s after the previous mail; identical events
   are listed once; at most 50 per mail (the rest counted). nodemailer, 10 s connect and greeting timeouts. `none` sends
   plain SMTP (`ignoreTLS`), `starttls` requires the upgrade, `tls` is implicit TLS.
+
+### D.4 Process priority (`ops/processPriority.ts`, `routes/process-priority.ts`)
+
+- `pyrodeck.json` `processPriority`: `below-normal` (`PRIORITY_BELOW_NORMAL`, 10), `normal` (0), `above-normal` (−7),
+  `high` (−14), Node's `os.constants.priority`; on Windows libuv maps them to the priority classes of the same names.
+  Applied on every `server.started` (Normal at launch changes nothing) and on a change while a server runs.
+- Linux: every thread in `/proc/<pid>/task` is set, except one already below both the main thread and the target (the
+  hotplug thread). EACCES/EPERM gives a warning (log, toast, `last.warning`); ESRCH is ignored.
 
 ---
 
