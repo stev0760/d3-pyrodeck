@@ -194,6 +194,8 @@ tab.
   playlist restart, scheduled start and relaunch. On Linux, lowering needs no privilege and raising needs root or
   `CAP_SYS_NICE`; a refused change is a warning, and the server keeps running. On Windows these are the priority
   classes of the same names.
+- **Update notice.** Pyrodeck asks GitHub once a day for the latest release and shows a banner with a link when it is
+  newer. It never downloads anything. A failed check (offline, rate limit) shows nothing. Turn it off in Settings.
 
 ## Hosting mission downloads
 

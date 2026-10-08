@@ -10,6 +10,7 @@ import {
   type MailTlsMode,
   type PriorityClass,
   type PriorityState,
+  type UpdateStatus,
 } from "@/lib/ops";
 
 const INPUT_CLASS =
@@ -269,7 +270,36 @@ function ProcessPriority({ notify }: { notify: Notify }) {
   );
 }
 
-/** Settings tab: email alerts, process priority. */
+function UpdateCheckSetting() {
+  const [state, setState] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    void getJson<UpdateStatus>("/api/update-check").then((s) => s && setState(s));
+  }, []);
+
+  const toggle = async (enabled: boolean) => {
+    const res = await sendJson<UpdateStatus>("PUT", "/api/update-check", { enabled });
+    if (res.error === null) setState(res.data);
+  };
+
+  if (!state) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  return (
+    <div className="space-y-1.5">
+      <label className="flex items-center gap-2 text-xs text-foreground/80">
+        <input type="checkbox" checked={state.enabled} onChange={(e) => void toggle(e.target.checked)} />
+        Tell me when a new Pyrodeck release is out
+      </label>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Pyrodeck {state.current} asks GitHub for the latest release at most once a day. It never downloads or installs
+        anything; a banner links to the release page.
+        {state.enabled && state.latest ? ` Latest release: ${state.latest}.` : ""}
+        {state.enabled && !state.latest && state.checkedAt ? " No release information yet." : ""}
+      </p>
+    </div>
+  );
+}
+
+/** Settings tab: email alerts, process priority, update notice. */
 export function SettingsPanel({ notify }: { notify: Notify }) {
   return (
     <div className="h-full overflow-y-auto">
@@ -281,6 +311,10 @@ export function SettingsPanel({ notify }: { notify: Notify }) {
         <section className={SECTION_CLASS}>
           <h3 className="text-sm font-score tracking-wide text-muted-foreground">Process Priority</h3>
           <ProcessPriority notify={notify} />
+        </section>
+        <section className={SECTION_CLASS}>
+          <h3 className="text-sm font-score tracking-wide text-muted-foreground">Updates</h3>
+          <UpdateCheckSetting />
         </section>
       </div>
     </div>

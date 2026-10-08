@@ -92,6 +92,15 @@ export interface PriorityState {
   } | null;
 }
 
+export interface UpdateStatus {
+  enabled: boolean;
+  current: string;
+  latest: string | null;
+  available: boolean;
+  url: string | null;
+  checkedAt: string | null;
+}
+
 /** GET a JSON resource; null on any failure. */
 export async function getJson<T>(url: string): Promise<T | null> {
   try {

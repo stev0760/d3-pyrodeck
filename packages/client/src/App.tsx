@@ -21,6 +21,7 @@ import { ServerConsole } from "./components/ServerConsole.tsx";
 import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
 import { LogsPanel } from "./components/LogsPanel.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
+import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { usePlaylist } from "./hooks/usePlaylist.ts";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -272,6 +273,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           Panel
         </Button>
       </div>
+
+      <UpdateBanner />
 
       {/* Reconnection banner */}
       {wsReconnecting && (

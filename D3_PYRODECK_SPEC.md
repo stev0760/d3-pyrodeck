@@ -838,9 +838,11 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 | `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
 | `GET` | `/api/process-priority` | `{ priorityClass, platform, last: { pid, priorityClass, value, applied, warning } \| null }` |
 | `PUT` | `/api/process-priority` | Body `{ priorityClass: "below-normal"\|"normal"\|"above-normal"\|"high" }`; saves and applies to a running server |
+| `GET` | `/api/update-check` | `{ enabled, current, latest, available, url, checkedAt }` |
+| `PUT` | `/api/update-check` | Body `{ enabled }` |
 
-`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`
-and `processPriority`: each has its own route.
+`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
+`processPriority` and `updateCheck`: each has its own route.
 
 ---
 
@@ -1291,6 +1293,14 @@ emails, service mode and priority class). No `$` command or console output chang
   Applied on every `server.started` (Normal at launch changes nothing) and on a change while a server runs.
 - Linux: every thread in `/proc/<pid>/task` is set, except one already below both the main thread and the target (the
   hotplug thread). EACCES/EPERM gives a warning (log, toast, `last.warning`); ESRCH is ignored.
+
+### D.5 Update notice (`ops/updateCheck.ts`, `routes/update-check.ts`)
+
+- `GET https://api.github.com/repos/<owner>/<repo>/releases/latest` for the repository in the root `package.json`
+  (mirrored as `REPOSITORY_URL` in `version.ts`, enforced by a test), 5 s timeout, cached 24 h (a failure 1 h). Semantic
+  version comparison with pre-release precedence. The link is the release's `html_url` only when it is under
+  `https://github.com/<owner>/<repo>/releases/`. `pyrodeck.json` `updateCheck: { enabled (true) }`. While the repository
+  is private the API answers 404 and no banner shows.
 
 ---
 

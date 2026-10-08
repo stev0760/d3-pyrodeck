@@ -9,6 +9,7 @@ All notable changes to D3 Pyrodeck are documented here.
 - **Weekly schedule** per profile: start and stop windows by weekday and local time. A window's start launches the profile if nothing is running; its end stops the server once no human is on (asked with `$players`, bots excluded), or after a wait you set, with one warning in chat. The Launch panel shows the next scheduled action. `GET /api/schedule`; the windows are saved with the profile.
 - **Email alerts** on server events (started, stopped, crashed, hung, relaunched, player kicked or banned, profanity ban, schedule actions) over SMTP, in a new Settings tab. Off by default; bursts are batched into one mail, at most one a minute; **Send test mail** checks the settings first. Uses `nodemailer`.
 - **Process priority** for the game server (below normal to high), applied after every launch, playlist restart, scheduled start and relaunch, and to a running server when changed. A refused change (raising priority without privilege) is a warning, not a failure.
+- **Update notice:** a banner when GitHub has a newer Pyrodeck release, checked at most once a day; never downloads anything; can be turned off.
 
 ### Changed
 - `config/pyrodeck.json` is written readable by its owner only, since it now holds the SMTP password.

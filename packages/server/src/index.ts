@@ -21,6 +21,7 @@ import { versionRoutes } from "./routes/version.js";
 import { scheduleRoutes } from "./routes/schedule.js";
 import { alertRoutes } from "./routes/alerts.js";
 import { processPriorityRoutes } from "./routes/process-priority.js";
+import { updateCheckRoutes } from "./routes/update-check.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
@@ -119,6 +120,7 @@ async function main() {
   await app.register(scheduleRoutes);
   await app.register(alertRoutes);
   await app.register(processPriorityRoutes);
+  await app.register(updateCheckRoutes);
 
   app.get("/api/health", async () => ({ status: "ok" }));
 

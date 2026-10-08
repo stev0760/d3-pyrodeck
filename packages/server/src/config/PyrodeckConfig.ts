@@ -7,6 +7,7 @@ import {
 } from "../gamefiles/missionHostSettings.js";
 import { DEFAULT_MAIL_SETTINGS, sanitizeStoredMail, type MailSettings } from "../ops/mailSettings.js";
 import { DEFAULT_PRIORITY_CLASS, isPriorityClass, type PriorityClass } from "../ops/processPriority.js";
+import { DEFAULT_UPDATE_SETTINGS, sanitizeStoredUpdate, type UpdateSettings } from "../ops/updateCheck.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -31,6 +32,8 @@ export interface PyrodeckConfig {
   mail: MailSettings;
   /** Priority class for the game process after each launch (ops/processPriority.ts). Set via /api/process-priority. */
   processPriority: PriorityClass;
+  /** GitHub release check (ops/updateCheck.ts). Set via /api/update-check. */
+  updateCheck: UpdateSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -52,6 +55,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
   mail: { ...DEFAULT_MAIL_SETTINGS, events: { ...DEFAULT_MAIL_SETTINGS.events } },
   processPriority: DEFAULT_PRIORITY_CLASS,
+  updateCheck: { ...DEFAULT_UPDATE_SETTINGS },
 };
 
 /**
@@ -114,6 +118,9 @@ function migrateConfig(
   }
   if ("processPriority" in raw && isPriorityClass(raw.processPriority)) {
     migrated.processPriority = raw.processPriority;
+  }
+  if ("updateCheck" in raw) {
+    migrated.updateCheck = sanitizeStoredUpdate(raw.updateCheck);
   }
 
   return migrated;
