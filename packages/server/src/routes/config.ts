@@ -28,6 +28,8 @@ import { validateTeamSettings } from "../launcher/teamSettings.js";
 import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
 import { validateRespawnScaling } from "../launcher/respawnScaling.js";
 import { resolveJoinAddress } from "../launcher/joinAddress.js";
+import { validateSchedule } from "../ops/schedule.js";
+import { sanitizeImportedArgs } from "../ops/launchScript.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -175,6 +177,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       gamePath?: string;
       /** Override the global D3 executable for this profile. */
       executablePath?: string;
+      /** Launch flags from an imported script that the profile does not apply (shown to the operator). */
+      importedArgs?: unknown;
     };
 
     try {
@@ -196,6 +200,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
             executablePath: body.executablePath ?? null,
           });
         }
+        const importedArgs = sanitizeImportedArgs(body.importedArgs);
+        if (importedArgs) profile = await manager.update(profile.id, { importedArgs });
       } else {
         profile = await manager.create(
           body.name,
@@ -238,11 +244,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       teamSettings?: unknown;
       periodicCommands?: unknown;
       respawnScaling?: unknown;
+      schedule?: unknown;
+      importedArgs?: unknown;
     };
-    const { postStart, launchOptions, teamSettings, periodicCommands, respawnScaling, ...rest } = body;
+    const { postStart, launchOptions, teamSettings, periodicCommands, respawnScaling, schedule, importedArgs, ...rest } =
+      body;
     const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
     // Whitelisted values only; null or nothing valid clears the settings.
     if (postStart !== undefined) updates.postStart = sanitizePostStart(postStart);
+    if (importedArgs !== undefined) updates.importedArgs = sanitizeImportedArgs(importedArgs);
 
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -266,6 +276,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const check = validateRespawnScaling(respawnScaling);
       errors.push(...check.errors);
       updates.respawnScaling = check.settings;
+    }
+    if (schedule !== undefined) {
+      if (schedule === null) {
+        updates.schedule = null;
+      } else {
+        const check = validateSchedule(schedule);
+        errors.push(...check.errors);
+        updates.schedule = check.schedule ?? null;
+      }
     }
     if (errors.length > 0) {
       return reply.status(400).send({ error: errors.join(" "), details: errors });

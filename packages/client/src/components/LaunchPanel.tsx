@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/useLauncher.ts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,9 @@ import {
   type RespawnForm,
   type TeamSettingsForm,
 } from "./ProfileLaunchSettings";
+import { ScheduleFields, EMPTY_SCHEDULE, describeNextAction } from "./ScheduleFields";
+import { LaunchScriptImport } from "./LaunchScriptImport";
+import { getJson, type ProfileSchedule, type ScheduleState } from "@/lib/ops";
 
 type LauncherState = ReturnType<typeof useLauncher>;
 
@@ -39,7 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
   crashed: "bg-destructive",
 };
 
-type PanelMode = "listing" | "creating" | "editing" | "confirming-delete";
+type PanelMode = "listing" | "creating" | "editing" | "importing" | "confirming-delete";
 
 interface PathFormState {
   name: string;
@@ -50,6 +53,7 @@ interface PathFormState {
   teamSettings: TeamSettingsForm;
   periodic: PeriodicForm;
   respawn: RespawnForm;
+  schedule: ProfileSchedule;
 }
 
 const EMPTY_FORM: PathFormState = {
@@ -61,7 +65,10 @@ const EMPTY_FORM: PathFormState = {
   teamSettings: teamSettingsToForm(undefined),
   periodic: periodicToForm(undefined),
   respawn: respawnToForm(undefined),
+  schedule: EMPTY_SCHEDULE,
 };
+
+const SCHEDULE_POLL_MS = 30_000;
 
 type OnOff = "default" | "on" | "off";
 const toOnOff = (v: boolean | undefined): OnOff => (v === undefined ? "default" : v ? "on" : "off");
@@ -240,6 +247,17 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     fetchProfiles();
   }, [fetchProfiles]);
 
+  // What the weekly schedule does next (server-side times, Pyrodeck's zone).
+  const [schedule, setSchedule] = useState<ScheduleState | null>(null);
+  const refreshSchedule = useCallback(() => {
+    void getJson<ScheduleState>("/api/schedule").then((s) => s && setSchedule(s));
+  }, []);
+  useEffect(() => {
+    refreshSchedule();
+    const timer = setInterval(refreshSchedule, SCHEDULE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshSchedule, profiles, processStatus?.state]);
+
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
@@ -279,6 +297,9 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       teamSettings: teamSettingsToForm(selectedProfile.teamSettings),
       periodic: periodicToForm(selectedProfile.periodicCommands),
       respawn: respawnToForm(selectedProfile.respawnScaling),
+      schedule: selectedProfile.schedule
+        ? { ...selectedProfile.schedule, windows: selectedProfile.schedule.windows.map((w) => ({ ...w })) }
+        : EMPTY_SCHEDULE,
     });
     setValidationErrors([]);
     setSaveWarnings([]);
@@ -349,11 +370,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       teamSettings: teamSettingsPayload(form.teamSettings),
       periodicCommands: periodicPayload(form.periodic),
       respawnScaling: respawnPayload(form.respawn),
+      schedule: form.schedule.enabled || form.schedule.windows.length > 0 ? form.schedule : null,
     });
     setSaving(false);
     if (updated) {
       setSaveWarnings(updated.warnings ?? []);
       setMode("listing");
+      refreshSchedule();
     }
   };
 
@@ -368,6 +391,25 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     const ok = await deleteProfile(selectedProfile.id);
     if (ok) setMode("listing");
   };
+
+  // ── Import from a launch script ───────────────────────────────────────────
+  if (mode === "importing") {
+    return (
+      <div className="space-y-3">
+        <LaunchScriptImport
+          createProfile={createProfile}
+          onCreated={(profile) => {
+            setSelectedProfileId(profile.id);
+            setMode("listing");
+          }}
+          onCancel={cancel}
+        />
+        {error && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded-md px-2 py-1.5 break-words">{error}</p>
+        )}
+      </div>
+    );
+  }
 
   // ── Delete confirmation ────────────────────────────────────────────────────
   if (mode === "confirming-delete") {
@@ -440,6 +482,14 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           />
         )}
 
+        {!isCreate && (
+          <ScheduleFields
+            value={form.schedule}
+            onChange={(next) => setForm((prev) => ({ ...prev, schedule: next }))}
+            timeZone={schedule?.timeZone ?? null}
+          />
+        )}
+
         {validationErrors.length > 0 && (
           <div className="text-xs text-destructive space-y-0.5">
             {validationErrors.map((e, i) => <p key={i}>{e}</p>)}
@@ -498,6 +548,14 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <Button onClick={startCreating} className="w-full font-score tracking-wide">
             + New Profile
           </Button>
+          <Button
+            variant="link"
+            size="xs"
+            onClick={() => setMode("importing")}
+            className="w-full px-0 text-muted-foreground"
+          >
+            Import from a launch script
+          </Button>
         </div>
       ) : (
         <div className="space-y-2">
@@ -549,6 +607,18 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                 </div>
               ) : (
                 <p className="text-xs text-destructive">No executable — click Edit to configure.</p>
+              )}
+              {selectedProfile.importedArgs && selectedProfile.importedArgs.length > 0 && (
+                <div className="bg-muted rounded-md px-2 py-1 text-[10px] text-muted-foreground">
+                  Imported flags, not applied:{" "}
+                  <span className="font-mono text-foreground/80 break-all">{selectedProfile.importedArgs.join(" ")}</span>{" "}
+                  <button
+                    onClick={() => void updateProfile(selectedProfile.id, { importedArgs: null })}
+                    className="text-primary hover:underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -606,6 +676,10 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           {state === "stopped" && processStatus?.stopReason === "console" && (
             <p className="text-[11px] text-muted-foreground">Stopped with <span className="font-mono">quit</span> at its console.</p>
           )}
+          {(() => {
+            const line = describeNextAction(schedule?.entries.find((e) => e.profileId === selectedProfileId));
+            return line ? <p className="text-[11px] text-muted-foreground">{line}</p> : null;
+          })()}
 
           {/* Log health: a failed log stays on screen (the toast alone is gone
               in seconds, and a soak that logs nowhere is lost for good). */}
@@ -652,14 +726,24 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             </p>
           )}
 
-          <Button
-            variant="link"
-            size="xs"
-            onClick={startCreating}
-            className="w-full px-0 text-muted-foreground"
-          >
-            + New Profile
-          </Button>
+          <div className="flex">
+            <Button
+              variant="link"
+              size="xs"
+              onClick={startCreating}
+              className="flex-1 px-0 text-muted-foreground"
+            >
+              + New Profile
+            </Button>
+            <Button
+              variant="link"
+              size="xs"
+              onClick={() => setMode("importing")}
+              className="flex-1 px-0 text-muted-foreground"
+            >
+              Import script
+            </Button>
+          </div>
         </div>
       )}
 

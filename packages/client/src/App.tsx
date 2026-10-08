@@ -20,6 +20,8 @@ import { ServerSidebar } from "./components/ServerSidebar.tsx";
 import { ServerConsole } from "./components/ServerConsole.tsx";
 import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
 import { LogsPanel } from "./components/LogsPanel.tsx";
+import { SettingsPanel } from "./components/SettingsPanel.tsx";
+import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { usePlaylist } from "./hooks/usePlaylist.ts";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -35,7 +37,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Menu, Server as ServerIcon, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists" | "logs";
+type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playlists" | "logs" | "settings";
 
 function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout: boolean }) {
   const {
@@ -136,6 +138,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     { id: "config", label: "Config", show: mode === "launch", group: "more" },
     { id: "playlists", label: "Playlists", show: mode === "launch", group: "more" },
     { id: "logs", label: "Logs", show: mode === "launch", group: "more" },
+    { id: "settings", label: "Settings", show: true, group: "more" },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -270,6 +273,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           Panel
         </Button>
       </div>
+
+      <UpdateBanner />
 
       {/* Reconnection banner */}
       {wsReconnecting && (
@@ -408,6 +413,10 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
           <TabsContent value="logs" className="p-3 min-h-0">
             <LogsPanel />
+          </TabsContent>
+
+          <TabsContent value="settings" className="p-3 min-h-0">
+            <SettingsPanel notify={addToast} />
           </TabsContent>
         </Tabs>
 

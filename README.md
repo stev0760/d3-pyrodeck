@@ -117,6 +117,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 - Supervisor: relaunches a crashed server, restarts a hung one, and can restart an empty server after an uptime limit (see [Keeping a server up](#keeping-a-server-up))
+- Weekly schedule per profile: start and stop windows by weekday and time (see Operations)
+- Import a profile from the `.bat`/`.sh` that launched an old server (see Operations)
 
 ### Responsive Layout
 - Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
@@ -178,6 +180,36 @@ ConsolePassword=yourpassword
 ### Launch Mode
 
 Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it.
+
+## Operations
+
+Settings that keep an unattended server running. The schedule lives in each profile; the rest are in the **Settings**
+tab.
+
+- **Weekly schedule.** Edit a profile and add windows (day, start, end, in the Pyrodeck machine's local time; an end at
+  or before the start runs past midnight). At a window's start Pyrodeck launches the profile if no server is running. At
+  its end it stops the server as soon as no player is on (bots don't count, Pyrodeck asks with `$players`), and after
+  the wait you set at the latest; players get one warning in chat. A server you stop by hand during a window stays
+  stopped until the next window. The Launch panel shows the next scheduled start or stop. Only one server runs at a
+  time, so a window whose start finds another profile's server running is skipped, with a toast.
+- **Email alerts.** SMTP host, port, security (STARTTLS, TLS or none), login, From, up to ten recipients, and a
+  checklist: server started, stopped, crashed, hung or relaunched; player kicked or banned; profanity bans; schedule
+  actions. Off by default. Events that arrive together go out in one mail, at most one mail a minute. **Send test mail**
+  tries the settings on screen before you save them. The SMTP password is kept in `config/pyrodeck.json` (now
+  written readable by its owner only) and never sent back to the browser.
+- **Process priority.** Below normal, normal, above normal or high, applied to the game server after every launch,
+  playlist restart, scheduled start and relaunch. On Linux, lowering needs no privilege and raising needs root or
+  `CAP_SYS_NICE`; a refused change is a warning, and the server keeps running. On Windows these are the priority
+  classes of the same names.
+- **Update notice.** Pyrodeck asks GitHub once a day for the latest release and shows a banner with a link when it is
+  newer. It never downloads anything. A failed check (offline, rate limit) shows nothing. Turn it off in Settings.
+- **Import from a launch script.** In the Launch panel, **Import script**: paste or pick the batch file or shell script
+  that ran `Descent3 -dedicated <cfg> ...`. Pyrodeck reads its flags the way the engine does (any case, `-`, `--` or
+  `+`; the first one wins), shows where it found the game, program and config, and creates a profile linked to that
+  config. Flags a profile cannot hold yet (ports, frame cap, tracker files) are kept on the profile as "imported flags"
+  for reference. The config must already be in the game directory.
+- **Running as a service.** [docs/running-as-a-service.md](docs/running-as-a-service.md): NSSM, `schtasks` and a
+  systemd user unit, with the working directory and log location each one needs.
 
 ## Hosting mission downloads
 
@@ -242,6 +274,7 @@ docs/
 - [`BUILDING.md`](BUILDING.md) — building from source and running on all platforms (Windows, Ubuntu, Rocky Linux/RHEL, Arch)
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
 - `docs/D3SERVER3_AUDIT.md` — feature audit of D3Server3 3.0.83 (2010) against Pyrodeck 0.4.20, with a ranked list of what Pyrodeck lacks
+- `docs/running-as-a-service.md` — running Pyrodeck unattended (NSSM, schtasks, systemd)
 
 ## Releases
 

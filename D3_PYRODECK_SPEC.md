@@ -889,6 +889,24 @@ last join or leave and sends `$setrespawntime <n>` only when `n` differs from th
 each powerup's return at pickup (`object.cpp:1917-1918`: `respawn_time` × the powerup's `respawn_scalar`), so a change
 applies from the next pickup. Pyrodeck does not itself emit `player.joined`/`player.left`; whichever module parses joins
 and leaves does.
+### 8.7 Operations (Addendum D)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
+| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) and `importedArgs: string[] \| null` |
+| `POST` | `/api/profiles` | Also takes `importedArgs` (with `existingConfigFile`) |
+| `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
+| `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
+| `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
+| `GET` | `/api/process-priority` | `{ priorityClass, platform, last: { pid, priorityClass, value, applied, warning } \| null }` |
+| `PUT` | `/api/process-priority` | Body `{ priorityClass: "below-normal"\|"normal"\|"above-normal"\|"high" }`; saves and applies to a running server |
+| `GET` | `/api/update-check` | `{ enabled, current, latest, available, url, checkedAt }` |
+| `PUT` | `/api/update-check` | Body `{ enabled }` |
+| `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, importedArgs, notes }, checks }`; creates nothing |
+
+`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
+`processPriority` and `updateCheck`: each has its own route.
 
 ---
 
@@ -1285,6 +1303,93 @@ ephemeral port: byte-identical body with Content-Length, 404 for retail, travers
 unknown, wrong-case and `/api/...`, the bare-LF request, the hold, bind failure). Manual run on
 127.0.0.1:3001/3002: `curl -sI` and a SHA-256 match on a 5.4 MB mission, refusals, port move and
 disable without a restart. **Not verified:** a real game client downloading from the listener.
+
+
+## Addendum D — Operations (2026-10-07, branch `parity/ops`)
+
+**Goal:** the operations side of D3Server3 parity (`docs/D3SERVER3_AUDIT.md` §3 items 12, 14, 15; §1.3's
+emails, service mode and priority class). No `$` command or console output changes.
+
+### D.1 Engine facts (Matcen source, read 2026-10-07)
+
+- **Command line** (`Descent3/args.cpp`): a flag matches case-insensitively with any of the prefixes `-`, `--`, `+`
+  (`SkipArgPrefix` :91, `FindArg` :107-128); the first occurrence wins (scan from 1, :115); a value is the next argument.
+  At most 30 arguments of at most 100 bytes each (`args.h` :22-23, copied with `strncpy` at :83). `-d` (exact, lower case)
+  also names the server config (`FindArgChar("-dedicated", 'd')`, `dedicated_server.cpp` :322); the config is
+  `GameArgs[t + 1]` (:340). `+host` is `-useport` (`init.cpp` :1811-1814) and `+ip` is `-useip` (`networking.cpp`
+  :591-594). Read elsewhere: `-autoexec` (`dmfcbase.cpp` :4921), `-pxoport` (`init.cpp` :1819), `-gamespyport`
+  (`gamespy.cpp` :144), `-gspyfile` (:113), `-framecap` (`init.cpp` :1091), `-nomultibmp` (:1078), `-tempdir` (:1971).
+- **`$players`** (`dmfcinputcommand.cpp` :394) prints `PNum Name` then `%02d: %s` per connected, playing slot
+  (`CheckPlayerNum`, `dmfcbase.cpp` :1801). On a dedicated server slot 0 is the server (`multi_server.cpp` :757, named
+  `-Server-` at `dedicated_server.cpp` :301). Verified on the Matcen Debug build: an empty server answers
+  `PNum Name` / `00: -Server-`, after the console's own echo line.
+- **Process priority** is not an engine setting. Linux nice values are per thread; the dedicated server runs three
+  threads, the SDL audio hotplug thread at nice 19 of its own accord (seen with `ps -L`).
+
+### D.2 Weekly schedule (`ops/schedule.ts`, `ops/Scheduler.ts`, `routes/schedule.ts`)
+
+- Per profile: `schedule: { enabled, windows: [{ day 0-6, start "HH:MM", end "HH:MM" }], stopWaitMinutes 0-240
+  (default 15) }`, at most 28 windows. An end at or before the start ends the next day. Times are the Pyrodeck
+  machine's local clock; each occurrence becomes absolute instants through the local `Date` constructor, so a time in
+  the spring gap moves forward by the gap and an end in the autumn repeat ends at its first occurrence. Overlapping or
+  touching windows merge into one run.
+- A 30 s tick (the first 10 s after Pyrodeck starts), edge-triggered on runs: at a run's start, the profile is
+  started through the Launch panel's own path (`startServer`, emits `server.started{reason:"schedule"}`) if nothing
+  is running; another profile's server or a playlist restart in progress skips it (`schedule.skipped` event, error
+  toast). At the run's end, if the profile's
+  server is running, it is stopped (`stopServer`, `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
+  human (slot 0 and `[BOT]` callsigns excluded), and at `end + stopWaitMinutes` regardless; without a console session the
+  count is unknown and the stop waits for the deadline. One `say` when the wait begins.
+- Nothing is persisted but the settings. After a Pyrodeck restart: inside a run, the start is made; outside one, nothing
+  is stopped. A server stopped by hand inside a run stays down until the next run.
+
+### D.3 Email alerts (`ops/mailSettings.ts`, `ops/MailNotifier.ts`, `routes/alerts.ts`)
+
+- `pyrodeck.json` `mail: { enabled (false), host, port, tls, user, password, from, recipients (≤ 10), events }`. The
+  password is stored as entered (SMTP AUTH needs it), never returned (`passwordSet`), never logged; `pyrodeck.json`
+  is written with mode 0600. Addresses are single mailboxes with no spaces, commas, angle brackets or line breaks.
+- Events from the bus: `server.started` (manual → started; relaunch → relaunched; schedule → started, schedule;
+  playlist → not mailed), `server.stopped` (manual, empty-restart → stopped; schedule → stopped, schedule; playlist →
+  not mailed), `server.crashed`, `server.hung`, `player.kicked`, `player.banned` (a reason matching `/profan/i` is a
+  profanity ban), `schedule.skipped`. Mailed when any of its checklist entries is ticked. Defaults: crashed, hung,
+  relaunched, banned, profanity ban, schedule on; started, stopped, kicked off.
+- Batching: a burst is sent 10 s after its first event, never sooner than 60 s after the previous mail; identical events
+  are listed once; at most 50 per mail (the rest counted). nodemailer, 10 s connect and greeting timeouts. `none` sends
+  plain SMTP (`ignoreTLS`), `starttls` requires the upgrade, `tls` is implicit TLS.
+
+### D.4 Process priority (`ops/processPriority.ts`, `routes/process-priority.ts`)
+
+- `pyrodeck.json` `processPriority`: `below-normal` (`PRIORITY_BELOW_NORMAL`, 10), `normal` (0), `above-normal` (−7),
+  `high` (−14), Node's `os.constants.priority`; on Windows libuv maps them to the priority classes of the same names.
+  Applied on every `server.started` (Normal at launch changes nothing) and on a change while a server runs.
+- Linux: every thread in `/proc/<pid>/task` is set, except one already below both the main thread and the target (the
+  hotplug thread). EACCES/EPERM gives a warning (log, toast, `last.warning`); ESRCH is ignored.
+
+### D.5 Update notice (`ops/updateCheck.ts`, `routes/update-check.ts`)
+
+- `GET https://api.github.com/repos/<owner>/<repo>/releases/latest` for the repository in the root `package.json`
+  (mirrored as `REPOSITORY_URL` in `version.ts`, enforced by a test), 5 s timeout, cached 24 h (a failure 1 h). Semantic
+  version comparison with pre-release precedence. The link is the release's `html_url` only when it is under
+  `https://github.com/<owner>/<repo>/releases/`. `pyrodeck.json` `updateCheck: { enabled (true) }`. While the repository
+  is private the API answers 404 and no banner shows.
+
+### D.6 Import from a launch script (`ops/launchScript.ts`, `routes/launch-script.ts`)
+
+- Shell from the extension, else from the content. cmd: `^` continuations, `set` variables, `%~dp0`/`%CD%`, `cd /d`,
+  `pushd`, `start ["title"] [/d dir] [/min] [/high…]`, `call`. sh: `\` continuations, `NAME=value`, `$(dirname "$0")`,
+  `${0%/*}`, `cd`, `exec`, `nohup`, `env`, `nice`, `screen`, a command inside one quoted argument (tmux, `sh -c`).
+  Redirections and pipes are dropped.
+- The plan: game path = the directory changed to, else the program's, else the config's; config file = the
+  `-dedicated` value's name (it must be in the game path, Pyrodeck passes `-dedicated ./<cfg>`); `-autoexec` of the game
+  path's own `autoexec.dmfc` is dropped (Pyrodeck passes it); every other argument is kept verbatim on the profile as
+  `importedArgs`, shown in the Launch panel. The client creates the profile with `POST /api/profiles`
+  (`existingConfigFile`), so a config missing from the game path is refused there.
+
+### D.7 Service mode
+
+Documentation only: `docs/running-as-a-service.md` (NSSM, `sc.exe` and why it needs a wrapper, `schtasks`, a systemd
+user unit; working directory, `PYRODECK_CONFIG_DIR`, log capture; `KillMode=process` / `AppKillProcessTree 0` to keep
+the game server running across a Pyrodeck restart).
 
 ---
 

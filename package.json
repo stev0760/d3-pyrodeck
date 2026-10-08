@@ -2,6 +2,10 @@
   "name": "d3-pyrodeck",
   "version": "0.4.20",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stev0760/d3-pyrodeck.git"
+  },
   "packageManager": "pnpm@11.26.0",
   "engines": {
     "node": ">=24"

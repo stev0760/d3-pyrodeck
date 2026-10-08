@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { MissionHostStatus } from "@/lib/missionHost";
 import type { SupervisorState } from "@/lib/supervisor";
+import type { ProfileSchedule } from "@/lib/ops";
 
 export interface PyrodeckConfig {
   gamePath: string | null;
@@ -99,6 +100,10 @@ export interface ServerProfile {
   teamSettings?: TeamSettings;
   periodicCommands?: PeriodicCommandSettings;
   respawnScaling?: RespawnScaling;
+  /** Weekly start/stop windows. */
+  schedule?: ProfileSchedule;
+  /** Launch flags from an imported script that the profile does not apply. */
+  importedArgs?: string[];
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -110,6 +115,8 @@ export interface ProfileSettingsPayload {
   teamSettings?: Record<string, unknown> | null;
   periodicCommands?: Record<string, unknown> | null;
   respawnScaling?: Record<string, unknown> | null;
+  schedule?: ProfileSchedule | null;
+  importedArgs?: string[] | null;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */

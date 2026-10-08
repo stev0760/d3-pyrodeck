@@ -7,6 +7,7 @@ import type { LaunchOptions } from "../launcher/launchOptions.js";
 import type { TeamSettings } from "../launcher/teamSettings.js";
 import type { PeriodicCommandSettings } from "../launcher/periodicCommands.js";
 import type { RespawnScaling } from "../launcher/respawnScaling.js";
+import type { ProfileSchedule } from "../ops/schedule.js";
 
 /** Per-profile settings stored as one object each; null in an update clears it. */
 export interface ProfileSettingsUpdate {
@@ -61,6 +62,13 @@ export interface ServerProfile {
   periodicCommands?: PeriodicCommandSettings;
   /** Powerup respawn time scaled by the human player count. */
   respawnScaling?: RespawnScaling;
+  /** Weekly start/stop windows (ops/schedule.ts). Unset = no schedule. */
+  schedule?: ProfileSchedule;
+  /**
+   * Launch flags read from an imported batch file or shell script that this
+   * profile does not apply, kept verbatim for the operator to see.
+   */
+  importedArgs?: string[];
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -279,7 +287,12 @@ export class ServerProfileManager {
       logPath?: string | null;
       gamePath?: string | null;
       executablePath?: string | null;
-    } & ProfileSettingsUpdate, // settings already validated; null clears one
+    } & ProfileSettingsUpdate & {
+      /** Already validated; null clears the schedule. */
+      schedule?: ProfileSchedule | null;
+      /** Already sanitized; null or [] clears them. */
+      importedArgs?: string[] | null;
+    }, // settings already validated; null clears one
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
     const profile = profiles.find((p) => p.id === id);
@@ -315,6 +328,20 @@ export class ServerProfileManager {
         delete profile[key];
       } else {
         (profile as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    if (updates.schedule !== undefined) {
+      if (updates.schedule === null) {
+        delete profile.schedule;
+      } else {
+        profile.schedule = updates.schedule;
+      }
+    }
+    if (updates.importedArgs !== undefined) {
+      if (!updates.importedArgs || updates.importedArgs.length === 0) {
+        delete profile.importedArgs;
+      } else {
+        profile.importedArgs = updates.importedArgs;
       }
     }
 
@@ -374,7 +401,9 @@ export class ServerProfileManager {
       configFile: newCfgFile,
       createdAt: new Date().toISOString(),
     };
-    // Inherit the source profile's path overrides and settings
+    // Inherit the source profile's path overrides and settings. Not the
+    // schedule: two profiles with the same windows would compete for the one
+    // server at every window start.
     if (source.gamePath) profile.gamePath = source.gamePath;
     if (source.executablePath) profile.executablePath = source.executablePath;
     for (const key of SETTINGS_KEYS) {
@@ -382,6 +411,7 @@ export class ServerProfileManager {
         (profile as unknown as Record<string, unknown>)[key] = structuredClone(source[key]);
       }
     }
+    if (source.importedArgs) profile.importedArgs = [...source.importedArgs];
 
     profiles.push(profile);
     await this.saveProfiles(profiles);

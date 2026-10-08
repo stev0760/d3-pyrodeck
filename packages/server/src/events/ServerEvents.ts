@@ -52,6 +52,8 @@ export interface ServerEventMap {
    * stopped (the process kept running). Its output is no longer captured.
    */
   "server.adopted": { profileId: string; pid: number; startedAt: string };
+  /** A weekly-schedule start or stop did not happen; `reason` says why (ops/Scheduler.ts). */
+  "schedule.skipped": { profileId: string; action: "start" | "stop"; reason: string };
 }
 
 export type ServerEventName = keyof ServerEventMap;

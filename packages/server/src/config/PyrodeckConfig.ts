@@ -11,6 +11,9 @@ import {
   type SupervisorSettings,
 } from "../launcher/supervisorSettings.js";
 import { checkJoinHost } from "../launcher/joinAddress.js";
+import { DEFAULT_MAIL_SETTINGS, sanitizeStoredMail, type MailSettings } from "../ops/mailSettings.js";
+import { DEFAULT_PRIORITY_CLASS, isPriorityClass, type PriorityClass } from "../ops/processPriority.js";
+import { DEFAULT_UPDATE_SETTINGS, sanitizeStoredUpdate, type UpdateSettings } from "../ops/updateCheck.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -35,6 +38,12 @@ export interface PyrodeckConfig {
   supervisor: SupervisorSettings;
   /** Host name or IPv4 address players join at, shown with the game port in the Launch panel. Null = unknown. */
   joinHost: string | null;
+  /** Email alerts (ops/mailSettings.ts). Set via /api/alerts/mail only; the password is never returned. */
+  mail: MailSettings;
+  /** Priority class for the game process after each launch (ops/processPriority.ts). Set via /api/process-priority. */
+  processPriority: PriorityClass;
+  /** GitHub release check (ops/updateCheck.ts). Set via /api/update-check. */
+  updateCheck: UpdateSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -56,6 +65,9 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
   supervisor: { ...DEFAULT_SUPERVISOR_SETTINGS },
   joinHost: null,
+  mail: { ...DEFAULT_MAIL_SETTINGS, events: { ...DEFAULT_MAIL_SETTINGS.events } },
+  processPriority: DEFAULT_PRIORITY_CLASS,
+  updateCheck: { ...DEFAULT_UPDATE_SETTINGS },
 };
 
 /**
@@ -120,6 +132,15 @@ function migrateConfig(
     const check = checkJoinHost(raw.joinHost);
     migrated.joinHost = "host" in check ? check.host : null;
   }
+  if ("mail" in raw) {
+    migrated.mail = sanitizeStoredMail(raw.mail);
+  }
+  if ("processPriority" in raw && isPriorityClass(raw.processPriority)) {
+    migrated.processPriority = raw.processPriority;
+  }
+  if ("updateCheck" in raw) {
+    migrated.updateCheck = sanitizeStoredUpdate(raw.updateCheck);
+  }
 
   return migrated;
 }
@@ -161,7 +182,9 @@ export class PyrodeckConfigManager {
   private async persist(): Promise<void> {
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(this.config, null, 2));
+    // Owner-only: the file holds the SMTP password (and the admin password hash).
+    await fs.writeFile(this.filePath, JSON.stringify(this.config, null, 2), { mode: 0o600 });
+    await fs.chmod(this.filePath, 0o600).catch(() => {});
   }
 
   get(): PyrodeckConfig {
