@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { NO_PROFILE_ID, serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
 import { consoleHostFor, launchOptionArgs, localConsoleUseipNote, type LaunchOptions } from "./launchOptions.js";
 import { syncAutoexecBlock } from "./autoexecBlock.js";
+import { buildChildEnv } from "./childEnv.js";
 
 /** Who started the process (carried on `server.started`). */
 export type StartReason = ServerEventMap["server.started"]["reason"];
@@ -396,11 +397,8 @@ export class ProcessManager extends EventEmitter {
     this.child = spawn(run.command, run.args, {
       cwd: config.gamePath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        // D3 dedicated doesn't need a real display but SDL may require this
-        SDL_VIDEODRIVER: process.env.SDL_VIDEODRIVER ?? "dummy",
-      },
+      // Built, not inherited: no PYRODECK_* secret reaches the game (childEnv.ts).
+      env: buildChildEnv(process.env),
       // Its own process group (POSIX) and outside Node's kill-on-exit job
       // object (Windows): the server keeps running when Pyrodeck stops or
       // restarts, and the next Pyrodeck re-attaches to it.

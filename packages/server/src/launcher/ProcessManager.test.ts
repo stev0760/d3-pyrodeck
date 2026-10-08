@@ -289,6 +289,60 @@ describe.skipIf(process.platform === "win32")("ProcessManager server events", ()
   });
 });
 
+describe.skipIf(process.platform === "win32")("ProcessManager game environment", () => {
+  let dir: string;
+  let pm: ProcessManager;
+  const saved: Record<string, string | undefined> = {};
+  const SET = {
+    PYRODECK_ADMIN_PASSWORD: "hunter2",
+    PYRODECK_SESSION_SECRET: "s3cret",
+    PYRODECK_AUTOSTART_PROFILE: "Public CTF",
+    DATABASE_URL: "postgres://u:p@db/x",
+    LC_TIME: "de_DE.UTF-8",
+  };
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-pm-env-"));
+    for (const [k, v] of Object.entries(SET)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    pm = new ProcessManager({ events: new ServerEvents() });
+  });
+
+  afterEach(async () => {
+    await pm.stop();
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("starts the game without Pyrodeck's secrets and with what it needs", async () => {
+    // A stand-in game that writes the environment it was given, then waits.
+    const exe = path.join(dir, "fake-d3");
+    const dump = path.join(dir, "env.txt");
+    await fs.writeFile(exe, `#!/bin/sh\nenv > "${dump}.tmp" && mv "${dump}.tmp" "${dump}"\nwhile true; do sleep 0.05; done\n`, {
+      mode: 0o755,
+    });
+    await pm.start({ executablePath: exe, gamePath: dir, configFile: "server.cfg", telnetPort: UNUSED_PORT, telnetPassword: "x" });
+    await expect.poll(() => fs.access(dump).then(() => true, () => false), { timeout: 3000 }).toBe(true);
+    const env = Object.fromEntries(
+      (await fs.readFile(dump, "utf-8"))
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    );
+    expect(Object.keys(env).filter((k) => k.startsWith("PYRODECK_"))).toEqual([]);
+    expect(env).not.toHaveProperty("DATABASE_URL");
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.HOME).toBe(process.env.HOME);
+    expect(env.LC_TIME).toBe("de_DE.UTF-8");
+    expect(env.SDL_VIDEODRIVER).toBe(process.env.SDL_VIDEODRIVER ?? "dummy");
+  });
+});
+
 describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => {
   let dir: string;
   let exe: string;
