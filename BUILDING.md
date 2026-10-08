@@ -208,6 +208,8 @@ Environment=PYRODECK_ADMIN_PASSWORD=yourpassword
 Environment=PYRODECK_PORT=3001
 # Browsers on other machines: uncomment (LAN only; on the internet use a reverse proxy).
 #Environment=PYRODECK_HOST=0.0.0.0
+# Launch this profile whenever Pyrodeck starts, so the game comes back after a reboot.
+#Environment="PYRODECK_AUTOSTART_PROFILE=Public CTF"
 
 [Install]
 WantedBy=multi-user.target
@@ -352,6 +354,32 @@ The admin password can also be set via the web UI on first run (stored as a scry
 | `PYRODECK_LOG_COMPRESS` | *(unset: Logs tab, off)* | `1` gzips closed logs to `.log.gz` before the size cap is applied; `0` leaves them as written. Wins over the Logs tab. |
 | `PYRODECK_STATIC_DIR` | *(auto-detected)* | Path to the `resources/` SPA directory. Auto-detected from the executable's location in binary mode. Set manually if needed. |
 | `PYRODECK_SIDECAR` | *(unset)* | Set to `1` by the Tauri wrapper. Binds loopback-only on an ephemeral port and writes `sidecar-port:{n}` to stdout. |
+| `PYRODECK_AUTOSTART_PROFILE` | *(unset)* | The profile to launch when Pyrodeck starts, by its exact name (or id), after re-attach. Unset or blank leaves it to "Start when Pyrodeck starts" in the profile, which this wins over. An unknown name is logged as an error and starts nothing. See [docs/running-as-a-service.md](docs/running-as-a-service.md#after-a-reboot). |
+
+None of these reach the game server. Pyrodeck starts it with `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TMP`/`TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*`, `SDL_*`, `D3_*` and `LD_LIBRARY_PATH` from its own environment (on Windows also the system variables such as `SystemRoot`, `TEMP` and `APPDATA`), `SDL_VIDEODRIVER=dummy` unless set, and no `PYRODECK_*` variable.
+
+---
+
+## Verifying a release download
+
+Each GitHub Release (and each manual run of `.github/workflows/release.yml`, as an artifact) carries `SHA256SUMS.txt`: the SHA-256 of every package in the release, one `<hash>  <file name>` line each, the format `sha256sum` writes and reads. Download it next to the package and check:
+
+```bash
+# Linux
+sha256sum --check --ignore-missing SHA256SUMS.txt
+# pyrodeck-v0.5.3-linux-x64.tar.gz: OK
+
+# macOS
+shasum -a 256 --check --ignore-missing SHA256SUMS.txt
+```
+
+```powershell
+# Windows (PowerShell): compare with the zip's line in SHA256SUMS.txt
+(Get-FileHash .\pyrodeck-v0.5.3-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+Select-String windows SHA256SUMS.txt
+```
+
+`--ignore-missing` skips the packages you did not download. `FAILED`, or a hash that differs, means the file is not the one the workflow built: download it again and do not run it. The checksums come from the same release page as the packages, so they catch a damaged or swapped file on the way to you, not a compromised release.
 
 ---
 

@@ -29,6 +29,12 @@ same applies to a dev checkout if you replace the binary with `node packages/ser
 - **Sessions end on restart.** Logins are kept in memory, so a restart of the service logs every browser out. A
   session also ends 12 hours after login and after 2 hours unused (`PYRODECK_SESSION_TTL_HOURS`,
   `PYRODECK_SESSION_IDLE_MINUTES`).
+- **Autostart, for a machine that reboots.** Set `PYRODECK_AUTOSTART_PROFILE` to the name of the profile to run (or
+  tick **Start when Pyrodeck starts** on it), or the game stays down after a reboot until someone presses Launch. See
+  [After a reboot](#after-a-reboot).
+- **Secrets stay with Pyrodeck.** The game server Pyrodeck launches gets a short list of variables from Pyrodeck's
+  environment (`PATH`, `HOME`, the locale, `XDG_*`, `SDL_*`, `D3_*`, `LD_LIBRARY_PATH`, and the Windows system
+  variables) and no `PYRODECK_*` one, so the password in the unit or the environment file never reaches it.
 
 ## What happens when Pyrodeck restarts
 
@@ -42,6 +48,44 @@ shows it as stopped. Choose the default if you would rather have Pyrodeck and th
 Pyrodeck keeps nothing about the schedule except the settings, so after a restart it works out the schedule again: inside
 a window it starts the server if none is running; outside one it stops nothing.
 
+## After a reboot
+
+A reboot stops the game server along with everything else, so there is nothing to re-attach to when Pyrodeck comes
+back. With autostart Pyrodeck launches a profile itself when it starts:
+
+- `PYRODECK_AUTOSTART_PROFILE=<profile name>` in the service's environment, the name exactly as the Launch panel shows
+  it (a profile's id also works). It wins over the UI setting, which then shows as locked. Unset or blank leaves the
+  choice to the UI.
+- Or, in the panel, Edit the profile and tick **Start when Pyrodeck starts**. One profile at a time.
+
+At startup Pyrodeck first tries to re-attach. A server that is running is left alone, whether it was re-attached or
+not: autostart applies only when no server runs. Otherwise the profile is launched exactly as the Launch button
+launches it, so an active playlist carries on from the mission its last rotation wrote into the profile's config, and
+a paused playlist stays paused. Without either setting nothing is launched, as in earlier versions.
+
+A crash-loop guard keeps a broken install from restarting forever. A launch that fails, or a server that exits within
+60 s of starting, is a failure. Autostart retries a failed launch after 5, 10, 20 and 40 s (useful when the game
+directory is on a mount that comes up late); a server that started and then exited is relaunched by the supervisor
+as after any crash. After 5 failures in a row both stop, and Pyrodeck's log (the journal) gets an error with the last
+reason:
+
+```
+[Autostart] Gave up on "Public CTF": 5 failed starts in a row; the last: the server exited 1 s after starting (exit code 3).
+```
+
+The Launch panel's Autostart and Supervisor blocks show the same. Launching by hand starts over. An unknown profile
+name is logged as an error at startup, and Pyrodeck runs without starting anything:
+
+```
+[Autostart] Nothing started: PYRODECK_AUTOSTART_PROFILE names no profile: "Pubic CTF" (the profiles are "Public CTF", "Anarchy").
+```
+
+With the service enabled at boot and autostart set, the machine can reboot for kernel and security updates
+unattended (`dnf-automatic` with `reboot = when-needed` on Rocky Linux and RHEL, `unattended-upgrades` with
+`Automatic-Reboot "true"` on Ubuntu and Debian): Pyrodeck starts, finds no server, and launches the profile. Players
+are dropped for the length of the reboot, as with any restart of the game. To check it once, reboot by hand and look
+for `[Autostart] Starting "<profile>"` and, a minute later, `[Autostart] "<profile>" is up` in the journal.
+
 ## Windows: NSSM
 
 [NSSM](https://nssm.cc) wraps an ordinary program as a Windows service. From an administrator command prompt, with
@@ -50,7 +94,7 @@ Pyrodeck in `C:\Pyrodeck`:
 ```cmd
 nssm install Pyrodeck "C:\Pyrodeck\pyrodeck-server.exe"
 nssm set Pyrodeck AppDirectory "C:\Pyrodeck"
-nssm set Pyrodeck AppEnvironmentExtra PYRODECK_ADMIN_PASSWORD=change-me PYRODECK_PORT=3001
+nssm set Pyrodeck AppEnvironmentExtra PYRODECK_ADMIN_PASSWORD=change-me PYRODECK_PORT=3001 "PYRODECK_AUTOSTART_PROFILE=Public CTF"
 nssm set Pyrodeck AppStdout "C:\Pyrodeck\logs\pyrodeck.log"
 nssm set Pyrodeck AppStderr "C:\Pyrodeck\logs\pyrodeck.log"
 nssm set Pyrodeck AppRotateFiles 1
@@ -63,7 +107,9 @@ mkdir C:\Pyrodeck\logs
 nssm start Pyrodeck
 ```
 
-`ObjectName` runs the service as the local account `d3host`; use the account that owns the Descent 3 directory. To
+`ObjectName` runs the service as the local account `d3host`; use the account that owns the Descent 3 directory.
+`PYRODECK_AUTOSTART_PROFILE` names the profile to launch whenever the service starts ([After a reboot](#after-a-reboot));
+leave it out to start the game by hand. To
 keep the game server running when the service stops or restarts, also set:
 
 ```cmd
@@ -92,6 +138,7 @@ a small script, `C:\Pyrodeck\run-pyrodeck.cmd`:
 cd /d C:\Pyrodeck
 set PYRODECK_ADMIN_PASSWORD=change-me
 set PYRODECK_PORT=3001
+set PYRODECK_AUTOSTART_PROFILE=Public CTF
 pyrodeck-server.exe >> C:\Pyrodeck\logs\pyrodeck.log 2>&1
 ```
 
@@ -141,6 +188,9 @@ Environment=PYRODECK_SESSION_IDLE_MINUTES=120
 Environment=PYRODECK_LOG_RETENTION_DAYS=30
 Environment=PYRODECK_LOG_MAX_MB=2048
 Environment=PYRODECK_LOG_COMPRESS=1
+# Launch this profile (its exact name) whenever Pyrodeck starts, so the game
+# comes back after a reboot ("After a reboot"). Remove it to start by hand.
+Environment="PYRODECK_AUTOSTART_PROFILE=Public CTF"
 Restart=on-failure
 RestartSec=5
 # Leave the game server running when Pyrodeck stops or restarts

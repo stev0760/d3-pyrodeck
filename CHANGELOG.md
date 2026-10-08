@@ -2,6 +2,29 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.3] - 2026-10-08
+
+A release for running unattended: the game comes back after a reboot, it no longer sees Pyrodeck's secrets, and releases carry checksums.
+
+### Security
+- **The game server no longer inherits Pyrodeck's environment.** It got all of it, `PYRODECK_ADMIN_PASSWORD` and `PYRODECK_SESSION_SECRET` included, along with anything else the service manager or a shell had set. Pyrodeck now builds the game's environment from a list: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*` (the game's writable directory, and with it `netgames/hosts.deny`, follows `XDG_DATA_HOME`), `SDL_*`, `D3_*` (the engine's own), `LD_LIBRARY_PATH`, and on Windows the system variables a program needs to start and to open sockets (`SystemRoot`, `windir`, `ComSpec`, `TEMP`, `APPDATA`, the profile and program folders). `SDL_VIDEODRIVER=dummy` is set unless the environment names a driver, as before. No `PYRODECK_*` variable reaches the game, in any letter case. A variable outside the list no longer reaches the game either.
+
+### Added
+- **Autostart.** `PYRODECK_AUTOSTART_PROFILE=<profile name>`, or **Start when Pyrodeck starts** in a profile (Launch panel → Edit), launches that profile when Pyrodeck starts, so a host that reboots for updates brings the game back without anyone pressing Launch. One profile at a time: ticking a second one replaces the first. The environment variable wins, and the box shows as locked while it is set. The name must match the profile's exactly (a profile's id also works). Without either setting nothing changes.
+- Autostart runs once, after Pyrodeck has tried to re-attach to a server that kept running across its restart. A server that is still running is left alone, re-attached or not. Otherwise the profile is launched exactly as the Launch button launches it, active playlist included: the server starts on the mission the playlist's last rotation wrote into the profile's config, rotation carries on from there, and a paused playlist stays paused until you resume it.
+- **Crash-loop guard.** A launch that fails, or a server that exits within 60 s of starting, counts as a failure. After 5 in a row autostart stops: Pyrodeck's log gets an error with the last reason, a toast says it, and the supervisor stops relaunching (its block shows why). Autostart retries a launch that failed before the game started (a missing executable, an unreadable config) after 5, 10, 20 and 40 s. A server that started and then exited is relaunched by the supervisor, as after any crash, and the guard counts those relaunches; with **Relaunch the server when it crashes** off, the first early exit ends it. A server that stays up for 60 s ends the guard, and so does anyone else starting or stopping the server meanwhile.
+- An unknown or ambiguous `PYRODECK_AUTOSTART_PROFILE` is logged as an error at startup, naming the profiles that exist. Pyrodeck carries on and starts nothing.
+- Launch panel → **Autostart**: the profile and where it is set, what autostart did at startup, failures so far, the next retry with a **Cancel** button, and why it gave up. `GET /api/launcher/autostart`, `POST /api/launcher/autostart/cancel`, `autostart` in `GET /api/launcher/status`, and `PATCH /api/profiles/:id { autostart: true | false }`.
+- **`SHA256SUMS.txt` on every release**, listing the SHA-256 of each asset in the format `sha256sum --check` reads. A manual (dry) run of the release workflow produces it too, as an artifact. README and BUILDING.md say how to verify a download.
+
+### Changed
+- `server.started` has a new reason, `autostart`; email alerts list it as a start.
+- A supervisor that has given up schedules no relaunch, whoever made it give up. The next launch by hand starts over, as before.
+- `docs/running-as-a-service.md` sets `PYRODECK_AUTOSTART_PROFILE` in the systemd unit, NSSM and `schtasks` examples, and explains what happens at a reboot; `docs/behind-a-reverse-proxy.md` lists it with the rest of the environment.
+
+### Fixed
+- A manual run of the release workflow from a branch whose name has a `/` failed to package: the branch name went into the file name. Packages from such a branch use `-` instead.
+
 ## [0.5.2] - 2026-10-08
 
 The second hardening release for running Pyrodeck on the public internet: real login sessions, a loopback-only default address, and retention for the game-server logs.

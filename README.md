@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.5.3** — Unattended operation. **Autostart**: `PYRODECK_AUTOSTART_PROFILE=<profile name>`, or **Start when Pyrodeck starts** on one profile, launches it when Pyrodeck starts, after re-attach (a server still running is left alone), so a host that reboots for updates brings the game back by itself. A crash-loop guard stops after 5 failed starts in a row (a launch that fails, or a server that exits within 60 s) and says why in the log and the Launch panel. **The game server no longer sees Pyrodeck's environment**: it gets a short list of variables it needs (`PATH`, `HOME`, the locale, `XDG_*`, `SDL_*` and the like) and never a `PYRODECK_*` one, so the admin password and session secret stay with Pyrodeck. Releases carry a **`SHA256SUMS.txt`**; see [Releases](#releases).
+
 **v0.5.2** — Second hardening pass before a public server. Logins are real sessions: a random id per login kept on the server, ended by logout, by **Log out all sessions** (Settings tab), by setting the password, 12 hours after login or after 2 hours unused (`PYRODECK_SESSION_TTL_HOURS`, `PYRODECK_SESSION_IDLE_MINUTES`); an open console closes the moment its session ends. Before, the cookie was the same signed constant for everyone and logout only deleted the browser's copy. **Pyrodeck now listens on 127.0.0.1 by default**: a LAN that opens it directly must set `PYRODECK_HOST=0.0.0.0`. Game-server logs can get retention, off until you set it (an upgrade deletes and compresses nothing): gzip closed logs to `.log.gz` and delete Pyrodeck's own logs past an age or a total size (`PYRODECK_LOG_RETENTION_DAYS`, `PYRODECK_LOG_MAX_MB`, `PYRODECK_LOG_COMPRESS`, or the Logs tab; 30 days, 2048 MB and compression on suit a public server), never touching any other file in the Log Directory. While it is off, Pyrodeck warns once its logs pass 1 GB. Sessions live in memory, so restarting Pyrodeck logs everyone out.
 
 **v0.5.1** — Ready for a public server behind a reverse proxy. `PYRODECK_TRUST_PROXY=1` now trusts only a proxy on the same machine, so a client can no longer pass itself off as local by sending its own `X-Forwarded-For`, and a request that came through a proxy never counts as local (before, with `PYRODECK_TRUST_PROXY` unset, every request through nginx did, which left the API open and first-run setup claimable from the internet until a password was set). The session cookie is `Secure` over HTTPS, the login rate limit counts per real client, cross-site browser requests are refused, and a page that rebinds its DNS name to 127.0.0.1 is not local. The game's console can stay on the machine: a launched server with `AllowRemoteConsole=0` (now the default for new configs) is logged in to on 127.0.0.1. New guide: [Running Pyrodeck behind a reverse proxy](docs/behind-a-reverse-proxy.md).
@@ -127,6 +129,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 - Supervisor: relaunches a crashed server, restarts a hung one, and can restart an empty server after an uptime limit (see [Keeping a server up](#keeping-a-server-up))
 - Weekly schedule per profile: start and stop windows by weekday and time (see Operations)
+- Autostart: one profile launched whenever Pyrodeck starts, after re-attach, with a crash-loop guard (see Operations)
 - Import a profile from the `.bat`/`.sh` that launched an old server (see Operations)
 
 ### Responsive Layout
@@ -222,8 +225,15 @@ tab.
   the game directory.
 - **Sessions.** The Settings tab lists the browsers logged in (address, browser, login and last use) and logs them all
   out with one button, this one included. Every open console of those sessions closes at once.
+- **Autostart.** Edit a profile and tick **Start when Pyrodeck starts**, or set `PYRODECK_AUTOSTART_PROFILE` to the
+  profile's name (it wins, and locks the box). Pyrodeck then launches that profile each time it starts, once it has
+  tried to re-attach to a server that kept running: a server still running is left alone. The launch is the Launch
+  button's, so an active playlist carries on from the mission its last rotation wrote into the config, and a paused
+  one stays paused. One profile at a time; the change applies at the next start of Pyrodeck. The Launch panel's
+  **Autostart** block shows what happened. An unknown profile name is logged as an error and starts nothing.
 - **Running as a service.** [docs/running-as-a-service.md](docs/running-as-a-service.md): NSSM, `schtasks` and a
-  systemd user unit, with the working directory and log location each one needs.
+  systemd user unit, with the working directory and log location each one needs. With autostart, the machine can
+  reboot for updates unattended.
 
 ## Hosting mission downloads
 
@@ -257,6 +267,8 @@ In Launch mode Pyrodeck watches the server it started, as D3Server3 did:
 A server you stop (Stop button, a playlist rotation, or `quit` typed at its console) stays down. A crash in the middle of a playlist restart is handled by the playlist's own retry.
 
 The Launch panel's **Supervisor** block shows what it is doing (relaunches so far, the last crash and hang, uptime, players, how long the console has been quiet, why an empty restart has not happened yet) and, when you open it, the three switches and their limits. A pending relaunch has a **Cancel** button for a crashed server you want left down. Pyrodeck's own log gets one `[Server]` line per start, stop, crash, hang, level start, join and leave.
+
+**After a reboot**, no server survives to re-attach to. With autostart set (see [Operations](#operations)), Pyrodeck launches the profile when it starts. A crash-loop guard watches that start: a launch that fails, or a server that exits within 60 s of starting, is a failure. Autostart retries a failed launch after 5, 10, 20 and 40 s, the supervisor relaunches a server that exited, and after 5 failures in a row both stop, with the reason in Pyrodeck's log and in the Launch panel. A server that stays up for 60 s, or a start or stop by anyone else, ends the guard.
 
 **Pyrodeck restarts do not stop the server.** A server Pyrodeck launched keeps running when Pyrodeck stops, crashes or is upgraded, and the next Pyrodeck re-attaches to it: status, console, Stop and the supervisor work again. Closing Pyrodeck therefore leaves the server up; stop it first if you want it down. After a re-attach the server's own output is not captured any more (it went to the Pyrodeck that started it), so the Output tab and the log file stop at the restart; the console still shows everything the server prints there.
 
@@ -309,7 +321,24 @@ docs/
 
 ## Releases
 
-Pre-built binaries are not yet published. Use `pnpm package:server` to build a self-contained Node SEA binary for the current platform. A Tauri app-mode wrapper (native window, sidecar server) scaffold lives in `src-tauri/` — see build instructions in `src-tauri/src/lib.rs`.
+A `v*` tag runs `.github/workflows/release.yml`, which builds the Linux and Windows packages and publishes them as a GitHub Release with `SHA256SUMS.txt`, the SHA-256 of every file in the release in `sha256sum` format. To build one yourself, `pnpm package:server` makes a self-contained Node SEA binary for the current platform ([BUILDING.md](BUILDING.md)). A Tauri app-mode wrapper (native window, sidecar server) scaffold lives in `src-tauri/` — see build instructions in `src-tauri/src/lib.rs`.
+
+### Verifying a download
+
+Download `SHA256SUMS.txt` into the same directory as the package, then:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux: "pyrodeck-v0.5.3-linux-x64.tar.gz: OK"
+shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS
+```
+
+On Windows, in PowerShell, compare the hash with the package's line in `SHA256SUMS.txt`:
+
+```powershell
+(Get-FileHash .\pyrodeck-v0.5.3-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+```
+
+A mismatch, or `FAILED`, means the file is not the one the workflow built: download it again, and do not run it.
 
 ## Security
 
@@ -319,6 +348,8 @@ An admin password is required to access the web panel from non-localhost connect
 2. **Environment variable** — set `PYRODECK_ADMIN_PASSWORD` (takes precedence over the config file)
 
 With no admin password set, the server serves localhost only: requests from non-loopback peers are refused (and a startup warning explains why) until a password is configured. "Localhost" means a browser connected straight to Pyrodeck's port from the same machine, asking for `localhost` or `127.0.0.1`: a request that came through a reverse proxy (it carries `X-Forwarded-For`, `Forwarded`, `X-Real-IP` or another forwarding header) is never local, and neither is a page whose own DNS name points at 127.0.0.1. Passwords are verified using scrypt with a random salt and timing-safe comparison. Each login gets a random 32-byte session id, kept in Pyrodeck's memory and carried in a signed HttpOnly cookie with `SameSite=Strict`, marked `Secure` when the browser came over HTTPS; a new login always gets a new id and ends the one the browser carried. A session ends at logout, at **Log out all sessions** (Settings tab), when the admin password is set, 12 hours after login (`PYRODECK_SESSION_TTL_HOURS`) or after 120 minutes without a request (`PYRODECK_SESSION_IDLE_MINUTES`), and the console WebSockets it opened close with it. An open panel polls the server, so it keeps its session in use: the idle timeout ends the sessions of closed or sleeping browsers, and the 12-hour limit ends every session. Sessions are not saved, so restarting Pyrodeck logs everyone out. Browser requests whose `Origin` names another host are refused, the WebSocket included. Login attempts are rate-limited to 5 per client address per 15 minutes (per /64 for IPv6). Web-based first-run setup is allowed only from localhost (so nobody can claim the admin password on a freshly-exposed instance); set `PYRODECK_ALLOW_REMOTE_SETUP=1` to permit it from a remote browser.
+
+The game server Pyrodeck launches does not inherit Pyrodeck's environment. It gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TMP`/`TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*`, `SDL_*`, `D3_*` and `LD_LIBRARY_PATH` (on Windows also the system variables such as `SystemRoot` and `APPDATA`), plus `SDL_VIDEODRIVER=dummy` unless set, and never a `PYRODECK_*` variable: the admin password, the session secret and anything else in the service's environment stay with Pyrodeck.
 
 The mission download listener (off by default) is public by design and needs no login, but serves nothing except the missions in the game path's `missions/` directory, never the retail ones; it runs on its own port, not through the admin panel.
 
@@ -338,6 +369,7 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 | `PYRODECK_LOG_RETENTION_DAYS` | Delete Pyrodeck's game-server logs last written more than this many days ago (default `0` = never; `30` recommended for a public server). Wins over the Logs tab |
 | `PYRODECK_LOG_MAX_MB` | Then delete the oldest until Pyrodeck's logs take at most this many MB (default `0` = no cap; `2048` recommended). Wins over the Logs tab |
 | `PYRODECK_LOG_COMPRESS` | `1` gzips closed logs to `.log.gz`, `0` leaves them as they are (default: the Logs tab's setting, off; `1` recommended). Wins over the Logs tab |
+| `PYRODECK_AUTOSTART_PROFILE` | The profile to launch when Pyrodeck starts, by its exact name (or id); unset or blank leaves it to **Start when Pyrodeck starts** in the profile, which it wins over and locks. Default: no autostart. An unknown name is logged as an error and starts nothing |
 
 ## Known Limitations
 

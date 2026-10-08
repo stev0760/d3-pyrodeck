@@ -36,6 +36,7 @@ Environment=PYRODECK_SESSION_IDLE_MINUTES=120
 Environment=PYRODECK_LOG_RETENTION_DAYS=30
 Environment=PYRODECK_LOG_MAX_MB=2048
 Environment=PYRODECK_LOG_COMPRESS=1
+Environment="PYRODECK_AUTOSTART_PROFILE=Public CTF"
 ```
 
 - Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` says otherwise (the default since 0.5.2), so its port is off
@@ -51,6 +52,11 @@ Environment=PYRODECK_LOG_COMPRESS=1
 - Log retention is off unless set. These values gzip closed game-server logs to `.log.gz`, delete Pyrodeck's logs
   last written more than 30 days ago, then the oldest beyond 2048 MB in total; nothing else in the Log Directory is
   touched. A game server writes 12-28 MB an hour.
+- `PYRODECK_AUTOSTART_PROFILE` launches the named profile whenever Pyrodeck starts, so the game comes back by itself
+  after the VPS reboots for updates. A crash-loop guard stops after 5 failed starts in a row
+  ([running-as-a-service.md](running-as-a-service.md#after-a-reboot)).
+- None of these reach the game server: Pyrodeck starts it with a short list of variables (`PATH`, `HOME`, the
+  locale and the like) and never a `PYRODECK_*` one, so the admin password stays with Pyrodeck.
 
 At startup Pyrodeck's log says `Trusting X-Forwarded-For and X-Forwarded-Proto from: loopback`. It warns when
 `PYRODECK_TRUST_PROXY` is set but `PYRODECK_HOST` is a public address, when no admin password is set, and, the first

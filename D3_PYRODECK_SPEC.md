@@ -812,11 +812,13 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 |--------|------|-------------|
 | `POST` | `/api/launcher/start` | Start local D3 dedicated server process |
 | `POST` | `/api/launcher/stop` | Stop local server (graceful) |
-| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost` and `supervisor` (Addendum E) |
+| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost`, `supervisor` (Addendum E) and `autostart` (Addendum F) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
 | `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum E) |
 | `PUT` | `/api/launcher/supervisor` | Save supervisor settings (fields left out keep their value); applies at once |
 | `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
+| `GET` | `/api/launcher/autostart` | `{ env, settingProfileId, effective: { source, profileId, profileName, error } \| null, run }`: the profile that starts with Pyrodeck and this run's autostart state (Addendum F, v0.5.3) |
+| `POST` | `/api/launcher/autostart/cancel` | Drop a pending retry of a failed autostart launch (409 when none) |
 | `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.5.0) |
 
 **Join address (v0.5.0).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
@@ -928,7 +930,8 @@ applies from the next pickup. The console event hub emits `player.joined`/`playe
 | `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, launchOptions, launchOptionArgs, importedArgs, notes }, checks }`; creates nothing |
 
 `GET /api/pyrodeck/config` does not return `mail`, and `PUT /api/pyrodeck/config` ignores `missionHost`, `supervisor`,
-`mail`, `processPriority`, `updateCheck`, `players` and `playerRules`: each has its own route.
+`autostart`, `mail`, `processPriority`, `updateCheck`, `players` and `playerRules`: each has its own route
+(`autostart` is set with `PATCH /api/profiles/:id { autostart: true | false }`, Addendum F).
 
 ### 8.8 Players: history and addresses
 
@@ -1138,6 +1141,7 @@ d3-pyrodeck/
 - **HTTPS:** Out of scope for the app. Users deploying to VPS should put nginx or Caddy in front, as `docs/behind-a-reverse-proxy.md` describes. `PYRODECK_TRUST_PROXY=1` trusts `X-Forwarded-For`/`-Proto` from loopback only (an explicit address/CIDR list names a remote proxy; never every hop), so the client is the right-most untrusted address. A request carrying any forwarding header is never local, and a local request must ask for a loopback Host name. The session cookie is `Secure` when `request.protocol` is https; browser requests whose `Origin` host differs from `Host` are refused (403). Pyrodeck listens on 127.0.0.1 unless `PYRODECK_HOST` is set (v0.5.2).
 - **Sessions (v0.5.2, `auth/sessions.ts`):** a random 32-byte id per login (base64url in the signed cookie), kept in memory with its login time, last use, address and user agent. A request with a password set needs a live session and restarts its idle clock. A session ends at logout, `DELETE /api/sessions`, when the admin password is set, `PYRODECK_SESSION_TTL_HOURS` (default 12) after login, or `PYRODECK_SESSION_IDLE_MINUTES` (default 120) after its last request; expired sessions are swept every 60 s. Cookie `maxAge` is the absolute lifetime. Login ends the session id the browser presented and issues a new one (no fixation). A `/ws` socket is bound to the session that opened it and closes with code 4401 when it ends; a command on a socket whose session ended closes it too. At most 1000 sessions; the least recently used goes first. A restart ends every session.
 - **Game console exposure:** A launched server's console is reached on 127.0.0.1 when its config has `AllowRemoteConsole=0` (the default Pyrodeck writes); `AllowRemoteConsole=1` is needed only for Connect mode from another machine, and Pyrodeck warns when a launched profile uses it.
+- **Game server environment (v0.5.3, `launcher/childEnv.ts`):** the launched process gets an environment built from an allowlist of Pyrodeck's (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TMP`/`TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*`, `SDL_*`, `D3_*`, `LD_LIBRARY_PATH`, and the Windows system variables), names compared case-insensitively, plus `SDL_VIDEODRIVER=dummy` unless set. No `PYRODECK_*` name is ever passed; every secret Pyrodeck reads from its environment is one.
 - **CORS:** Restricted to the web admin's own origin by default.
 
 ---
@@ -1695,6 +1699,69 @@ server's reason. The process status row gains a `Re-attached` badge and a line s
 for an adopted server and that its output is no longer captured, and a signal badge for a crash.
 The launcher status is polled every 2 s while a server is up and every 5 s while it is down, so a
 relaunch shows without a reload.
+
+## Addendum F — Autostart (2026-10-08, v0.5.3, branch `ops/autostart-env-checksums`)
+
+Pyrodeck re-attaches to a server that survived its own restart (E.5), but after a reboot no server survives and
+nobody presses Launch. Autostart launches one profile when Pyrodeck starts.
+
+### F.1 Which profile
+
+`launcher/autostartSettings.ts`. `PYRODECK_AUTOSTART_PROFILE` (read once at startup; unset or blank = not set) names
+the profile by its exact, case-sensitive name, else by id; two profiles of that name is an error. Otherwise
+`pyrodeck.json` `autostart.profileId`, set by the profile form's **Start when Pyrodeck starts**
+(`PATCH /api/profiles/:id { autostart: true }` makes the profile the one, replacing another; `false` clears it only if
+it is this profile; any other value is a 400). Deleting the profile clears it. While the variable is set the UI box is
+locked, and a PATCH that sends `autostart` anyway is stored and answered with a warning that the variable wins.
+Neither set: no autostart.
+
+### F.2 When, and how
+
+`launcher/Autostart.ts`, wired in `routes/launcher.ts`; `index.ts` calls it once after `listen`, and
+`launcherRoutes` has re-attached by then. Once per Pyrodeck process:
+
+1. No profile set: state `off`, nothing logged. Unknown or ambiguous name, or the UI's profile deleted: state
+   `error`, `console.error` naming the profiles that exist, nothing launched, no throw.
+2. A server is running (re-attached), or re-attach found one it could not adopt (its config lost
+   `ConsolePassword`), or re-attach threw: state `skipped` with the reason, nothing launched.
+3. Otherwise, after the playlist state is restored, `startServer({ profileId, reason: "autostart" })`, the Launch
+   button's path. Playlists are global: the restored playlist's `needsInitialSync` is false, so the server starts on
+   the `MissionName` its last rotation wrote into the profile's config and rotation carries on; a paused playlist
+   stays paused; rotations restart the most recently launched profile, which `markLaunched` makes this one.
+   `server.started.reason` is `autostart` (mailed as `started`).
+
+### F.3 Crash-loop guard
+
+A failure is a launch that `startServer` refuses or `ProcessManager.start` throws on, or a process that goes down
+(`crashed`, or `stopped` with reason `hang`) within `AUTOSTART_QUICK_EXIT_MS` (60 s) of `server.started`.
+`AUTOSTART_MAX_FAILURES` (5) in a row: state `failed`, `console.error` and a toast with the last reason, and
+`Supervisor.giveUp(reason)`, which cancels a pending relaunch and sets the supervisor's `gaveUp`; a supervisor that
+has given up schedules nothing until a deliberate launch (`processStarted` with a reason other than `relaunch`)
+clears it.
+
+Who retries: a refused launch is retried by autostart after `backoffDelayMs(failures)` (5, 10, 20, 40 s; state
+`retrying`, `nextAttemptAt`), since the supervisor has no launch config to repeat. A process that went down is the
+supervisor's (state `relaunching`): it relaunches after a crash when `relaunchOnCrash` is on and always after a hang;
+`server.started{reason:"relaunch"}` starts the next 60 s watch, and a relaunch whose spawn throws counts as a failure
+(the supervisor's `relaunch` action reports it). With `relaunchOnCrash` off the first early exit is state `failed`.
+`launcher.ts` calls `autostart.processDown` before `supervisor.processDown`, so a tripped guard is in place first.
+
+The guard ends with state `started` once a process has run 60 s, or `cancelled` when someone else acts: a
+`server.started` with reason `manual`, `schedule` or `playlist`, a stop on request inside the window, or
+`POST /api/launcher/autostart/cancel` during `retrying`.
+
+`autostart` in `GET /api/launcher/status`: `state` (`off`, `error`, `skipped`, `launching`, `retrying`, `watching`,
+`relaunching`, `started`, `failed`, `cancelled`), `profileId`, `profileName`, `source` (`env` | `setting`), `reason`,
+`failures`, `maxFailures`, `quickExitSec`, `at`, `nextAttemptAt` (retrying), `watchUntil` (watching),
+`relaunchPending` (relaunching).
+
+### F.4 UI
+
+Launch panel, **Autostart** (above Supervisor; `components/AutostartStatus.tsx`), hidden while no profile is set and
+nothing happened: a dot and a word (Checking, Retrying n/5, Relaunching n/5, Started, Gave up, Handed over, Server was
+running, Not started), the profile and its source, and one line for the state (the reason, failures n of 5, the next
+retry with **Cancel**, the give-up). Profile form: **Start when Pyrodeck starts**, with the profile it replaces, or
+locked with the variable's value.
 
 ---
 

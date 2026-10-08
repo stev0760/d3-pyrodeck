@@ -364,6 +364,10 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       12 h absolute and 120 min idle lifetimes, new id on login, `/ws` closed with its session); `PYRODECK_HOST`
       defaults to 127.0.0.1; opt-in game-server log retention (gzip closed logs, prune by age then total size,
       Pyrodeck's own file names only; a warning above 1 GB while it is off)
+- [x] Unattended operation (v0.5.3): autostart of one profile when Pyrodeck starts (`PYRODECK_AUTOSTART_PROFILE` or
+      the profile's "Start when Pyrodeck starts"), after re-attach, with a crash-loop guard over the supervisor's
+      relaunches (spec Addendum F); the game server's environment built from an allowlist, never `PYRODECK_*`;
+      `SHA256SUMS.txt` on every release and dry run
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no
