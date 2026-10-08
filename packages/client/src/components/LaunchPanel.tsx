@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
 import { SupervisorSettings } from "./SupervisorSettings";
+import { AutostartField, AutostartStatus } from "./AutostartStatus";
+import { fetchAutostart, type AutostartInfo } from "@/lib/autostart";
 import { JoinAddressRow } from "./JoinAddressRow";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -54,6 +56,8 @@ interface PathFormState {
   periodic: PeriodicForm;
   respawn: RespawnForm;
   schedule: ProfileSchedule;
+  /** "Start when Pyrodeck starts" (sent only while the environment does not set it). */
+  autostart: boolean;
 }
 
 const EMPTY_FORM: PathFormState = {
@@ -66,6 +70,7 @@ const EMPTY_FORM: PathFormState = {
   periodic: periodicToForm(undefined),
   respawn: respawnToForm(undefined),
   schedule: EMPTY_SCHEDULE,
+  autostart: false,
 };
 
 const SCHEDULE_POLL_MS = 30_000;
@@ -258,6 +263,15 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     return () => clearInterval(timer);
   }, [refreshSchedule, profiles, processStatus?.state]);
 
+  // Which profile starts with Pyrodeck, and whether the environment sets it.
+  const [autostartInfo, setAutostartInfo] = useState<AutostartInfo | null>(null);
+  const refreshAutostart = useCallback(() => {
+    void fetchAutostart().then((info) => info && setAutostartInfo(info));
+  }, []);
+  useEffect(() => {
+    refreshAutostart();
+  }, [refreshAutostart, profiles]);
+
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
@@ -300,6 +314,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       schedule: selectedProfile.schedule
         ? { ...selectedProfile.schedule, windows: selectedProfile.schedule.windows.map((w) => ({ ...w })) }
         : EMPTY_SCHEDULE,
+      autostart: autostartInfo?.settingProfileId === selectedProfile.id,
     });
     setValidationErrors([]);
     setSaveWarnings([]);
@@ -371,12 +386,15 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       periodicCommands: periodicPayload(form.periodic),
       respawnScaling: respawnPayload(form.respawn),
       schedule: form.schedule.enabled || form.schedule.windows.length > 0 ? form.schedule : null,
+      // Not while the environment decides (the box is locked), nor when the setting never loaded.
+      ...(autostartInfo && autostartInfo.env === null ? { autostart: form.autostart } : {}),
     });
     setSaving(false);
     if (updated) {
       setSaveWarnings(updated.warnings ?? []);
       setMode("listing");
       refreshSchedule();
+      refreshAutostart();
     }
   };
 
@@ -479,6 +497,16 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <RespawnFields
             values={form.respawn}
             onChange={(respawn) => setForm((prev) => ({ ...prev, respawn }))}
+          />
+        )}
+
+        {!isCreate && selectedProfile && (
+          <AutostartField
+            checked={form.autostart}
+            onChange={(autostart) => setForm((prev) => ({ ...prev, autostart }))}
+            info={autostartInfo}
+            profileId={selectedProfile.id}
+            profileNames={new Map(profiles.map((p) => [p.id, p.name]))}
           />
         )}
 
@@ -752,6 +780,15 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           {error}
         </p>
       )}
+
+      <AutostartStatus
+        info={autostartInfo}
+        run={processStatus?.autostart ?? null}
+        onChanged={() => {
+          refreshStatus();
+          refreshAutostart();
+        }}
+      />
 
       <Separator />
       <SupervisorSettings state={processStatus?.supervisor ?? null} onChanged={refreshStatus} />

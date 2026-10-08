@@ -41,8 +41,10 @@ import { missionHost } from "./mission-host.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { ConsoleQuitWatch } from "../launcher/consoleQuit.js";
 import { chatName, sayToAll } from "../players/playerActions.js";
-import { Supervisor } from "../launcher/Supervisor.js";
+import { Supervisor, type ProcessDown } from "../launcher/Supervisor.js";
 import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
+import { Autostart } from "../launcher/Autostart.js";
+import { chooseAutostartProfile, readAutostartEnv } from "../launcher/autostartSettings.js";
 import {
   clearRunRecord,
   decideAdopt,
@@ -134,8 +136,9 @@ export const profileAutomation = new ProfileAutomation({
 profileAutomation.listen(serverEvents);
 processManager.on("exit", () => profileAutomation.serverDown());
 
-// Restore playlist activation state from disk on startup
-playlistManager.restoreState().catch(() => {});
+// Restore playlist activation state from disk on startup. Autostart waits
+// for it, so its launch sees the playlist as the Launch button would.
+const playlistRestored: Promise<void> = playlistManager.restoreState().catch(() => {});
 
 // Wire playlist events to WebSocket broadcasts
 playlistManager.on("timerUpdate", (gameEndAt: number | null) => {
@@ -757,7 +760,15 @@ async function relaunchLast(): Promise<void> {
 }
 
 export const supervisor = new Supervisor({
-  relaunch: relaunchLast,
+  relaunch: async () => {
+    try {
+      await relaunchLast();
+    } catch (err) {
+      // Autostart's crash-loop guard counts a relaunch that could not start.
+      autostart.relaunchFailed(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  },
   stop: async (reason, options) => {
     await stopServer(reason, options);
   },
@@ -779,6 +790,58 @@ export const supervisor = new Supervisor({
     }
   },
 });
+
+// ---------------------------------------------------------------------------
+// Autostart: launch a profile when Pyrodeck starts (PYRODECK_AUTOSTART_PROFILE,
+// or the profile ticked "Start when Pyrodeck starts"), after re-attach, with
+// a crash-loop guard over the supervisor's relaunches (launcher/Autostart.ts).
+// ---------------------------------------------------------------------------
+
+/** The profile PYRODECK_AUTOSTART_PROFILE names; read once, like the other PYRODECK_* settings. */
+const autostartEnv = readAutostartEnv(process.env);
+
+/**
+ * Set by re-attach when a server from before Pyrodeck's restart still runs
+ * but could not be re-attached to: autostart must not launch a second one
+ * onto its ports.
+ */
+let reattachBlock: string | null = null;
+
+export const autostart = new Autostart({
+  choose: async () =>
+    chooseAutostartProfile(
+      autostartEnv,
+      pyrodeckConfig.get().autostart.profileId,
+      await new ServerProfileManager(CONFIG_DIR, "").list(),
+    ),
+  blockedBy: () => {
+    if (processManager.isRunning()) {
+      const { pid, adopted } = processManager.getStatus();
+      return adopted
+        ? `the server Pyrodeck launched before it restarted is still running (PID ${pid}) and was re-attached`
+        : `a server is already running (PID ${pid})`;
+    }
+    return reattachBlock;
+  },
+  launch: async (profileId) => {
+    await playlistRestored;
+    const result = await startServer({ profileId, reason: "autostart" });
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
+  },
+  supervisorRelaunches: (down) => down.stopReason === "hang" || supervisor.getSettings().relaunchOnCrash,
+  relaunchPending: () => supervisor.snapshot().pendingRelaunch !== null,
+  stopRelaunching: (reason) => supervisor.giveUp(reason),
+  notify: (message) => wsBroadcast("error", { message }),
+  log: { info: (m) => console.log(m), warn: (m) => console.warn(m), error: (m) => console.error(m) },
+});
+
+/**
+ * Run autostart (once). Call after launcherRoutes is registered, so that
+ * re-attach has run; index.ts calls it once Pyrodeck listens.
+ */
+export function startAutostart(): Promise<void> {
+  return autostart.run();
+}
 
 /**
  * Feed a logged-in console to the supervisor, and log in again if the link
@@ -849,13 +912,16 @@ processManager.on("stateChange", (state: string) => {
     stopConsoleReconnect();
     queueRunRecord(() => clearRunRecord(CONFIG_DIR));
     const { exitCode, exitSignal, stopReason } = processManager.getStatus();
-    supervisor.processDown({
+    const down: ProcessDown = {
       crashed: state === "crashed",
       stopReason,
       rotationOwned,
       code: exitCode,
       signal: exitSignal,
-    });
+    };
+    // The guard first: when it trips it stops the supervisor's relaunch.
+    autostart.processDown(down);
+    supervisor.processDown(down);
   }
 });
 
@@ -916,13 +982,17 @@ processManager.on("logWarning", (message: string) => {
  * detection (from the console). What does not: the server's stdout is gone
  * with the old Pyrodeck, so the Output tab and the log file get nothing more,
  * and its exit code is not known.
+ *
+ * Returns why no new server may be launched although none was re-attached
+ * (one still runs that Pyrodeck cannot log in to), or null.
  */
-async function reattachToRunningServer(): Promise<void> {
+async function reattachToRunningServer(): Promise<string | null> {
   const record = await readRunRecord(CONFIG_DIR);
-  if (!record) return;
-  const forget = async (why: string) => {
+  if (!record) return null;
+  const forget = async (why: string): Promise<null> => {
     console.log(`[Pyrodeck] Not re-attaching to server PID ${record.pid}: ${why}`);
     await clearRunRecord(CONFIG_DIR);
+    return null;
   };
 
   const decision = decideAdopt(record, await readProcessFacts(record.pid), process.platform);
@@ -938,7 +1008,7 @@ async function reattachToRunningServer(): Promise<void> {
   if (!password) {
     // Leave the record: the server runs, Pyrodeck just cannot log in to it.
     console.warn(`[Pyrodeck] Server PID ${record.pid} is still running, but ${record.configFile} has no console password; not re-attaching.`);
-    return;
+    return `the server Pyrodeck launched before it restarted is still running (PID ${record.pid}), but ${record.configFile} has no console password, so Pyrodeck could not re-attach to it`;
   }
 
   // 127.0.0.1, or the -useip address of a console that takes remote connections.
@@ -987,14 +1057,18 @@ async function reattachToRunningServer(): Promise<void> {
   });
   processManager.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
   console.log(`[Pyrodeck] Re-attached to the server Pyrodeck launched before it restarted (PID ${record.pid})`);
+  return null;
 }
 
 /**
  * Start a server from a profile, or from the global dedicated.cfg without
  * one: the path behind POST /api/launcher/start, also taken by the weekly
- * schedule.
+ * schedule and by autostart.
  */
-export async function startServer(opts: { profileId?: string; reason: "manual" | "schedule" }): Promise<LaunchResult> {
+export async function startServer(opts: {
+  profileId?: string;
+  reason: "manual" | "schedule" | "autostart";
+}): Promise<LaunchResult> {
   if (processManager.isRunning()) {
     return { ok: false, code: 409, error: "Server is already running" };
   }
@@ -1171,11 +1245,17 @@ export async function startServer(opts: { profileId?: string; reason: "manual" |
 export async function launcherRoutes(app: FastifyInstance): Promise<void> {
   // pyrodeck.json is loaded by now (it was not when this module was evaluated).
   supervisor.applySettings(pyrodeckConfig.get().supervisor);
-  app.addHook("onClose", async () => supervisor.dispose());
+  app.addHook("onClose", async () => {
+    supervisor.dispose();
+    autostart.dispose();
+  });
   try {
-    await reattachToRunningServer();
+    reattachBlock = await reattachToRunningServer();
   } catch (err) {
-    console.warn(`[Pyrodeck] Re-attach failed: ${err instanceof Error ? err.message : err}`);
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Pyrodeck] Re-attach failed: ${message}`);
+    // Whether a server still runs is not known: do not launch another onto its ports.
+    reattachBlock = `re-attaching to a server from before Pyrodeck's restart failed (${message})`;
   }
 
   app.post("/api/launcher/start", async (request, reply) => {
@@ -1199,7 +1279,41 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       ...processManager.getStatus(),
       missionHost: missionHost.getStatus(),
       supervisor: supervisor.snapshot(),
+      autostart: autostart.snapshot(),
     };
+  });
+
+  /**
+   * GET /api/launcher/autostart: which profile Pyrodeck starts with it and
+   * where that comes from (PYRODECK_AUTOSTART_PROFILE wins over the profile
+   * ticked in the UI), and what this run's autostart did. The UI setting is
+   * changed with PATCH /api/profiles/:id { autostart: true | false }.
+   */
+  app.get("/api/launcher/autostart", async () => {
+    const settingProfileId = pyrodeckConfig.get().autostart.profileId;
+    const profiles = await new ServerProfileManager(CONFIG_DIR, "").list().catch(() => []);
+    const choice = chooseAutostartProfile(autostartEnv, settingProfileId, profiles);
+    return {
+      env: autostartEnv,
+      settingProfileId,
+      effective: choice
+        ? {
+            source: choice.source,
+            profileId: "profile" in choice ? choice.profile.id : null,
+            profileName: "profile" in choice ? choice.profile.name : null,
+            error: "error" in choice ? choice.error : null,
+          }
+        : null,
+      run: autostart.snapshot(),
+    };
+  });
+
+  /** POST /api/launcher/autostart/cancel: drop the pending retry of a failed autostart launch. */
+  app.post("/api/launcher/autostart/cancel", async (_request, reply) => {
+    if (!autostart.cancelRetry("you cancelled the retry")) {
+      return reply.status(409).send({ error: "No autostart retry is pending" });
+    }
+    return autostart.snapshot();
   });
 
   /** GET /api/launcher/supervisor: the saved settings and the live state. */

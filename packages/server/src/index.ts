@@ -14,7 +14,7 @@ import { savedServerRoutes } from "./routes/saved-servers.js";
 import { configRoutes } from "./routes/config.js";
 import { pyrodeckConfigRoutes } from "./routes/pyrodeck-config.js";
 import { missionHostRoutes } from "./routes/mission-host.js";
-import { launcherRoutes } from "./routes/launcher.js";
+import { launcherRoutes, startAutostart } from "./routes/launcher.js";
 import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
@@ -214,6 +214,10 @@ async function main() {
   } else {
     app.log.info(`D3 Pyrodeck server listening on ${HOST}:${PORT}`);
   }
+
+  // Autostart last: re-attach has run (launcherRoutes), and the panel is up
+  // to show what autostart does. It never throws; a failure is logged.
+  void startAutostart();
 }
 
 main().catch((err) => {

@@ -17,7 +17,8 @@ import { DEFAULT_SUPERVISOR_SETTINGS, type SupervisorSettings } from "./supervis
  * rotation, the scheduler, a `quit` typed at the console), and a crash while a
  * playlist restart is still being health-checked: that relaunch belongs to the
  * rotation (RotationHealthMonitor), which retries once and then pauses the
- * playlist.
+ * playlist. After an autostart, its crash-loop guard (Autostart.ts) counts
+ * these relaunches and calls giveUp() when they keep failing.
  *
  * The launcher reports what happens (processStarted via the bus, processDown,
  * console up/down/output) and supplies the actions; this class decides.
@@ -234,6 +235,16 @@ export class Supervisor {
     if (this.humanCount() === 0 && this.emptySince === null) this.emptySince = Date.now();
   }
 
+  /**
+   * Stop relaunching on another part's verdict (autostart's crash-loop
+   * guard, Autostart.ts): drop a pending relaunch and show the reason as the
+   * supervisor's own give-up, which the next deliberate launch clears.
+   */
+  giveUp(reason: string): void {
+    this.cancelRelaunch();
+    this.gaveUp = { at: Date.now(), reason };
+  }
+
   /** The operator does not want the pending relaunch. */
   cancelRelaunch(): boolean {
     if (!this.pending) return false;
@@ -277,6 +288,8 @@ export class Supervisor {
 
   private scheduleRelaunch(cause: RelaunchCause): void {
     this.cancelRelaunch();
+    // Given up: nothing relaunches until a deliberate launch clears it.
+    if (this.gaveUp) return;
     const now = Date.now();
     let delayMs = 0;
     if (cause !== "empty-restart") {

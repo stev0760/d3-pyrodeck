@@ -19,8 +19,16 @@ export const NO_PROFILE_ID = "launch";
  * console events (level and player) for every console session.
  */
 export interface ServerEventMap {
-  /** The game process was started (by hand, by a playlist or by the supervisor). */
-  "server.started": { profileId: string; pid: number; args: string[]; reason: "manual" | "playlist" | "relaunch" | "schedule" };
+  /**
+   * The game process was started: by hand, by a playlist restart, by the
+   * supervisor, by the weekly schedule, or by autostart when Pyrodeck started.
+   */
+  "server.started": {
+    profileId: string;
+    pid: number;
+    args: string[];
+    reason: "manual" | "playlist" | "relaunch" | "schedule" | "autostart";
+  };
   /**
    * The game process stopped on request. `via: "console"` when someone typed
    * `quit` on the server's remote console instead of using Pyrodeck (reason

@@ -25,6 +25,11 @@ import {
   sanitizeStoredLogRetention,
   type LogRetentionSettings,
 } from "../launcher/logRetention.js";
+import {
+  DEFAULT_AUTOSTART_SETTINGS,
+  sanitizeStoredAutostart,
+  type AutostartSettings,
+} from "../launcher/autostartSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -53,6 +58,11 @@ export interface PyrodeckConfig {
   missionHost: MissionHostSettings;
   /** Crash relaunch, hang check, restart when empty (launcher/Supervisor.ts). Set via /api/launcher/supervisor only. */
   supervisor: SupervisorSettings;
+  /**
+   * The profile to launch when Pyrodeck starts (launcher/autostartSettings.ts).
+   * Set with PATCH /api/profiles/:id { autostart } only; PYRODECK_AUTOSTART_PROFILE wins.
+   */
+  autostart: AutostartSettings;
   /** Host name or IPv4 address players join at, shown with the game port in the Launch panel. Null = unknown. */
   joinHost: string | null;
   /** Email alerts (ops/mailSettings.ts). Set via /api/alerts/mail only; the password is never returned. */
@@ -86,6 +96,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
   supervisor: { ...DEFAULT_SUPERVISOR_SETTINGS },
+  autostart: { ...DEFAULT_AUTOSTART_SETTINGS },
   joinHost: null,
   mail: { ...DEFAULT_MAIL_SETTINGS, events: { ...DEFAULT_MAIL_SETTINGS.events } },
   processPriority: DEFAULT_PRIORITY_CLASS,
@@ -154,6 +165,9 @@ function migrateConfig(
   }
   if ("supervisor" in raw) {
     migrated.supervisor = sanitizeStoredSupervisor(raw.supervisor);
+  }
+  if ("autostart" in raw) {
+    migrated.autostart = sanitizeStoredAutostart(raw.autostart);
   }
   if (typeof raw.joinHost === "string") {
     const check = checkJoinHost(raw.joinHost);

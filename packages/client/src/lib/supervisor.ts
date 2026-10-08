@@ -32,6 +32,14 @@ export interface SupervisorState {
   adopted: boolean;
 }
 
+/** Status dot colours of the Launch panel's Supervisor and Autostart blocks. */
+export const TONE_DOT: Record<"ok" | "warn" | "error" | "off", string> = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-400 animate-pulse",
+  error: "bg-red-500",
+  off: "bg-zinc-500",
+};
+
 export function formatDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 300) return `${s} s`;

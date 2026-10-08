@@ -19,6 +19,11 @@ export const RELAUNCH_MAX_MS = 120_000;
 export const RELAUNCH_MAX_FAILURES = 6;
 export const RELAUNCH_WINDOW_MS = 30 * 60_000;
 
+/** The wait before attempt `failures + 1`: `initialMs` doubled per failure, at most `maxMs`. */
+export function backoffDelayMs(failures: number, initialMs = RELAUNCH_INITIAL_MS, maxMs = RELAUNCH_MAX_MS): number {
+  return Math.min(initialMs * 2 ** (Math.max(1, failures) - 1), maxMs);
+}
+
 export class RelaunchBackoff {
   readonly initialMs: number;
   readonly maxMs: number;
@@ -39,7 +44,7 @@ export class RelaunchBackoff {
     this.failures.push(now);
     const failures = this.failures.length;
     if (failures > this.maxFailures) return { giveUp: true, failures };
-    return { delayMs: Math.min(this.initialMs * 2 ** (failures - 1), this.maxMs), failures };
+    return { delayMs: backoffDelayMs(failures, this.initialMs, this.maxMs), failures };
   }
 
   /** Failures still inside the window at `now`. */

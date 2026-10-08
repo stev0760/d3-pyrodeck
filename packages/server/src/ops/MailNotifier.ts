@@ -58,6 +58,7 @@ export function describeEvent<K extends MailableEventName>(
       const p = payload as ServerEventMap["server.started"];
       if (p.reason === "relaunch") return { ...base, text: `Server relaunched by Pyrodeck (PID ${p.pid})`, categories: ["relaunched"] };
       if (p.reason === "schedule") return { ...base, text: `Server started by the schedule (PID ${p.pid})`, categories: ["started", "schedule"] };
+      if (p.reason === "autostart") return { ...base, text: `Server started with Pyrodeck (autostart, PID ${p.pid})`, categories: ["started"] };
       // Playlist rotations restart the server at every mission change: not mailed.
       if (p.reason === "playlist") return { ...base, text: `Server restarted by the playlist (PID ${p.pid})`, categories: [] };
       return { ...base, text: `Server started (PID ${p.pid})`, categories: ["started"] };

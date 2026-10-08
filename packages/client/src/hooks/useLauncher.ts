@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { MissionHostStatus } from "@/lib/missionHost";
 import type { SupervisorState } from "@/lib/supervisor";
+import type { AutostartRun } from "@/lib/autostart";
 import type { ProfileSchedule } from "@/lib/ops";
 
 export interface PyrodeckConfig {
@@ -38,6 +39,8 @@ export interface ProcessStatus {
   adopted?: boolean;
   /** Crash relaunch, hang check, restart when empty (GET /api/launcher/status only). */
   supervisor?: SupervisorState;
+  /** What autostart did when Pyrodeck started (GET /api/launcher/status only). */
+  autostart?: AutostartRun;
 }
 
 /** DMFC options sent over the console after each launch (unset = server default). */
@@ -117,6 +120,8 @@ export interface ProfileSettingsPayload {
   respawnScaling?: Record<string, unknown> | null;
   schedule?: ProfileSchedule | null;
   importedArgs?: string[] | null;
+  /** "Start when Pyrodeck starts": true makes this the one autostart profile, false clears it. */
+  autostart?: boolean;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */

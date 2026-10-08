@@ -43,6 +43,7 @@ import {
 } from "../gamefiles/Mn3UrlRewriter.js";
 import { buildHostedMissionUrl } from "../gamefiles/missionHostSettings.js";
 import { hostedLinkFor, missionHost, missionHostMissionsDir } from "./mission-host.js";
+import { AUTOSTART_ENV, readAutostartEnv } from "../launcher/autostartSettings.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
@@ -269,9 +270,20 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       respawnScaling?: unknown;
       schedule?: unknown;
       importedArgs?: unknown;
+      /** "Start when Pyrodeck starts": true makes this the one autostart profile, false clears it if it is. */
+      autostart?: unknown;
     };
-    const { postStart, launchOptions, teamSettings, periodicCommands, respawnScaling, schedule, importedArgs, ...rest } =
-      body;
+    const {
+      postStart,
+      launchOptions,
+      teamSettings,
+      periodicCommands,
+      respawnScaling,
+      schedule,
+      importedArgs,
+      autostart,
+      ...rest
+    } = body;
     const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
     // Whitelisted values only; null or nothing valid clears the settings.
     if (postStart !== undefined) updates.postStart = sanitizePostStart(postStart);
@@ -309,6 +321,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         updates.schedule = check.schedule ?? null;
       }
     }
+    if (autostart !== undefined && typeof autostart !== "boolean") {
+      errors.push("autostart must be true or false.");
+    }
     if (errors.length > 0) {
       return reply.status(400).send({ error: errors.join(" "), details: errors });
     }
@@ -318,6 +333,18 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       profile = await getMetadataManager().update(id, updates);
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
+    }
+    if (typeof autostart === "boolean") {
+      // One profile at a time: ticking this one replaces any other.
+      const current = pyrodeckConfig.get().autostart.profileId;
+      if (autostart && current !== id) await pyrodeckConfig.save({ autostart: { profileId: id } });
+      if (!autostart && current === id) await pyrodeckConfig.save({ autostart: { profileId: null } });
+      const envName = readAutostartEnv(process.env);
+      if (envName !== null) {
+        warnings.push(
+          `${AUTOSTART_ENV} is set and wins over "Start when Pyrodeck starts": Pyrodeck starts the profile it names ("${envName}").`,
+        );
+      }
     }
     if (launchOptions !== undefined) {
       warnings.push(...(await portConflictWarnings(profile)));
@@ -358,10 +385,14 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     try {
       await getMetadataManager().delete(id);
-      return { ok: true };
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
     }
+    // A deleted profile cannot start with Pyrodeck.
+    if (pyrodeckConfig.get().autostart.profileId === id) {
+      await pyrodeckConfig.save({ autostart: { profileId: null } });
+    }
+    return { ok: true };
   });
 
   /** Duplicate a profile. */

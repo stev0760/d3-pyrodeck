@@ -80,12 +80,16 @@ describe("MailBatcher", () => {
 
 describe("describeEvent", () => {
   it("maps start reasons to their checklist entries; playlist restarts are never mailed", () => {
-    const started = (reason: "manual" | "playlist" | "relaunch" | "schedule") =>
+    const started = (reason: "manual" | "playlist" | "relaunch" | "schedule" | "autostart") =>
       describeEvent("server.started", { profileId: "p1", pid: 42, args: [], reason }).categories;
     expect(started("manual")).toEqual(["started"]);
     expect(started("relaunch")).toEqual(["relaunched"]);
     expect(started("schedule")).toEqual(["started", "schedule"]);
     expect(started("playlist")).toEqual([]);
+    expect(started("autostart")).toEqual(["started"]);
+    expect(describeEvent("server.started", { profileId: "p1", pid: 42, args: [], reason: "autostart" }).text).toBe(
+      "Server started with Pyrodeck (autostart, PID 42)",
+    );
   });
 
   it("describes crashes, hangs, kicks, bans and skipped schedule actions", () => {

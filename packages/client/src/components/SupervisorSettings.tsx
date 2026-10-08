@@ -6,19 +6,13 @@ import {
   formatDuration,
   formatTime,
   supervisorSummary,
+  TONE_DOT,
   type SupervisorSettings as Settings,
   type SupervisorState,
 } from "@/lib/supervisor";
 
 const NUMBER_CLASS =
   "w-full mt-0.5 bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring";
-
-const TONE_DOT: Record<string, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-400 animate-pulse",
-  error: "bg-red-500",
-  off: "bg-zinc-500",
-};
 
 type Form = Record<keyof Settings, string | boolean>;
 

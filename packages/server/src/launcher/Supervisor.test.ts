@@ -22,7 +22,7 @@ describe("Supervisor", () => {
     running = false;
     sup.processDown({ crashed: false, stopReason, rotationOwned: false, code: 0, signal: null });
   };
-  const start = (reason: "manual" | "relaunch" = "manual") => {
+  const start = (reason: "manual" | "relaunch" | "autostart" = "manual") => {
     running = true;
     events.emitEvent("server.started", { profileId: "p1", pid: ++pid, args: [], reason });
   };
@@ -117,6 +117,26 @@ describe("Supervisor", () => {
 
       start("manual");
       expect(sup.snapshot()).toMatchObject({ gaveUp: null, recentFailures: 0 });
+    });
+
+    it("gives up on another part's verdict (autostart's guard) until someone launches it", async () => {
+      start();
+      crash();
+      expect(sup.snapshot().pendingRelaunch).not.toBeNull();
+      sup.giveUp("autostart gave up");
+      expect(sup.snapshot()).toMatchObject({ pendingRelaunch: null, gaveUp: { reason: "autostart gave up" } });
+      // Nothing it would otherwise relaunch is relaunched.
+      start("relaunch");
+      crash();
+      stopped("hang");
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(log.filter((l) => l.startsWith("relaunch@"))).toEqual([]);
+      expect(sup.snapshot().pendingRelaunch).toBeNull();
+
+      start("autostart");
+      expect(sup.snapshot().gaveUp).toBeNull();
+      crash();
+      expect(sup.snapshot().pendingRelaunch).not.toBeNull();
     });
 
     it("a launch by hand cancels the pending relaunch", async () => {
