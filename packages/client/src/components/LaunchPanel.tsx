@@ -3,6 +3,7 @@ import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/use
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
+import { SupervisorSettings } from "./SupervisorSettings";
 import { Separator } from "@/components/ui/separator";
 
 type LauncherState = ReturnType<typeof useLauncher>;
@@ -189,6 +190,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     deleteProfile,
     launch,
     stop,
+    refreshStatus,
   } = launcher;
 
   const [mode, setMode] = useState<PanelMode>("listing");
@@ -493,7 +495,29 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                 exit {processStatus.exitCode}
               </Badge>
             )}
+            {state === "crashed" && processStatus?.exitSignal && (
+              <Badge variant="destructive" className="text-[10px] py-0 px-1.5">
+                {processStatus.exitSignal}
+              </Badge>
+            )}
+            {isActive && processStatus?.adopted && (
+              <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+                Re-attached
+              </Badge>
+            )}
           </div>
+
+          {/* A server that kept running across a Pyrodeck restart: say what
+              still works and what does not. */}
+          {isActive && processStatus?.adopted && (
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Pyrodeck restarted while this server ran and re-attached to it. Console, Stop and the supervisor work.
+              Its output is no longer captured: the Output tab and its log file stop at the restart.
+            </p>
+          )}
+          {state === "stopped" && processStatus?.stopReason === "console" && (
+            <p className="text-[11px] text-muted-foreground">Stopped with <span className="font-mono">quit</span> at its console.</p>
+          )}
 
           {/* Log health: a failed log stays on screen (the toast alone is gone
               in seconds, and a soak that logs nowhere is lost for good). */}
@@ -556,6 +580,9 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           {error}
         </p>
       )}
+
+      <Separator />
+      <SupervisorSettings state={processStatus?.supervisor ?? null} onChanged={refreshStatus} />
 
       <Separator />
       <MissionHostSettings />

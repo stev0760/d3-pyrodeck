@@ -51,6 +51,23 @@ lineMonitor.onConsoleQuit = () => processManager.noteConsoleQuit();
 serverEvents.onEvent("server.started", ({ profileId }) => lineMonitor.reset(profileId));
 serverEvents.onEvent("server.adopted", ({ profileId }) => lineMonitor.reset(profileId));
 
+// One line per event in Pyrodeck's own log: the history D3Server3 kept in
+// its event log.
+serverEvents.onEvent("server.started", (e) => console.log(`[Server] started (${e.reason}), pid ${e.pid}`));
+serverEvents.onEvent("server.stopped", (e) =>
+  console.log(`[Server] stopped (${e.reason}${e.via ? `, ${e.via}` : ""}), pid ${e.pid}`),
+);
+serverEvents.onEvent("server.crashed", (e) =>
+  console.log(`[Server] crashed, pid ${e.pid} (${e.signal ? `signal ${e.signal}` : `exit code ${e.code}`})`),
+);
+serverEvents.onEvent("server.hung", (e) =>
+  console.log(`[Server] hung, pid ${e.pid}: console silent ${Math.round(e.silentForMs / 1000)} s`),
+);
+serverEvents.onEvent("server.adopted", (e) => console.log(`[Server] re-attached, pid ${e.pid} (started ${e.startedAt})`));
+serverEvents.onEvent("level.started", (e) => console.log(`[Server] level ${e.level ?? "?"} started`));
+serverEvents.onEvent("player.joined", (e) => console.log(`[Server] ${e.name} joined`));
+serverEvents.onEvent("player.left", (e) => console.log(`[Server] ${e.name} left`));
+
 // The running server's PID and launch, on disk, so the next Pyrodeck can
 // re-attach to it (reattachToRunningServer). Writes and removals are queued
 // so a quick exit cannot leave a stale record behind.

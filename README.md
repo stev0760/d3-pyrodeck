@@ -205,6 +205,8 @@ In Launch mode Pyrodeck watches the server it started, as D3Server3 did:
 
 A server you stop (Stop button, a playlist rotation, or `quit` typed at its console) stays down. A crash in the middle of a playlist restart is handled by the playlist's own retry.
 
+The Launch panel's **Supervisor** block shows what it is doing (relaunches so far, the last crash and hang, uptime, players, how long the console has been quiet, why an empty restart has not happened yet) and, when you open it, the three switches and their limits. A pending relaunch has a **Cancel** button for a crashed server you want left down. Pyrodeck's own log gets one `[Server]` line per start, stop, crash, hang, level start, join and leave.
+
 **Pyrodeck restarts do not stop the server.** A server Pyrodeck launched keeps running when Pyrodeck stops, crashes or is upgraded, and the next Pyrodeck re-attaches to it: status, console, Stop and the supervisor work again. Closing Pyrodeck therefore leaves the server up; stop it first if you want it down. After a re-attach the server's own output is not captured any more (it went to the Pyrodeck that started it), so the Output tab and the log file stop at the restart; the console still shows everything the server prints there.
 
 ## Tech Stack

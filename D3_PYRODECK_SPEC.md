@@ -1356,6 +1356,22 @@ without a request is a crash and the supervisor relaunches it). Its stdout went 
 Pyrodeck, so the Output tab and log get nothing more; the console then feeds the line monitor
 (D.1) and the playlist's level detection instead.
 
+### D.6 UI
+
+Launch panel, **Supervisor** (below the Launch/Stop button, above Mission Downloads;
+`components/SupervisorSettings.tsx`). The title row shows a dot and a word: Watching, Probing,
+Relaunch in N s, Gave up or Off. Always visible: the give-up reason, a pending relaunch with its time
+and a **Cancel** button, `Relaunches: N · last crash HH:MM:SS (signal or exit) · last hang`,
+`Up … · N players · empty since …` while a server runs, the hang line (`Console answering`,
+`Console quiet N s (probe at 59 s)`, `$players sent, restart in N s without an answer`, or
+`Level loading: hang check paused`), and `Empty restart: <why not yet>` when that rule is on.
+Opening it shows the three switches with their numbers (probe after / restart after in seconds;
+uptime limit in hours, wait after the last player in seconds) and Save; a refused value shows the
+server's reason. The process status row gains a `Re-attached` badge and a line saying what works
+for an adopted server and that its output is no longer captured, and a signal badge for a crash.
+The launcher status is polled every 2 s while a server is up and every 5 s while it is down, so a
+relaunch shows without a reload.
+
 ---
 
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*

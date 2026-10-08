@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { MissionHostStatus } from "@/lib/missionHost";
+import type { SupervisorState } from "@/lib/supervisor";
 
 export interface PyrodeckConfig {
   gamePath: string | null;
@@ -28,6 +29,12 @@ export interface ProcessStatus {
   };
   /** Mission download listener (GET /api/launcher/status only). */
   missionHost?: MissionHostStatus;
+  /** Why the last process stopped ("console" = quit typed at its console); null while running or after a crash. */
+  stopReason?: "manual" | "playlist" | "schedule" | "empty-restart" | "hang" | "console" | null;
+  /** Re-attached after Pyrodeck restarted: running, but its output is not captured. */
+  adopted?: boolean;
+  /** Crash relaunch, hang check, restart when empty (GET /api/launcher/status only). */
+  supervisor?: SupervisorState;
 }
 
 /** DMFC options sent over the console after each launch (unset = server default). */
@@ -97,25 +104,23 @@ export function useLauncher() {
     setSelectedProfileId(profiles[0].id);
   }, [profiles, selectedProfileId]);
 
-  // Poll process status when running/starting
+  const refreshStatus = useCallback(() => {
+    fetch("/api/launcher/status", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => setProcessStatus(data))
+      .catch(() => {});
+  }, []);
+
+  // Poll process status: every 2 s while a server is up, every 5 s while it
+  // is down (the supervisor can relaunch it, or a scheduler start it).
+  const pollMs =
+    processStatus && (processStatus.state === "stopped" || processStatus.state === "crashed") ? 5000 : 2000;
+  const hasStatus = processStatus !== null;
   useEffect(() => {
-    if (
-      !processStatus ||
-      processStatus.state === "stopped" ||
-      processStatus.state === "crashed"
-    ) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      fetch("/api/launcher/status", { credentials: "include" })
-        .then((res) => res.json())
-        .then((data) => setProcessStatus(data))
-        .catch(() => {});
-    }, 2000);
-
+    if (!hasStatus) return;
+    const interval = setInterval(refreshStatus, pollMs);
     return () => clearInterval(interval);
-  }, [processStatus]);
+  }, [hasStatus, pollMs, refreshStatus]);
 
   const updateConfig = useCallback(
     async (updates: Partial<PyrodeckConfig>): Promise<boolean> => {
@@ -349,11 +354,8 @@ export function useLauncher() {
 
   // Fetch initial process status
   useEffect(() => {
-    fetch("/api/launcher/status", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => setProcessStatus(data))
-      .catch(() => {});
-  }, []);
+    refreshStatus();
+  }, [refreshStatus]);
 
   return {
     config,
@@ -374,5 +376,6 @@ export function useLauncher() {
     duplicateProfile,
     launch,
     stop,
+    refreshStatus,
   };
 }
