@@ -677,7 +677,7 @@ Depends on Phase 1. See `BOT_MANAGEMENT.md` in the fork for bot config format re
 - Ship/weapon/powerup allow/disallow UI — checkboxes for each item, generates correct `AllowPowerUp=` / `DisallowPowerUp=` config entries. Reference: `descent3launcher`'s granular defaults (omega off due to framerate bug, mines/cloak/invuln off for latency).
 - Bot preset management: save/load named bot configurations (roster files).
 - Bot difficulty UI tied to fork difficulty tiers (Trainee/Rookie/Hotshot/Ace/Insane) — already implemented in fork Phase 5.2.
-- **IP access control UI**: Edit `hosts.allow` / `hosts.deny` files through the config editor, with a "Reload" button that sends `$rehash`.
+- **IP access control UI**: Edit `hosts.allow` / `hosts.deny` files through the config editor, with a "Reload" button that sends `$rehash`. *(hosts.deny: built as the Bans tab, §8.8; hosts.allow is shown read-only.)*
 - **Server profiles**: Save/load named server configurations (like D3Server3's multi-config and DD3's .dd3 save/load). Each profile stores the full `dedicated.cfg` + bot roster + launch parameters.
 - **Game tracker registration**: Configure tracker URLs for PXO, descent.cx, and other community trackers. Reference: D3Server3 supported up to 5 trackers; `descent3launcher` defaults to 5 (kali, descent.cx, descentservers.net, tsetsefly.de, qtracker).
 - Dark/light theme toggle.

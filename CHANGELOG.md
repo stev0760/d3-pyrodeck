@@ -13,10 +13,13 @@ All notable changes to D3 Pyrodeck are documented here.
 
 - **Join rules and a profanity monitor**, both off by default. Nickname rules kick a joining player whose name is empty, contains `%`, contains control characters or is shorter than a minimum, saying why first (D3Server3's INVALID/HACKED NICKNAME). The profanity monitor matches general chat against an editable word list (a short default list of plain profanity ships as data) and escalates per player: private warnings, then kicks, then a ban of the name and the address, with a cooldown so one burst counts once. API: `/api/players/rules`.
 
+- **Players, Bans and Rules in the UI.** The Players tab gains a History view (joins and leaves, "who was on", name-to-address index) and is available without a connection; Kick and Ban ask for a reason. New Bans tab (hosts.deny editor, name bans, `$rehash`) and Rules tab (nickname rules, profanity monitor, address lookups).
+
 ### Changed
 - Mission links are capped at 86 characters instead of 95: the client copies "Downloading: <link>" into a 100-character buffer, so a longer link overflowed it. `https://` links now carry a warning (1999-era clients refuse them, current builds without TLS crash on them), and an upper-case `HTTP://` is refused.
 
 ### Fixed
+- **Kick and Ban could hit the wrong player.** The Players tab sent `$kick`/`$ban` with the row's position in the `$scores` list, which is sorted by score, as if it were the player's slot. Pyrodeck now looks the slot up by name with `$players` and checks it again just before acting.
 - **Startup Commands were never applied.** Pyrodeck saves them as `autoexec.dmfc` in the game directory, but DMFC only reads its own default file unless the server is started with `-autoexec`, and Pyrodeck never passed it. Each launch and playlist restart now passes `-autoexec <absolute path>` when the file exists, and nothing when it doesn't. A path longer than the 99 characters the engine keeps per argument is not passed; the console and the server log say so.
 - Spec §1.3 credited D3Server3 with a profanity filter, email alerts, a Windows service mode and process priority control. The audited 3.0.83 binary has none of them; the paragraph now lists what the audit found.
 
