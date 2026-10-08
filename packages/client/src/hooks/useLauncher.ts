@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { MissionHostStatus } from "@/lib/missionHost";
+import type { ProfileSchedule } from "@/lib/ops";
 
 export interface PyrodeckConfig {
   gamePath: string | null;
@@ -49,6 +50,8 @@ export interface ServerProfile {
   executablePath?: string;
   /** Applied over the console after every launch and playlist restart. */
   postStart?: PostStartSettings;
+  /** Weekly start/stop windows. */
+  schedule?: ProfileSchedule;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -229,6 +232,7 @@ export function useLauncher() {
         executablePath?: string | null;
         description?: string | null;
         postStart?: PostStartSettings | null;
+        schedule?: ProfileSchedule | null;
       },
     ): Promise<ServerProfile | null> => {
       setError(null);

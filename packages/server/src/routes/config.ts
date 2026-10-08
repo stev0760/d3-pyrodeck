@@ -16,6 +16,7 @@ import {
 } from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { sanitizePostStart } from "../launcher/postStartSettings.js";
+import { validateSchedule } from "../ops/schedule.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -191,12 +192,22 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       gamePath?: string | null;
       executablePath?: string | null;
       postStart?: unknown;
+      schedule?: unknown;
     };
-    const { postStart, ...rest } = body;
+    const { postStart, schedule, ...rest } = body;
+    let validSchedule;
+    if (schedule !== undefined && schedule !== null) {
+      const check = validateSchedule(schedule);
+      if (check.errors.length > 0) {
+        return reply.status(400).send({ error: check.errors.join(" "), errors: check.errors });
+      }
+      validSchedule = check.schedule;
+    }
     const updates = {
       ...rest,
       // Whitelisted values only; null or nothing valid clears the settings.
       ...(postStart !== undefined ? { postStart: sanitizePostStart(postStart) } : {}),
+      ...(schedule !== undefined ? { schedule: validSchedule ?? null } : {}),
     };
 
     try {

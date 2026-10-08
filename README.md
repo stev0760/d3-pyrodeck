@@ -111,6 +111,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
+- Weekly schedule per profile: start and stop windows by weekday and time (see Operations)
 
 ### Responsive Layout
 - Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
@@ -172,6 +173,17 @@ ConsolePassword=yourpassword
 ### Launch Mode
 
 Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it.
+
+## Operations
+
+Settings that keep an unattended server running. The schedule lives in each profile.
+
+- **Weekly schedule.** Edit a profile and add windows (day, start, end, in the Pyrodeck machine's local time; an end at
+  or before the start runs past midnight). At a window's start Pyrodeck launches the profile if no server is running. At
+  its end it stops the server as soon as no player is on (bots don't count, Pyrodeck asks with `$players`), and after
+  the wait you set at the latest; players get one warning in chat. A server you stop by hand during a window stays
+  stopped until the next window. The Launch panel shows the next scheduled start or stop. Only one server runs at a
+  time, so a window whose start finds another profile's server running is skipped, with a toast.
 
 ## Hosting mission downloads
 

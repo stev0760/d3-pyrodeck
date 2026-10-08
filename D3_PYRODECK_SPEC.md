@@ -827,6 +827,13 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
 
+### 8.7 Operations (Addendum D)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
+| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) |
+
 ---
 
 ## 9. Project Structure
@@ -1222,6 +1229,36 @@ ephemeral port: byte-identical body with Content-Length, 404 for retail, travers
 unknown, wrong-case and `/api/...`, the bare-LF request, the hold, bind failure). Manual run on
 127.0.0.1:3001/3002: `curl -sI` and a SHA-256 match on a 5.4 MB mission, refusals, port move and
 disable without a restart. **Not verified:** a real game client downloading from the listener.
+
+
+## Addendum D — Operations (2026-10-07, branch `parity/ops`)
+
+**Goal:** the operations side of D3Server3 parity (`docs/D3SERVER3_AUDIT.md` §3 items 12, 14, 15; §1.3's
+emails, service mode and priority class). No `$` command or console output changes.
+
+### D.1 Engine facts (Matcen source, read 2026-10-07)
+
+- **`$players`** (`dmfcinputcommand.cpp` :394) prints `PNum Name` then `%02d: %s` per connected, playing slot
+  (`CheckPlayerNum`, `dmfcbase.cpp` :1801). On a dedicated server slot 0 is the server (`multi_server.cpp` :757, named
+  `-Server-` at `dedicated_server.cpp` :301). Verified on the Matcen Debug build: an empty server answers
+  `PNum Name` / `00: -Server-`, after the console's own echo line.
+
+### D.2 Weekly schedule (`ops/schedule.ts`, `ops/Scheduler.ts`, `routes/schedule.ts`)
+
+- Per profile: `schedule: { enabled, windows: [{ day 0-6, start "HH:MM", end "HH:MM" }], stopWaitMinutes 0-240
+  (default 15) }`, at most 28 windows. An end at or before the start ends the next day. Times are the Pyrodeck
+  machine's local clock; each occurrence becomes absolute instants through the local `Date` constructor, so a time in
+  the spring gap moves forward by the gap and an end in the autumn repeat ends at its first occurrence. Overlapping or
+  touching windows merge into one run.
+- A 30 s tick (the first 10 s after Pyrodeck starts), edge-triggered on runs: at a run's start, the profile is
+  started through the Launch panel's own path (`startServer`, emits `server.started{reason:"schedule"}`) if nothing
+  is running; another profile's server or a playlist restart in progress skips it (`schedule.skipped` event, error
+  toast). At the run's end, if the profile's
+  server is running, it is stopped (`stopServer`, `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
+  human (slot 0 and `[BOT]` callsigns excluded), and at `end + stopWaitMinutes` regardless; without a console session the
+  count is unknown and the stop waits for the deadline. One `say` when the wait begins.
+- Nothing is persisted but the settings. After a Pyrodeck restart: inside a run, the start is made; outside one, nothing
+  is stopped. A server stopped by hand inside a run stays down until the next run.
 
 ---
 

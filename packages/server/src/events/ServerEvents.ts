@@ -27,6 +27,8 @@ export interface ServerEventMap {
   "player.banned": { profileId: string; name?: string; ip?: string; reason: string; until?: string };
   /** A chat line from a player, as the server printed it. */
   "player.chat": { profileId: string; name: string; text: string };
+  /** A weekly-schedule start or stop did not happen; `reason` says why (ops/Scheduler.ts). */
+  "schedule.skipped": { profileId: string; action: "start" | "stop"; reason: string };
 }
 
 export type ServerEventName = keyof ServerEventMap;

@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { generateDedicatedCfg, type DedicatedCfgDefaults } from "../launcher/ConfigGenerator.js";
 import type { PostStartSettings } from "../launcher/postStartSettings.js";
+import type { ProfileSchedule } from "../ops/schedule.js";
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -38,6 +39,8 @@ export interface ServerProfile {
    * launch and playlist restart of this profile. Unset = server default.
    */
   postStart?: PostStartSettings;
+  /** Weekly start/stop windows (ops/schedule.ts). Unset = no schedule. */
+  schedule?: ProfileSchedule;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -258,6 +261,8 @@ export class ServerProfileManager {
       executablePath?: string | null;
       /** Already sanitized; null clears the settings. */
       postStart?: PostStartSettings | null;
+      /** Already validated; null clears the schedule. */
+      schedule?: ProfileSchedule | null;
     },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
@@ -292,6 +297,13 @@ export class ServerProfileManager {
         delete profile.postStart;
       } else {
         profile.postStart = updates.postStart;
+      }
+    }
+    if (updates.schedule !== undefined) {
+      if (updates.schedule === null) {
+        delete profile.schedule;
+      } else {
+        profile.schedule = updates.schedule;
       }
     }
 
@@ -351,7 +363,9 @@ export class ServerProfileManager {
       configFile: newCfgFile,
       createdAt: new Date().toISOString(),
     };
-    // Inherit the source profile's path overrides and post-start settings
+    // Inherit the source profile's path overrides and post-start settings.
+    // Not the schedule: two profiles with the same windows would compete for
+    // the one server at every window start.
     if (source.gamePath) profile.gamePath = source.gamePath;
     if (source.executablePath) profile.executablePath = source.executablePath;
     if (source.postStart) profile.postStart = { ...source.postStart };

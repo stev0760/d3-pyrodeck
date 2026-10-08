@@ -6,9 +6,10 @@ All notable changes to D3 Pyrodeck are documented here.
 
 ### Added
 - **Pyrodeck hosts mission downloads.** An optional second listener (Launch panel, Mission Downloads; off by default, port 3002) serves the server's custom missions over http, so a player who joins without the mission downloads it from the same machine. One click in the Config tab's mission panel points a mission's link at it, the panel shows whether each mission is hosted and the exact link, and **Test** fetches the mission through the public URL and compares it with the file on disk. The listener answers only `/missions/<file>.mn3`, never the retail missions and never the admin API, and starts or stops as soon as the setting is saved. `GET /api/launcher/status` reports its state.
+- **Weekly schedule** per profile: start and stop windows by weekday and local time. A window's start launches the profile if nothing is running; its end stops the server once no human is on (asked with `$players`, bots excluded), or after a wait you set, with one warning in chat. The Launch panel shows the next scheduled action. `GET /api/schedule`; the windows are saved with the profile.
 
 ### Changed
-- Every start and stop, by hand or by a playlist, is announced on the server event bus.
+- Every start and stop, by hand, by a playlist or by the schedule, is announced on the server event bus, which the priority and alert features listen to.
 - Mission links are capped at 86 characters instead of 95: the client copies "Downloading: <link>" into a 100-character buffer, so a longer link overflowed it. `https://` links now carry a warning (1999-era clients refuse them, current builds without TLS crash on them), and an upper-case `HTTP://` is refused.
 
 ### Fixed

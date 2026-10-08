@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { useLauncher, ServerProfile, PostStartSettings } from "../hooks/useLauncher.ts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
+import { ScheduleFields, EMPTY_SCHEDULE, describeNextAction } from "./ScheduleFields";
 import { Separator } from "@/components/ui/separator";
+import { getJson, type ProfileSchedule, type ScheduleState } from "@/lib/ops";
 
 type LauncherState = ReturnType<typeof useLauncher>;
 
@@ -26,7 +28,10 @@ interface PathFormState {
   gamePath: string;
   executablePath: string;
   postStart: PostStartSettings;
+  schedule: ProfileSchedule;
 }
+
+const SCHEDULE_POLL_MS = 30_000;
 
 type OnOff = "default" | "on" | "off";
 const toOnOff = (v: boolean | undefined): OnOff => (v === undefined ? "default" : v ? "on" : "off");
@@ -197,6 +202,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     gamePath: "",
     executablePath: "",
     postStart: {},
+    schedule: EMPTY_SCHEDULE,
   });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
@@ -206,6 +212,17 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
   useEffect(() => {
     fetchProfiles();
   }, [fetchProfiles]);
+
+  // What the weekly schedule does next (server-side times, Pyrodeck's zone).
+  const [schedule, setSchedule] = useState<ScheduleState | null>(null);
+  const refreshSchedule = useCallback(() => {
+    void getJson<ScheduleState>("/api/schedule").then((s) => s && setSchedule(s));
+  }, []);
+  useEffect(() => {
+    refreshSchedule();
+    const timer = setInterval(refreshSchedule, SCHEDULE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshSchedule, profiles, processStatus?.state]);
 
   if (loading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
@@ -242,13 +259,16 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       gamePath: selectedProfile.gamePath ?? config?.gamePath ?? "",
       executablePath: selectedProfile.executablePath ?? config?.executablePath ?? "",
       postStart: { ...(selectedProfile.postStart ?? {}) },
+      schedule: selectedProfile.schedule
+        ? { ...selectedProfile.schedule, windows: selectedProfile.schedule.windows.map((w) => ({ ...w })) }
+        : EMPTY_SCHEDULE,
     });
     setValidationErrors([]);
     setMode("editing");
   };
 
   const startCreating = () => {
-    setForm({ name: "", gamePath: "", executablePath: "", postStart: {} });
+    setForm({ name: "", gamePath: "", executablePath: "", postStart: {}, schedule: EMPTY_SCHEDULE });
     setValidationErrors([]);
     setMode("creating");
   };
@@ -307,9 +327,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       gamePath: form.gamePath.trim() || null,
       executablePath: form.executablePath.trim() || null,
       postStart: Object.keys(form.postStart).length > 0 ? form.postStart : null,
+      schedule: form.schedule.enabled || form.schedule.windows.length > 0 ? form.schedule : null,
     });
     setSaving(false);
-    if (updated) setMode("listing");
+    if (updated) {
+      setMode("listing");
+      refreshSchedule();
+    }
   };
 
   const handleLaunch = async () => {
@@ -364,6 +388,14 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <PostStartFields
             values={form.postStart}
             onChange={(postStart) => setForm((prev) => ({ ...prev, postStart }))}
+          />
+        )}
+
+        {!isCreate && (
+          <ScheduleFields
+            value={form.schedule}
+            onChange={(next) => setForm((prev) => ({ ...prev, schedule: next }))}
+            timeZone={schedule?.timeZone ?? null}
           />
         )}
 
@@ -494,6 +526,11 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
               </Badge>
             )}
           </div>
+
+          {(() => {
+            const line = describeNextAction(schedule?.entries.find((e) => e.profileId === selectedProfileId));
+            return line ? <p className="text-[11px] text-muted-foreground">{line}</p> : null;
+          })()}
 
           {/* Log health: a failed log stays on screen (the toast alone is gone
               in seconds, and a soak that logs nowhere is lost for good). */}
