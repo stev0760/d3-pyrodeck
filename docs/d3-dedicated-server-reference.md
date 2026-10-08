@@ -119,7 +119,7 @@ Note: `Peer2Peer` and `Permissable` are **mutually exclusive** — setting one c
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `AllowRemoteConsole=[0/1]` | Enable telnet administration | 0 |
+| `AllowRemoteConsole=[0/1]` | Accept console connections from other machines. With 0 the console takes connections from 127.0.0.1 only (Matcen 0.10.8+ also listens on 127.0.0.1 only), which is all a Pyrodeck on the same machine needs; 1 is for Connect mode from elsewhere | 0 |
 | `RemoteConsolePort=[num]` | TCP port for telnet connections | 2092 |
 | `ConsolePassword=[string]` | Password for telnet login | |
 
@@ -663,7 +663,7 @@ Timelimit=20
 Killgoal=25
 RespawnTime=30
 SetDifficulty=2
-AllowRemoteConsole=1
+AllowRemoteConsole=0
 RemoteConsolePort=2092
 ConsolePassword=mypassword
 MOTD=Welcome to my server!
@@ -683,7 +683,7 @@ Timelimit=0
 Killgoal=0
 RespawnTime=20
 SetDifficulty=1
-AllowRemoteConsole=1
+AllowRemoteConsole=0
 RemoteConsolePort=2093
 ConsolePassword=mypassword
 ```
@@ -700,7 +700,7 @@ Timelimit=20
 Killgoal=25
 RespawnTime=30
 SetDifficulty=2
-AllowRemoteConsole=1
+AllowRemoteConsole=0
 RemoteConsolePort=2092
 ConsolePassword=mypassword
 BotConfig=bots.cfg

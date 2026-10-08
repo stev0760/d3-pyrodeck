@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.5.1** — Ready for a public server behind a reverse proxy. `PYRODECK_TRUST_PROXY=1` now trusts only a proxy on the same machine, so a client can no longer pass itself off as local by sending its own `X-Forwarded-For`, and a request that came through a proxy never counts as local (before, with `PYRODECK_TRUST_PROXY` unset, every request through nginx did, which left the API open and first-run setup claimable from the internet until a password was set). The session cookie is `Secure` over HTTPS, the login rate limit counts per real client, cross-site browser requests are refused, and a page that rebinds its DNS name to 127.0.0.1 is not local. The game's console can stay on the machine: a launched server with `AllowRemoteConsole=0` (now the default for new configs) is logged in to on 127.0.0.1. New guide: [Running Pyrodeck behind a reverse proxy](docs/behind-a-reverse-proxy.md).
+
 **v0.5.0** — D3Server3 parity. Pyrodeck now keeps a launched server up: it relaunches a crashed server, kills and relaunches one whose console stops answering, can restart an empty server after an uptime limit, and re-attaches to its server after Pyrodeck itself restarts (closing Pyrodeck no longer stops the game). Players get a join and leave history with addresses, bans that survive a restart (the engine's `hosts.deny`, edited in a new Bans tab, plus name bans), nickname rules and a profanity monitor (Rules tab, off by default). Profiles gain launch options (`-useip`, `-useport`, `-framecap`, logos, GameSpy), team names and Hoard settings written into the Startup Commands at launch, periodic console commands, player-scaled powerup respawn, a weekly start/stop schedule and a join address with a Copy button. A Settings tab adds email alerts on server events, the game process's priority and an update notice; a profile can be imported from the `.bat`/`.sh` that launched an old server. See [Keeping a server up](#keeping-a-server-up), [Bans and join rules](#bans-and-join-rules) and [Operations](#operations).
 
 **v0.4.20** — Matcen contract sync and rotation hardening. Parsers and the spec now match the fork's `PYRODECK_CONTRACT.md`: callsigns are `Name[BOT]`, `$addbot` takes a team and reports failures as a toast, `$botmode` names are exact, and a dead bot's `shields=-1` no longer drops it from `$botstat`. The `$servercaps` parser keeps feature flags it doesn't know (the fork is adding `teams`, `squad_orders` and `population`); the Bots tab offers a team when the server advertises `teams` and the game has teams. Mission download links: Pyrodeck can rewrite the `URL` lines inside a mission's `.mn3`, the links a server offers players who lack the mission, keeping the original for one-click restore. Every playlist restart is now health-checked (console login and `$servercaps` within 120 s); a failed restart retries once and then pauses the playlist with the reason on screen, instead of leaving a dead server behind it. Server logs are validated before launch (absolute Log Directory, the file itself created) and re-checked while the server runs, with a failure kept on screen. Profiles can carry post-start settings (HUD names, kill message filter, stat autosaves) that Pyrodeck applies after every launch.
@@ -115,7 +117,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
 - Per-profile periodic commands (Edit → Periodic Commands): `$` commands or `say` lines sent once when Pyrodeck's console connects to the launched server, and every N minutes while it runs (next line in order, one at random, or all of them; at most 5 per round). They stop with the server and start over on the next launch; after Pyrodeck re-attaches to a running server they carry on, without the start lines
 - Per-profile powerup respawn scaling (Edit → Respawn by Players, off by default): `$setrespawntime` moves from a longest time at two human players or fewer to a shortest time at a set player count, bots not counted; sent when the console connects and after the player count settles, only when the value changes. It follows the server's player join and leave events
-- Per-profile launch options (Edit → Launch Options): bind address (`-useip`, IPv4 only; the console is then reached at that address), game port (`-useport`, default 2092/udp), frame cap (`-framecap`, 1-999, default 60), no pilot logos (`-nomultibmp`), GameSpy port and file (`-gamespyport`, `-gspyfile`). Saving a profile, or a server config's console port, warns when another profile uses the same game, GameSpy or console port
+- Per-profile launch options (Edit → Launch Options): bind address (`-useip`, IPv4 only; with `AllowRemoteConsole=1` the console is then reached at that address), game port (`-useport`, default 2092/udp), frame cap (`-framecap`, 1-999, default 60), no pilot logos (`-nomultibmp`), GameSpy port and file (`-gamespyport`, `-gspyfile`). Saving a profile, or a server config's console port, warns when another profile uses the same game, GameSpy or console port
 - Join address in the Launch panel: the `host:port` players type into the game's Direct TCP/IP screen, with a Copy button. The port is the profile's game port (2092 unless set); the host is the Join Host setting (set it right there), else the profile's bind address or the mission host's public URL
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
@@ -134,7 +136,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Node.js 20+
 - pnpm
 - A Descent 3 installation (Launch mode) or a running D3 dedicated server (Connect mode)
-- `AllowRemoteConsole=1` in `dedicated.cfg` for remote console access
+- A `ConsolePassword` in the server's `dedicated.cfg`: Pyrodeck logs in to the server's console with it. Connect mode to a server on another machine also needs `AllowRemoteConsole=1` there
 
 ## Quick Start
 
@@ -172,7 +174,7 @@ $env:PYRODECK_ADMIN_PASSWORD="yourpassword"; pnpm dev
 
 ### Connect Mode
 
-Enter your D3 server's host, port, and console password. The server's `dedicated.cfg` needs:
+Enter your D3 server's host, port, and console password. A server on another machine needs this in its `dedicated.cfg`:
 
 ```
 AllowRemoteConsole=1
@@ -180,9 +182,11 @@ RemoteConsolePort=2092
 ConsolePassword=yourpassword
 ```
 
+`AllowRemoteConsole=1` lets the console take connections from the network, in plain TCP with the password in clear, so keep its port closed in the firewall to everything but the machine Pyrodeck runs on. With `AllowRemoteConsole=0` (the engine's default) the console takes connections from its own machine only; connect to `127.0.0.1` there.
+
 ### Launch Mode
 
-Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it.
+Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it. The config needs a `ConsolePassword`; with `AllowRemoteConsole=0`, the default for configs Pyrodeck creates, Pyrodeck logs in on 127.0.0.1 and the console stays off the network. `AllowRemoteConsole=1` is needed only to connect from Pyrodeck on another machine, and Pyrodeck's log warns at each launch that the console is then reachable from the network.
 
 ## Operations
 
@@ -295,6 +299,7 @@ docs/
 - `docs/d3-dedicated-server-reference.md` — D3 dedicated server command and config reference
 - `docs/D3SERVER3_AUDIT.md` — feature audit of D3Server3 3.0.83 (2010) against Pyrodeck 0.4.20, with a ranked list of what Pyrodeck lacks
 - `docs/running-as-a-service.md` — running Pyrodeck unattended (NSSM, schtasks, systemd)
+- [`docs/behind-a-reverse-proxy.md`](docs/behind-a-reverse-proxy.md) — a public server: nginx with HTTPS in front, the environment, the firewall, the order of steps
 
 ## Releases
 
@@ -307,21 +312,21 @@ An admin password is required to access the web panel from non-localhost connect
 1. **First-run setup** — the web UI prompts for a password on first launch (stored as a scrypt hash in `config/pyrodeck.json`)
 2. **Environment variable** — set `PYRODECK_ADMIN_PASSWORD` (takes precedence over the config file)
 
-With no admin password set, the server serves localhost only: requests from non-loopback peers are refused (and a startup warning explains why) until a password is configured. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`. Login attempts are rate-limited to 5 per IP per 15 minutes. Web-based first-run setup is allowed only from localhost (so nobody can claim the admin password on a freshly-exposed instance); set `PYRODECK_ALLOW_REMOTE_SETUP=1` to permit it from a remote browser.
+With no admin password set, the server serves localhost only: requests from non-loopback peers are refused (and a startup warning explains why) until a password is configured. "Localhost" means a browser connected straight to Pyrodeck's port from the same machine, asking for `localhost` or `127.0.0.1`: a request that came through a reverse proxy (it carries `X-Forwarded-For`, `Forwarded`, `X-Real-IP` or another forwarding header) is never local, and neither is a page whose own DNS name points at 127.0.0.1. Passwords are verified using scrypt with a random salt and timing-safe comparison. Sessions use signed HttpOnly cookies with `SameSite=Strict`, marked `Secure` when the browser came over HTTPS. Browser requests whose `Origin` names another host are refused, the WebSocket included. Login attempts are rate-limited to 5 per client address per 15 minutes (per /64 for IPv6). Web-based first-run setup is allowed only from localhost (so nobody can claim the admin password on a freshly-exposed instance); set `PYRODECK_ALLOW_REMOTE_SETUP=1` to permit it from a remote browser.
 
 The mission download listener (off by default) is public by design and needs no login, but serves nothing except the missions in the game path's `missions/` directory, never the retail ones; it runs on its own port, not through the admin panel.
 
-For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS, and set `PYRODECK_TRUST_PROXY=1` so rate-limiting and logging see the real client IP from `X-Forwarded-For` (off by default, since trusting that header on a directly-exposed server lets clients spoof their IP).
+For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS, bind it to `127.0.0.1`, and set `PYRODECK_TRUST_PROXY=1` so rate-limiting, the `Secure` cookie and logging see the real client from `X-Forwarded-For` and `X-Forwarded-Proto`. It trusts those headers only from a proxy on the same machine; the client's address is the last one the proxy added, so a client cannot spoof it. Set the admin password before the proxy goes live. [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md) has the nginx server block, certbot, the firewall and the checks. Keep the game's remote console off the network too: `AllowRemoteConsole=0` (see Launch Mode).
 
 ### Environment variables
 
 | Variable | Purpose |
 |---|---|
 | `PYRODECK_ADMIN_PASSWORD` | Admin password (plaintext; takes precedence over the config hash) |
-| `PYRODECK_TRUST_PROXY` | `1` to trust `X-Forwarded-For` (set only behind a reverse proxy) |
+| `PYRODECK_TRUST_PROXY` | Unset: `X-Forwarded-*` ignored. `1`: trust it from a proxy on this machine (127.0.0.0/8, ::1) only. Or a comma-separated list of the proxy's addresses or CIDR blocks. Anything else stops Pyrodeck at startup |
 | `PYRODECK_CORS_ORIGIN` | Comma-separated origin allowlist; CORS is off (same-origin only) by default |
 | `PYRODECK_ALLOW_REMOTE_SETUP` | `1` to allow first-run password setup from a non-local browser |
-| `PYRODECK_HOST` / `PYRODECK_PORT` | Bind address/port (default `0.0.0.0:3001`) |
+| `PYRODECK_HOST` / `PYRODECK_PORT` | Bind address/port (default `0.0.0.0:3001`; `127.0.0.1` behind a reverse proxy) |
 
 ## Known Limitations
 
@@ -332,6 +337,7 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 - Bot team choice in the add-bot form appears only when the server advertises `teams` in `$servercaps` and the game has teams; otherwise use the Bot Roster config editor before launch
 - After Pyrodeck restarts and re-attaches to a running server, that server's output is no longer captured: the Output tab and its log file stop at the restart (the console still shows what the server prints there)
 - Bot team assignment requires Matcen fork v0.8.6+ (`BotTeam<n>=` support in engine)
+- A profile with a bind address (`-useip`) and `AllowRemoteConsole=0` works on Matcen 0.10.8 and later, whose console listens on 127.0.0.1. Older engines (retail 1.4, upstream Descent 3, earlier Matcen) put the console on the bind address but accept only 127.0.0.1, so Pyrodeck cannot log in to them; Pyrodeck warns when the profile is saved, at launch and when the login fails
 - Windows binaries are unsigned; SmartScreen will warn on first run — click **More info → Run anyway**
 
 ## Development

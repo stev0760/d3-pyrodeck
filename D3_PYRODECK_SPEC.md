@@ -1113,7 +1113,8 @@ d3-pyrodeck/
 - **File access:** Strict path sanitization on all file manager endpoints. Reject `..`, absolute paths, symlinks pointing outside the managed root. All file operations are jailed to the server's managed directory tree (`gamedata/`, `servers/`, `import/`). Config editor (Phase 1) is further scoped to the config directory only.
 - **Upload limits:** Configurable max upload size (default 100MB). Uploads streamed to disk (not buffered in memory) to prevent OOM on large files. File type validation on upload (reject unexpected extensions in sensitive directories).
 - **SFTP access:** If the built-in SFTP server is enabled (Phase 3), it uses the web admin session password for authentication. SFTP root is jailed to the same managed directory tree as the web file manager. Disabled by default — opt-in via config.
-- **HTTPS:** Out of scope for the app. Users deploying to VPS should put nginx or Caddy in front. Documented in README.
+- **HTTPS:** Out of scope for the app. Users deploying to VPS should put nginx or Caddy in front, as `docs/behind-a-reverse-proxy.md` describes. `PYRODECK_TRUST_PROXY=1` trusts `X-Forwarded-For`/`-Proto` from loopback only (an explicit address/CIDR list names a remote proxy; never every hop), so the client is the right-most untrusted address. A request carrying any forwarding header is never local, and a local request must ask for a loopback Host name. The session cookie is `Secure` when `request.protocol` is https; browser requests whose `Origin` host differs from `Host` are refused (403).
+- **Game console exposure:** A launched server's console is reached on 127.0.0.1 when its config has `AllowRemoteConsole=0` (the default Pyrodeck writes); `AllowRemoteConsole=1` is needed only for Connect mode from another machine, and Pyrodeck warns when a launched profile uses it.
 - **CORS:** Restricted to the web admin's own origin by default.
 
 ---

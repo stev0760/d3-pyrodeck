@@ -357,6 +357,9 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       itself; spec Addendum C. Open: a real game client downloading from it, and Windows
 - [x] Server log path hardening (Matcen registry REL9, v0.4.20): absolute Log Directory validated on
       save, directory and file created before every launch, log re-checked while the server runs
+- [x] Reverse-proxy hardening (v0.5.1): trust only the proxy hop, proxied requests never local,
+      `Secure` cookie over HTTPS, per-client rate limit, cross-site Origin refusal, DNS-rebinding
+      guard; launched consoles stay local with `AllowRemoteConsole=0`; `docs/behind-a-reverse-proxy.md`
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no
@@ -390,6 +393,7 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [ ] Provisioning wizard (scan for required .hog files, validate, guide upload)
 - [x] Document service setup for headless servers (`docs/running-as-a-service.md`, v0.5.0: systemd user unit, NSSM,
       `schtasks`)
+- [x] Document a public server behind nginx with Let's Encrypt (`docs/behind-a-reverse-proxy.md`, v0.5.1)
 
 ---
 

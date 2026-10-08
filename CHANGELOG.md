@@ -2,6 +2,28 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.1] - 2026-10-08
+
+A hardening release for running Pyrodeck on the public internet behind a reverse proxy.
+
+### Security
+- **A request through a reverse proxy could be read as local.** With `PYRODECK_TRUST_PROXY` unset, every request through nginx came from 127.0.0.1, so until an admin password was set the whole API was open to the internet and anyone could claim the password with first-run setup. A request carrying `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Forwarded` or `X-Real-IP` is now never local, whatever the proxy setting. Local also requires the browser to ask for `localhost` or `127.0.0.1`, so a web page that points its own DNS name at 127.0.0.1 is not local either. The API, first-run setup and the console WebSocket share one test for this.
+- **`PYRODECK_TRUST_PROXY=1` trusted every hop**, so the client's address was the left-most `X-Forwarded-For` entry, which the client writes: sending `X-Forwarded-For: 127.0.0.1` made a browser local, and a fresh address per attempt escaped the login rate limit. It now trusts a proxy on the same machine only (127.0.0.0/8, ::1), and the client's address is the right-most entry that is not that proxy, the one nginx appended. A proxy on another host is named by address or CIDR block (`PYRODECK_TRUST_PROXY=10.0.0.5`); a value that is neither stops Pyrodeck at startup.
+- The session cookie is marked `Secure` when the browser reached Pyrodeck over HTTPS (`X-Forwarded-Proto` from a trusted proxy counts). Plain-http localhost works as before.
+- The login rate limit counts per real client behind a trusted proxy, and per /64 for IPv6 clients.
+- Browser requests whose `Origin` names another host are refused (403), the console WebSocket included, which had no origin check; this also covers the no-password local mode, where no cookie is needed. Behind a proxy that does not pass the `Host` header on, the error says so.
+- Startup warnings when `PYRODECK_TRUST_PROXY` is set but Pyrodeck listens on a public address, and when it is set with no admin password; one warning the first time a proxied request arrives while it is not set.
+- **The game console can stay off the network.** Pyrodeck refused to launch a server without `AllowRemoteConsole=1`, which puts the console (plain TCP, password in clear) on every interface. A launched server with `AllowRemoteConsole=0` is now logged in to on 127.0.0.1, whatever the profile's bind address; that console takes local connections only on every engine, and Matcen 0.10.8 and later also listen on 127.0.0.1 only. New configs are written with `AllowRemoteConsole=0`, and Pyrodeck's log warns at each launch of a profile that still uses 1.
+
+### Added
+- `docs/behind-a-reverse-proxy.md`: a public server with nginx and Let's Encrypt in front. The order of steps (admin password first), the environment, a complete nginx server block with the WebSocket upgrade, certbot, the firewall (what to open, and never the console or Pyrodeck's own port), HSTS and mission links, and checks.
+
+### Changed
+- The config form's Remote Console section always shows the port and password. Its switch reads "Accept console connections from other machines", explains that a server launched here does not need it, and warns that the console is reachable from the network when it is on.
+- Connect mode explains a refused console: a server on another machine needs `AllowRemoteConsole=1`. A console that closes the connection before asking for the password now says so instead of reporting a failed password.
+- Saving a profile's launch options warns about its console: open to the network with `AllowRemoteConsole=1`, or a bind address (`-useip`) with `AllowRemoteConsole=0`, which engines older than Matcen 0.10.8 cannot be logged in to. The same note follows a failed login or a console that never opens.
+- `docs/running-as-a-service.md`: the systemd unit sets `PYRODECK_HOST=127.0.0.1` and `PYRODECK_TRUST_PROXY=1`.
+
 ## [0.5.0] - 2026-10-08
 
 ### Added

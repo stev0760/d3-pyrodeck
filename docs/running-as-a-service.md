@@ -16,6 +16,9 @@ same applies to a dev checkout if you replace the binary with `node packages/ser
   directory). Set the working directory to the Pyrodeck directory, or set `PYRODECK_CONFIG_DIR` to an absolute path.
 - **An admin password.** Set `PYRODECK_ADMIN_PASSWORD`, or set one once from a local browser before you install the
   service. Without one, Pyrodeck answers only on localhost.
+- **A reverse proxy for a server on the internet.** Put nginx in front with HTTPS, keep Pyrodeck on 127.0.0.1 and set
+  `PYRODECK_TRUST_PROXY`: [behind-a-reverse-proxy.md](behind-a-reverse-proxy.md) has the whole setup, the firewall
+  included.
 - **A user account that can run the game.** Run the service as the account that owns the Descent 3 directory, not as
   root or `LocalSystem`. The game server writes into the game directory and its temp directory.
 - **A place for Pyrodeck's own log.** Pyrodeck writes its log to standard output. The service manager has to capture
@@ -63,8 +66,9 @@ nssm set Pyrodeck AppKillProcessTree 0
 ```
 
 `nssm stop Pyrodeck`, `nssm restart Pyrodeck` and `nssm remove Pyrodeck confirm` manage it afterwards. The Windows
-firewall needs an inbound rule for Pyrodeck's port (3001), the game's UDP port and the console port if you reach them
-from other machines.
+firewall needs an inbound rule for the game's UDP port, and for Pyrodeck's port (3001) if browsers on other machines
+reach it directly. The game's console port needs one only for Connect mode from another machine, which also takes
+`AllowRemoteConsole=1` in the server's config; a server Pyrodeck launches here needs neither.
 
 ## Windows: sc.exe and schtasks
 
@@ -116,6 +120,11 @@ WorkingDirectory=%h/pyrodeck
 ExecStart=%h/pyrodeck/pyrodeck-server
 Environment=PYRODECK_ADMIN_PASSWORD=change-me
 Environment=PYRODECK_PORT=3001
+# Behind nginx on this machine (behind-a-reverse-proxy.md): listen on loopback
+# only, and trust X-Forwarded-For/-Proto from that proxy alone. To serve a LAN
+# directly instead, remove both lines and open port 3001 in the firewall.
+Environment=PYRODECK_HOST=127.0.0.1
+Environment=PYRODECK_TRUST_PROXY=1
 Restart=on-failure
 RestartSec=5
 # Leave the game server running when Pyrodeck stops or restarts

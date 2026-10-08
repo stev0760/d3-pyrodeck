@@ -184,6 +184,8 @@ Install prerequisites as shown above. The build and run process is identical to 
 ```bash
 sudo ufw allow 3001/tcp
 ```
+That serves the panel over plain http to anyone who can reach the port, which suits a LAN. On the internet, keep
+3001 closed and put nginx with HTTPS in front: [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md).
 
 **Running as a service (optional):**
 Create `/etc/systemd/system/pyrodeck.service`:
@@ -333,7 +335,8 @@ The admin password can also be set via the web UI on first run (stored as a scry
 |----------|---------|---------|
 | `PYRODECK_ADMIN_PASSWORD` | *(unset)* | Admin password. If unset, falls back to the password hash in `config/pyrodeck.json`. If neither is set, the web UI prompts for first-time setup. |
 | `PYRODECK_PORT` | `3001` | Port to bind |
-| `PYRODECK_HOST` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only. |
+| `PYRODECK_HOST` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only, and behind a reverse proxy. |
+| `PYRODECK_TRUST_PROXY` | *(unset)* | `1` trusts `X-Forwarded-For`/`-Proto` from a reverse proxy on this machine only; a comma-separated list of addresses or CIDR blocks names a proxy elsewhere. See [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md). |
 | `PYRODECK_CONFIG_DIR` | `./config` | Where Pyrodeck stores profiles, secrets, playlists |
 | `PYRODECK_SESSION_SECRET` | *(auto-generated)* | Cookie signing secret. Auto-generated and saved to `config/session-secret` on first run. Set explicitly for multi-instance or to preserve sessions across restarts. |
 | `PYRODECK_STATIC_DIR` | *(auto-detected)* | Path to the `resources/` SPA directory. Auto-detected from the executable's location in binary mode. Set manually if needed. |
