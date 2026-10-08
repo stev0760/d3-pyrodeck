@@ -90,6 +90,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
 - Startup Commands (`autoexec.dmfc` in the game directory) reach the server at launch through `-autoexec`
+- Per-profile team settings and Hoard orb count (Launch panel → Edit → Teams and Hoard): allow team changes, auto balance, the four team names, orbs needed to score. Pyrodeck writes them into the Startup Commands file at each launch, between `# pyrodeck: begin` and `# pyrodeck: end`, and leaves every other line alone
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
 - Raw textarea fallback always available via structured/raw toggle
 - Import existing config files as new profiles

@@ -4,14 +4,16 @@ import crypto from "node:crypto";
 import { generateDedicatedCfg, type DedicatedCfgDefaults } from "../launcher/ConfigGenerator.js";
 import type { PostStartSettings } from "../launcher/postStartSettings.js";
 import type { LaunchOptions } from "../launcher/launchOptions.js";
+import type { TeamSettings } from "../launcher/teamSettings.js";
 
 /** Per-profile settings stored as one object each; null in an update clears it. */
 export interface ProfileSettingsUpdate {
   postStart?: PostStartSettings | null;
   launchOptions?: LaunchOptions | null;
+  teamSettings?: TeamSettings | null;
 }
 
-const SETTINGS_KEYS = ["postStart", "launchOptions"] as const;
+const SETTINGS_KEYS = ["postStart", "launchOptions", "teamSettings"] as const;
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -49,6 +51,8 @@ export interface ServerProfile {
   postStart?: PostStartSettings;
   /** Engine flags added after -dedicated at each launch (launcher/launchOptions.ts). */
   launchOptions?: LaunchOptions;
+  /** DMFC team options and the Hoard orb count, written into the Startup Commands file at launch. */
+  teamSettings?: TeamSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }

@@ -832,6 +832,7 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 | Field | Shape | Effect |
 |-------|-------|--------|
 | `launchOptions` | `{ bindIp?, gamePort?, frameCap?, noMultiBmp?, gameSpyPort?, gameSpyFile? }` or `null` | Flags after `-dedicated <cfg>`: `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport`, `-gspyfile` |
+| `teamSettings` | `{ allowTeamChange?, autoBalance?, teamNames?: { red?, blue?, green?, yellow? }, hoardMinOrbs? }` or `null` | Lines in the Startup Commands block at launch: `$allowteamchange on\|off`, `$autobalance on\|off`, `$setteamname <0-3> <name>`, `$mincount <1-12>` |
 
 Invalid values are refused with 400 and `details: string[]`; the stored profile is untouched. The response is the
 profile plus `warnings: string[]`, problems that do not block the save. Saving launch options checks the profile's game
@@ -844,6 +845,18 @@ Launch option rules, from the engine source (`packages/server/src/launcher/launc
 since the server binds its console to it too, Pyrodeck's readiness probe and auto-connect go to that address instead of
 loopback. Ports are 1-65535 (defaults: game 2092, GameSpy 20142). `frameCap` is 1-999 frames per second (default 60;
 0 divides by zero in `init.cpp`). `gameSpyFile` is a plain file name in the game directory.
+
+Team settings ride in the Startup Commands file because DMFC reads exactly one startup script (`ParseStartupScript`,
+`netgames/dmfc/dmfcbase.cpp`), after its saved settings, so they apply before any player joins. At each profile launch
+and playlist restart `ProcessManager.start` rewrites the block between `# pyrodeck: begin` and `# pyrodeck: end` at the
+end of `<gamePath>/autoexec.dmfc` (`launcher/autoexecBlock.ts`): idempotent, operator lines and line endings kept, the
+block removed when nothing is set, the file created only when there is a block to write. DMFC runs the marker lines as
+the unknown command `$#`, which it ignores. Team names are one word of at most 15 characters (DMFC parses one word into
+`MAX_TEAMNAME_LEN` 16); `$mincount` exists only in Hoard (1-12) and other game types ignore it; the open-source Hoard has
+no maximum. DMFC saves allow-team-change and auto-balance in the engine's preferences when a game ends, so an unset
+value means what the last server on the machine left. Verified on the Matcen Debug build: `*Allow Team Changing: On`,
+`*Auto Team Balance: On`, `Red changed team name to Crimson`, `*Hoard Orb Score Minimum Count Set To 3`, after the
+operator's own `$statmsgs on` (`*Statistical Messages: On`).
 
 ---
 

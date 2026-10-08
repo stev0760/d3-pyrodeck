@@ -250,7 +250,21 @@ $autosavelevel on
 $autosavedisconnect on
 ```
 
-Max line length: 254 characters. Lines can optionally omit the `$` prefix.
+Max line length: 254 characters. Lines can optionally omit the `$` prefix. A line whose command DMFC doesn't know is
+dropped silently (`InputCommandHandle`, `dmfcbase.cpp:3476-3491`), so `# comment` lines and blank lines are harmless.
+
+A profile's Teams and Hoard settings are written at each launch as a block at the end of this file:
+
+```
+# pyrodeck: begin (written at each launch from the profile; edits here are replaced)
+$allowteamchange on
+$autobalance on
+$setteamname 0 Crimson
+$mincount 3
+# pyrodeck: end
+```
+
+Everything outside the markers is the operator's and is never changed.
 
 ---
 
@@ -283,7 +297,7 @@ Both local console and telnet use identical code paths — there is no privilege
 | `$balance` | Auto-balance teams by seniority |
 | `$allowteamchange [on/off]` | Allow/prevent players from switching teams |
 | `$autobalance [on/off]` | Enable/disable automatic team balancing |
-| `$setteamname [teamnum] [teamname]` | Rename a team |
+| `$setteamname [teamnum] [teamname]` | Rename a team: 0 red, 1 blue, 2 green, 3 yellow; the name is one word, cut to 15 characters (`dmfcinputcommand.cpp:817-846`) |
 
 ### Game Settings (Live)
 
@@ -340,7 +354,7 @@ D3 has a built-in remote admin system for in-game clients (separate from telnet)
 
 | Command | Description |
 |---------|-------------|
-| `$mincount [1-12]` | Set minimum orbs needed to score |
+| `$mincount [1-12]` | Set minimum orbs needed to score (dedicated server only, clamped to 1-12; `netgames/hoard/hoard.cpp:236-263`). The open-source Hoard has no `maxcount` |
 
 ---
 

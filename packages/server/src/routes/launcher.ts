@@ -23,6 +23,7 @@ import {
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import { sanitizeStoredLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
+import { buildTeamSettingLines, sanitizeStoredTeamSettings } from "../launcher/teamSettings.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 
@@ -492,6 +493,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         telnetPassword: telnetCfg.password,
         profileId: activeProfile.id,
         launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
+        autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(activeProfile.teamSettings)),
       },
     };
     rotationHealth.begin();
@@ -615,6 +617,8 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     let gamePath = config.gamePath;
     let executablePath = config.executablePath;
     let launchOptions: LaunchOptions | null = null;
+    // Only a profile launch owns the block in the Startup Commands file.
+    let autoexecBlock: string[] | undefined;
 
     if (body.profileId) {
       // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
@@ -627,6 +631,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         if (profile.gamePath) gamePath = profile.gamePath;
         if (profile.executablePath) executablePath = profile.executablePath;
         launchOptions = sanitizeStoredLaunchOptions(profile.launchOptions);
+        autoexecBlock = buildTeamSettingLines(sanitizeStoredTeamSettings(profile.teamSettings));
         await profileManager.markLaunched(body.profileId);
       } catch {
         return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
@@ -748,6 +753,7 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         telnetPassword,
         profileId: body.profileId,
         launchOptions,
+        autoexecBlock,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

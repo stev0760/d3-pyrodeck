@@ -6,9 +6,13 @@ import { MissionHostSettings } from "./MissionHostSettings";
 import { Separator } from "@/components/ui/separator";
 import {
   LaunchOptionsFields,
+  TeamSettingsFields,
   launchOptionsPayload,
   launchOptionsToForm,
+  teamSettingsPayload,
+  teamSettingsToForm,
   type LaunchOptionsForm,
+  type TeamSettingsForm,
 } from "./ProfileLaunchSettings";
 
 type LauncherState = ReturnType<typeof useLauncher>;
@@ -33,6 +37,7 @@ interface PathFormState {
   executablePath: string;
   postStart: PostStartSettings;
   launchOptions: LaunchOptionsForm;
+  teamSettings: TeamSettingsForm;
 }
 
 const EMPTY_FORM: PathFormState = {
@@ -41,6 +46,7 @@ const EMPTY_FORM: PathFormState = {
   executablePath: "",
   postStart: {},
   launchOptions: launchOptionsToForm(undefined),
+  teamSettings: teamSettingsToForm(undefined),
 };
 
 type OnOff = "default" | "on" | "off";
@@ -255,6 +261,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       executablePath: selectedProfile.executablePath ?? config?.executablePath ?? "",
       postStart: { ...(selectedProfile.postStart ?? {}) },
       launchOptions: launchOptionsToForm(selectedProfile.launchOptions),
+      teamSettings: teamSettingsToForm(selectedProfile.teamSettings),
     });
     setValidationErrors([]);
     setSaveWarnings([]);
@@ -322,6 +329,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       executablePath: form.executablePath.trim() || null,
       postStart: Object.keys(form.postStart).length > 0 ? form.postStart : null,
       launchOptions: launchOptionsPayload(form.launchOptions),
+      teamSettings: teamSettingsPayload(form.teamSettings),
     });
     setSaving(false);
     if (updated) {
@@ -389,6 +397,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <LaunchOptionsFields
             values={form.launchOptions}
             onChange={(launchOptions) => setForm((prev) => ({ ...prev, launchOptions }))}
+          />
+        )}
+
+        {!isCreate && (
+          <TeamSettingsFields
+            values={form.teamSettings}
+            onChange={(teamSettings) => setForm((prev) => ({ ...prev, teamSettings }))}
           />
         )}
 

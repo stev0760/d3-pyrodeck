@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
 import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
+import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END } from "./autoexecBlock.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -160,6 +161,25 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
     await expect
       .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
       .toContain(`Args: -dedicated ./server.cfg -autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
+  });
+
+  it("writes the profile's block into a new Startup Commands file and passes it", async () => {
+    const logPath = path.join(dir, "block.log");
+    await pm.start({
+      executablePath: exe,
+      gamePath: dir,
+      configFile: "server.cfg",
+      logPath,
+      telnetPort: UNUSED_PORT,
+      telnetPassword: "x",
+      autoexecBlock: ["$allowteamchange on", "$setteamname 0 Crimson"],
+    });
+    expect(await fs.readFile(path.join(dir, AUTOEXEC_FILE), "utf-8")).toBe(
+      [AUTOEXEC_BLOCK_BEGIN, "$allowteamchange on", "$setteamname 0 Crimson", AUTOEXEC_BLOCK_END, ""].join("\n"),
+    );
+    await expect
+      .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
+      .toContain(`-autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
   });
 
   it("reports no log at all as state none", async () => {

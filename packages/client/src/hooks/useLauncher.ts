@@ -48,6 +48,16 @@ export interface LaunchOptions {
   gameSpyFile?: string;
 }
 
+export type TeamKey = "red" | "blue" | "green" | "yellow";
+
+/** DMFC team options and the Hoard orb count, applied at launch (server: launcher/teamSettings.ts). */
+export interface TeamSettings {
+  allowTeamChange?: boolean;
+  autoBalance?: boolean;
+  teamNames?: Partial<Record<TeamKey, string>>;
+  hoardMinOrbs?: number;
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -60,6 +70,7 @@ export interface ServerProfile {
   /** Applied over the console after every launch and playlist restart. */
   postStart?: PostStartSettings;
   launchOptions?: LaunchOptions;
+  teamSettings?: TeamSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -68,6 +79,7 @@ export interface ServerProfile {
 export interface ProfileSettingsPayload {
   postStart?: PostStartSettings | null;
   launchOptions?: Record<string, string | number | boolean> | null;
+  teamSettings?: Record<string, unknown> | null;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */

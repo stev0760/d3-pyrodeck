@@ -729,7 +729,8 @@ function ProfileEditor({
                   <p className="text-[11px] text-muted-foreground mb-2 shrink-0">
                     One DMFC command per line, e.g. <code>$killmsgfilter simple</code>. The file lives in the game
                     directory and Pyrodeck passes it to the server with <code>-autoexec</code>, so changes apply at the
-                    next launch.
+                    next launch. The lines between <code># pyrodeck: begin</code> and <code># pyrodeck: end</code> are
+                    the launched profile's Teams and Hoard settings (Launch panel → Edit), rewritten at every launch.
                   </p>
                 )}
                 <textarea

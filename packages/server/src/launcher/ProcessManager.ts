@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { consoleHostFor, launchOptionArgs, type LaunchOptions } from "./launchOptions.js";
+import { syncAutoexecBlock } from "./autoexecBlock.js";
 
 export type ProcessState =
   | "stopped"
@@ -56,6 +57,12 @@ export interface LaunchConfig {
   additionalArgs?: string[];
   /** The profile's launch options (-useip, -useport, -framecap, ...), placed right after the config file. */
   launchOptions?: LaunchOptions | null;
+  /**
+   * Lines for Pyrodeck's block in the Startup Commands file (autoexecBlock.ts),
+   * written before the server starts; [] removes the block. Undefined leaves
+   * the file alone.
+   */
+  autoexecBlock?: string[];
   /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
   profileId?: string;
   /** Optional path to write server log file. If set, stdout/stderr are written here. */
@@ -218,6 +225,17 @@ export class ProcessManager extends EventEmitter {
     // causes InitDedicatedSocket to fail and the new server runs without
     // network (bots simulate but nothing connects).
     await this.waitForPortFree(config.telnetPort);
+
+    // Before buildLaunchArgs: a block can create the Startup Commands file,
+    // which then has to be passed with -autoexec.
+    if (config.autoexecBlock !== undefined) {
+      try {
+        await syncAutoexecBlock(path.resolve(config.gamePath, AUTOEXEC_FILE), config.autoexecBlock);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.emit("stderr", `Team and Hoard settings not written to ${AUTOEXEC_FILE}: ${message}\n`);
+      }
+    }
 
     const { args, warning: argsWarning } = await buildLaunchArgs(config);
     if (argsWarning) this.emit("stderr", `${argsWarning}\n`);

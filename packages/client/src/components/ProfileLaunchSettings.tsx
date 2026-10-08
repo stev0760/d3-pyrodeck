@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { LaunchOptions } from "../hooks/useLauncher.ts";
+import type { LaunchOptions, TeamKey, TeamSettings } from "../hooks/useLauncher.ts";
 
 /**
  * Profile settings that shape a launch (Launch panel → Edit). The server
@@ -165,6 +165,128 @@ export function LaunchOptionsFields({
         The bind address must be an IPv4 address of this machine; the server binds its game, console and GameSpy
         sockets there only, and Pyrodeck connects to the console at that address. The frame cap is the server's
         frames per second (1-999). Without logos the server neither collects nor relays pilot logos.
+      </p>
+    </SettingsSection>
+  );
+}
+
+// ── Teams and Hoard ──────────────────────────────────────────────────────────
+
+type OnOff = "default" | "on" | "off";
+const toOnOff = (v: boolean | undefined): OnOff => (v === undefined ? "default" : v ? "on" : "off");
+
+const TEAMS: { key: TeamKey; label: string }[] = [
+  { key: "red", label: "Red" },
+  { key: "blue", label: "Blue" },
+  { key: "green", label: "Green" },
+  { key: "yellow", label: "Yellow" },
+];
+
+const SELECT_CLASS =
+  "w-full mt-0.5 bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+
+export interface TeamSettingsForm {
+  allowTeamChange: OnOff;
+  autoBalance: OnOff;
+  teamNames: Record<TeamKey, string>;
+  hoardMinOrbs: string;
+}
+
+export function teamSettingsToForm(t: TeamSettings | undefined): TeamSettingsForm {
+  return {
+    allowTeamChange: toOnOff(t?.allowTeamChange),
+    autoBalance: toOnOff(t?.autoBalance),
+    teamNames: {
+      red: t?.teamNames?.red ?? "",
+      blue: t?.teamNames?.blue ?? "",
+      green: t?.teamNames?.green ?? "",
+      yellow: t?.teamNames?.yellow ?? "",
+    },
+    hoardMinOrbs: t?.hoardMinOrbs !== undefined ? String(t.hoardMinOrbs) : "",
+  };
+}
+
+/** The PATCH value: null when nothing is set. */
+export function teamSettingsPayload(f: TeamSettingsForm): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  if (f.allowTeamChange !== "default") out.allowTeamChange = f.allowTeamChange === "on";
+  if (f.autoBalance !== "default") out.autoBalance = f.autoBalance === "on";
+  const names: Partial<Record<TeamKey, string>> = {};
+  for (const { key } of TEAMS) if (f.teamNames[key].trim()) names[key] = f.teamNames[key].trim();
+  if (Object.keys(names).length > 0) out.teamNames = names;
+  if (f.hoardMinOrbs.trim()) out.hoardMinOrbs = f.hoardMinOrbs.trim();
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function teamSummary(f: TeamSettingsForm): string {
+  const set = [
+    f.allowTeamChange !== "default",
+    f.autoBalance !== "default",
+    TEAMS.some(({ key }) => f.teamNames[key].trim()),
+    !!f.hoardMinOrbs.trim(),
+  ].filter(Boolean).length;
+  return set > 0 ? `${set} set` : "Server defaults";
+}
+
+/** $allowteamchange, $autobalance, $setteamname, Hoard's $mincount: written into the Startup Commands at launch. */
+export function TeamSettingsFields({
+  values,
+  onChange,
+}: {
+  values: TeamSettingsForm;
+  onChange: (v: TeamSettingsForm) => void;
+}) {
+  const set = (patch: Partial<TeamSettingsForm>) => onChange({ ...values, ...patch });
+  return (
+    <SettingsSection title="Teams and Hoard" summary={teamSummary(values)}>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Written into the Startup Commands file (between <code>#&nbsp;pyrodeck:</code> markers) at every launch, so
+        they hold from the first second. Game types without teams or Hoard ignore them.
+      </p>
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="text-[10px] text-muted-foreground">
+          Team changes
+          <select
+            value={values.allowTeamChange}
+            onChange={(e) => set({ allowTeamChange: e.target.value as OnOff })}
+            className={SELECT_CLASS}
+          >
+            <option value="default">Server default</option>
+            <option value="on">Allowed</option>
+            <option value="off">Not allowed</option>
+          </select>
+        </label>
+        <label className="text-[10px] text-muted-foreground">
+          Auto balance
+          <select
+            value={values.autoBalance}
+            onChange={(e) => set({ autoBalance: e.target.value as OnOff })}
+            className={SELECT_CLASS}
+          >
+            <option value="default">Server default</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        {TEAMS.map(({ key, label }) => (
+          <TextField
+            key={key}
+            label={`${label} team name`}
+            value={values.teamNames[key]}
+            onChange={(v) => set({ teamNames: { ...values.teamNames, [key]: v } })}
+            placeholder={label}
+          />
+        ))}
+        <TextField
+          label="Hoard orbs to score (1-12)"
+          value={values.hoardMinOrbs}
+          onChange={(hoardMinOrbs) => set({ hoardMinOrbs })}
+          placeholder="1"
+        />
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Team names are one word of up to 15 characters. DMFC remembers team changes and auto balance between runs, so
+        "Server default" means whatever the last server on this machine left.
       </p>
     </SettingsSection>
   );
