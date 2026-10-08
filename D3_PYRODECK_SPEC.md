@@ -894,7 +894,7 @@ applies from the next pickup. The console event hub emits `player.joined`/`playe
 |--------|------|-------------|
 | `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
 | `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) and `importedArgs: string[] \| null` |
-| `POST` | `/api/profiles` | Also takes `importedArgs` (with `existingConfigFile`) |
+| `POST` | `/api/profiles` | Also takes `launchOptions` and `importedArgs` (with `existingConfigFile`); invalid launch options are dropped |
 | `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
 | `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
 | `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
@@ -902,7 +902,7 @@ applies from the next pickup. The console event hub emits `player.joined`/`playe
 | `PUT` | `/api/process-priority` | Body `{ priorityClass: "below-normal"\|"normal"\|"above-normal"\|"high" }`; saves and applies to a running server |
 | `GET` | `/api/update-check` | `{ enabled, current, latest, available, url, checkedAt }` |
 | `PUT` | `/api/update-check` | Body `{ enabled }` |
-| `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, importedArgs, notes }, checks }`; creates nothing |
+| `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, launchOptions, launchOptionArgs, importedArgs, notes }, checks }`; creates nothing |
 
 `GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
 `processPriority` and `updateCheck`: each has its own route.
@@ -1518,9 +1518,12 @@ emails, service mode and priority class). No `$` command or console output chang
   Redirections and pipes are dropped.
 - The plan: game path = the directory changed to, else the program's, else the config's; config file = the
   `-dedicated` value's name (it must be in the game path, Pyrodeck passes `-dedicated ./<cfg>`); `-autoexec` of the game
-  path's own `autoexec.dmfc` is dropped (Pyrodeck passes it); every other argument is kept verbatim on the profile as
-  `importedArgs`, shown in the Launch panel. The client creates the profile with `POST /api/profiles`
-  (`existingConfigFile`), so a config missing from the game path is refused there.
+  path's own `autoexec.dmfc` is dropped (Pyrodeck passes it); the first `-useip`, `-useport`, `-framecap`,
+  `-nomultibmp`, `-gamespyport` and `-gspyfile` (aliases `+ip`, `+host` included) become `launchOptions`, each checked
+  as the profile form checks it (a refused value stays an imported flag, with a note); every other argument is kept
+  verbatim on the profile as `importedArgs`, shown in the Launch panel. The client creates the profile with
+  `POST /api/profiles` (`existingConfigFile`, `launchOptions`, `importedArgs`), so a config missing from the game path
+  is refused there.
 
 ### D.7 Service mode
 

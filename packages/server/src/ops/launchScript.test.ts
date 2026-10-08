@@ -43,19 +43,14 @@ describe("parseLaunchScript: Windows batch files", () => {
     expect(plan.executablePath).toBe("main.exe");
     expect(plan.configFile).toBe("ctf server.cfg");
     expect(plan.name).toBe("ctf server");
-    expect(plan.importedArgs).toEqual([
-      "-autoexec",
-      "C:\\Games\\Descent 3\\ctf.dmfc",
-      "-useport",
-      "2118",
-      "-gamespyport",
-      "20208",
-      "-gspyfile",
-      "gamespy.cfg",
-      "-framecap",
-      "30",
-      "-nomultibmp",
-    ]);
+    expect(plan.launchOptions).toEqual({
+      gamePort: 2118,
+      gameSpyPort: 20208,
+      gameSpyFile: "gamespy.cfg",
+      frameCap: 30,
+      noMultiBmp: true,
+    });
+    expect(plan.importedArgs).toEqual(["-autoexec", "C:\\Games\\Descent 3\\ctf.dmfc"]);
     expect(plan.notes.join(" ")).toMatch(/Startup Commands/);
     expect(plan.notes.join(" ")).toMatch(/high priority/);
   });
@@ -125,7 +120,8 @@ describe("parseLaunchScript: shell scripts", () => {
     expect(plan.gamePath).toBeNull();
     expect(plan.executablePath).toBe("Descent3");
     expect(plan.configFile).toBe("matcen-dedicated.cfg");
-    expect(plan.importedArgs).toEqual(["-useport", "2118", "-gamespyport", "20208"]);
+    expect(plan.launchOptions).toEqual({ gamePort: 2118, gameSpyPort: 20208 });
+    expect(plan.importedArgs).toEqual([]);
   });
 
   it("keeps the quotes around a script-directory prefix", () => {
@@ -161,7 +157,16 @@ describe("parseLaunchScript: shell scripts", () => {
     expect(plan.gamePath).toBe("/opt/descent 3");
     expect(plan.executablePath).toBe("Descent3");
     expect(plan.configFile).toBe("team anarchy.cfg");
-    expect(plan.importedArgs).toEqual(["-framecap", "60"]);
+    expect(plan.launchOptions).toEqual({ frameCap: 60 });
+    expect(plan.importedArgs).toEqual([]);
+  });
+
+  it("keeps a launch option the profile form would refuse as an imported flag, and a repeat", () => {
+    const s = parseLaunchScript("cd /srv/d3\n./Descent3 -dedicated ctf.cfg -useip d3.example.org -useport 2118 -UsePort 2200\n", "x.sh");
+    const plan = planImport(s);
+    expect(plan.launchOptions).toEqual({ gamePort: 2118 });
+    expect(plan.importedArgs).toEqual(["-useip", "d3.example.org", "-UsePort", "2200"]);
+    expect(plan.notes.join(" ")).toMatch(/-useip d3\.example\.org is not applied: The bind address must be an IPv4 address/);
   });
 
   it("finds the launch inside screen and inside a quoted tmux command", () => {

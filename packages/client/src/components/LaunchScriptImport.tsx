@@ -72,6 +72,7 @@ export function LaunchScriptImport({
       existingConfigFile: preview.profile.configFile,
       gamePath: gamePath.trim() || undefined,
       executablePath: executablePath.trim() || undefined,
+      launchOptions: preview.profile.launchOptions ?? undefined,
       importedArgs: preview.profile.importedArgs,
     });
     setBusy(false);
@@ -149,6 +150,12 @@ export function LaunchScriptImport({
             <Check ok={preview.checks.executable.valid} label="Executable found" errors={preview.checks.executable.errors} />
             <Check ok={preview.checks.configFile.valid} label="Config in the Game Path" errors={preview.checks.configFile.errors} />
           </div>
+          {p.launchOptionArgs.length > 0 && (
+            <div className="text-[10px] text-muted-foreground">
+              Launch Options (applied at every launch):
+              <p className="font-mono text-foreground/80 break-all">{p.launchOptionArgs.join(" ")}</p>
+            </div>
+          )}
           {p.importedArgs.length > 0 && (
             <div className="text-[10px] text-muted-foreground">
               Kept as imported flags (not applied by Pyrodeck):

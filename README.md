@@ -207,8 +207,9 @@ tab.
 - **Import from a launch script.** In the Launch panel, **Import script**: paste or pick the batch file or shell script
   that ran `Descent3 -dedicated <cfg> ...`. Pyrodeck reads its flags the way the engine does (any case, `-`, `--` or
   `+`; the first one wins), shows where it found the game, program and config, and creates a profile linked to that
-  config. Flags a profile cannot hold yet (ports, frame cap, tracker files) are kept on the profile as "imported flags"
-  for reference. The config must already be in the game directory.
+  config. The bind address, game and GameSpy ports, frame cap, GameSpy file and `-nomultibmp` become the profile's
+  Launch Options; other flags are kept on the profile as "imported flags" for reference. The config must already be in
+  the game directory.
 - **Running as a service.** [docs/running-as-a-service.md](docs/running-as-a-service.md): NSSM, `schtasks` and a
   systemd user unit, with the working directory and log location each one needs.
 

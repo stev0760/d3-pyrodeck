@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { PriorityClass } from "./processPriority.js";
+import { validateLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
 
 /**
  * Import a server from the batch file or shell script that used to launch it:
@@ -543,9 +544,44 @@ export interface ImportPlan {
   executablePath: string | null;
   /** Config file name inside gamePath. */
   configFile: string | null;
+  /** The script's flags that a profile's launch options carry (launcher/launchOptions.ts). */
+  launchOptions: LaunchOptions | null;
   /** Arguments Pyrodeck does not apply itself; kept on the profile and shown to the operator. */
   importedArgs: string[];
   notes: string[];
+}
+
+/** Flags a profile's launch options carry, by canonical name, with the option each one sets. */
+const LAUNCH_OPTION_FLAGS: Readonly<Record<string, keyof LaunchOptions>> = {
+  useip: "bindIp",
+  useport: "gamePort",
+  framecap: "frameCap",
+  nomultibmp: "noMultiBmp",
+  gamespyport: "gameSpyPort",
+  gspyfile: "gameSpyFile",
+};
+
+/**
+ * The script's launch-option flags as a profile's launch options, each value
+ * checked as the profile form checks it. A flag whose value the form would
+ * refuse is left out (it stays an imported flag) with a note.
+ */
+function importLaunchOptions(script: LaunchScript, notes: string[]): { options: LaunchOptions | null; taken: Set<string> } {
+  const options: LaunchOptions = {};
+  const taken = new Set<string>();
+  for (const [flag, key] of Object.entries(LAUNCH_OPTION_FLAGS)) {
+    const value = script.flags[flag];
+    if (value === undefined) continue;
+    const check = validateLaunchOptions({ [key]: value });
+    if (check.errors.length > 0 || !check.options) {
+      const shown = value === true ? `-${flag}` : `-${flag} ${value}`;
+      notes.push(`${shown} is not applied: ${check.errors.join(" ")}`);
+      continue;
+    }
+    Object.assign(options, check.options);
+    taken.add(flag);
+  }
+  return { options: taken.size > 0 ? options : null, taken };
 }
 
 /**
@@ -594,14 +630,24 @@ export function planImport(script: LaunchScript): ImportPlan {
     else executablePath = exe.replace(/^\.[\\/]/, "");
   }
 
-  // Everything but -dedicated <cfg> goes to importedArgs; Pyrodeck passes its
-  // own -autoexec (the game directory's autoexec.dmfc) when that file exists.
+  const { options: launchOptions, taken } = importLaunchOptions(script, notes);
+
+  // Everything but -dedicated <cfg> and the launch options goes to
+  // importedArgs; Pyrodeck passes its own -autoexec (the game directory's
+  // autoexec.dmfc) when that file exists.
   const importedArgs: string[] = [];
   for (let i = 0; i < script.args.length; i++) {
     const arg = script.args[i];
     const name = arg === "-d" ? "dedicated" : canonicalFlag(arg);
     if (name === "dedicated") {
       i++;
+      continue;
+    }
+    const canonical = name ? (ENGINE_FLAGS[name]?.alias ?? name) : null;
+    if (canonical && taken.has(canonical)) {
+      // The first occurrence is the one the engine reads and the profile now carries.
+      taken.delete(canonical);
+      if (ENGINE_FLAGS[canonical]?.value) i++;
       continue;
     }
     if (name === "autoexec" && i + 1 < script.args.length) {
@@ -617,6 +663,9 @@ export function planImport(script: LaunchScript): ImportPlan {
     }
     importedArgs.push(arg);
   }
+  if (launchOptions) {
+    notes.push("The bind address, ports, frame cap and logo setting become the profile's Launch Options.");
+  }
   if (importedArgs.length > 0) {
     notes.push("Launch flags Pyrodeck does not apply are kept on the profile as imported flags, for reference.");
   }
@@ -625,7 +674,7 @@ export function planImport(script: LaunchScript): ImportPlan {
   }
 
   const name = configFile ? configFile.replace(/\.[^.]+$/, "") : "Imported server";
-  return { name, gamePath, executablePath, configFile, importedArgs, notes };
+  return { name, gamePath, executablePath, configFile, launchOptions, importedArgs, notes };
 }
 
 const MAX_IMPORTED_ARGS = 60;

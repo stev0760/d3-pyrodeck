@@ -5,6 +5,7 @@ import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { validateExecutable, validateGamePath } from "../config/PyrodeckConfig.js";
 import { parseDedicatedCfg, getCfgValue } from "../launcher/ConfigGenerator.js";
 import { parseLaunchScript, planImport } from "../ops/launchScript.js";
+import { launchOptionArgs } from "../launcher/launchOptions.js";
 
 /** Import a server profile from the batch file or shell script that launched it. */
 
@@ -15,7 +16,7 @@ export async function launchScriptRoutes(app: FastifyInstance): Promise<void> {
    * POST /api/launch-script/preview  { text, fileName? }
    * Read the script and plan a profile, checking the paths on this machine.
    * Nothing is created: the client creates the profile with POST /api/profiles
-   * { name, existingConfigFile, gamePath, executablePath, importedArgs }.
+   * { name, existingConfigFile, gamePath, executablePath, launchOptions, importedArgs }.
    */
   app.post("/api/launch-script/preview", async (request, reply) => {
     const { text, fileName } = (request.body ?? {}) as { text?: unknown; fileName?: unknown };
@@ -48,6 +49,10 @@ export async function launchScriptRoutes(app: FastifyInstance): Promise<void> {
         checks.configFile.errors.push(`${plan.configFile} is not in ${gamePath}`);
       }
     }
-    return { script, profile: { ...plan, name, gamePath }, checks };
+    return {
+      script,
+      profile: { ...plan, name, gamePath, launchOptionArgs: launchOptionArgs(plan.launchOptions) },
+      checks,
+    };
   });
 }

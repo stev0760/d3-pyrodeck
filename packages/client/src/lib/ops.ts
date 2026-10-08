@@ -117,6 +117,9 @@ export interface LaunchScriptPreview {
     gamePath: string | null;
     executablePath: string | null;
     configFile: string | null;
+    /** The script's flags that become the profile's Launch Options, and the same as flags for display. */
+    launchOptions: Record<string, string | number | boolean> | null;
+    launchOptionArgs: string[];
     importedArgs: string[];
     notes: string[];
   };

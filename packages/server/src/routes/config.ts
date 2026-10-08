@@ -179,6 +179,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       executablePath?: string;
       /** Launch flags from an imported script that the profile does not apply (shown to the operator). */
       importedArgs?: unknown;
+      /** Launch options read from an imported script (launcher/launchOptions.ts); invalid ones are dropped. */
+      launchOptions?: unknown;
     };
 
     try {
@@ -201,7 +203,13 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           });
         }
         const importedArgs = sanitizeImportedArgs(body.importedArgs);
-        if (importedArgs) profile = await manager.update(profile.id, { importedArgs });
+        const launchOptions = sanitizeStoredLaunchOptions(body.launchOptions);
+        if (importedArgs || launchOptions) {
+          profile = await manager.update(profile.id, {
+            ...(importedArgs ? { importedArgs } : {}),
+            ...(launchOptions ? { launchOptions } : {}),
+          });
+        }
       } else {
         profile = await manager.create(
           body.name,
