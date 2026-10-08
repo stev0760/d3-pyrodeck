@@ -1,14 +1,16 @@
 /**
  * Console automation for the launched profile: periodic commands and the
- * player-scaled respawn time. A run starts with `server.started`, gets the
- * console when Pyrodeck's session to that server is ready, and ends when the
- * process stops or crashes. Joins and leaves arrive as `player.joined` and
+ * player-scaled respawn time. A run starts with `server.started` (or
+ * `server.adopted`, a server Pyrodeck re-attached to after a restart, whose
+ * start lines went out already), gets the console when Pyrodeck's session to
+ * that server is ready, and ends when the process stops or crashes. Joins and leaves arrive as `player.joined` and
  * `player.left` on the server event bus.
  */
 import type { ServerEvents } from "../events/ServerEvents.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { PeriodicCommandScheduler, sanitizeStoredPeriodic, type SendLine } from "./periodicCommands.js";
 import { RespawnScaler, sanitizeStoredRespawnScaling } from "./respawnScaling.js";
+import { humansIn, parsePlayers } from "../parser/parsers/players.js";
 
 export interface AutomationSettings {
   periodicCommands?: unknown;
@@ -28,6 +30,8 @@ export class ProfileAutomation {
   private readonly loadProfile: ProfileAutomationOptions["loadProfile"];
   private profileId: string | null = null;
   private pid: number | null = null;
+  /** The run is a re-attached server: who is on must be asked, once. */
+  private needsRoster = false;
   /** Settles when the current run's settings are loaded. */
   private armed: Promise<void> = Promise.resolve();
 
@@ -40,6 +44,7 @@ export class ProfileAutomation {
   /** Subscribe to the server event bus. */
   listen(bus: ServerEvents): void {
     bus.onEvent("server.started", ({ profileId, pid }) => void this.serverStarted(profileId, pid));
+    bus.onEvent("server.adopted", ({ profileId, pid }) => void this.serverStarted(profileId, pid, { resumed: true }));
     bus.onEvent("server.stopped", ({ pid }) => this.serverDown(pid));
     bus.onEvent("server.crashed", ({ pid }) => this.serverDown(pid));
     bus.onEvent("player.joined", ({ profileId, name }) => {
@@ -50,18 +55,19 @@ export class ProfileAutomation {
     });
   }
 
-  /** A server process started: load the profile's settings and arm a new run. */
-  serverStarted(profileId: string, pid: number): Promise<void> {
+  /** A server process started (or was re-attached): load the profile's settings and arm a new run. */
+  serverStarted(profileId: string, pid: number, options: { resumed?: boolean } = {}): Promise<void> {
     if (pid === this.pid) return this.armed; // the same start reported twice
     this.pid = pid;
     this.profileId = profileId;
+    this.needsRoster = options.resumed === true;
     this.periodic.stop();
     this.respawn.stop();
     this.armed = this.loadProfile(profileId)
       .catch(() => null)
       .then((profile) => {
         if (this.pid !== pid) return;
-        this.periodic.arm(String(pid), sanitizeStoredPeriodic(profile?.periodicCommands));
+        this.periodic.arm(String(pid), sanitizeStoredPeriodic(profile?.periodicCommands), options);
         this.respawn.arm(sanitizeStoredRespawnScaling(profile?.respawnScaling));
       });
     return this.armed;
@@ -76,6 +82,15 @@ export class ProfileAutomation {
       return connection.send(line);
     };
     this.periodic.consoleReady(send);
+    if (this.needsRoster && this.respawn.isArmed()) {
+      // Players already on a re-attached server re-enter only at the next level.
+      const reply = await send("$players").catch(() => null);
+      const parsed = typeof reply === "string" ? parsePlayers(reply) : null;
+      if (parsed && this.pid !== null) {
+        this.needsRoster = false;
+        this.respawn.setPlayers(humansIn(parsed).map((p) => p.name));
+      }
+    }
     this.respawn.consoleReady(send);
   }
 
@@ -84,6 +99,7 @@ export class ProfileAutomation {
     if (pid !== undefined && this.pid !== null && pid !== this.pid) return;
     this.pid = null;
     this.profileId = null;
+    this.needsRoster = false;
     this.periodic.stop();
     this.respawn.stop();
   }

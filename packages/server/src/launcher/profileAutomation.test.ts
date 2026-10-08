@@ -72,6 +72,26 @@ describe("ProfileAutomation", () => {
     expect(sent).toHaveLength(3);
   });
 
+  it("resumes the periodic lines on a re-attached server, without its start lines", async () => {
+    bus.emitEvent("server.adopted", { profileId: "p1", pid: 200, startedAt: new Date(0).toISOString() });
+    await auto.consoleReady("p1", fakeConnection(sent));
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(sent).toEqual(["say Tip one", "say Tip two"]);
+  });
+
+  it("counts the players already on a re-attached server before scaling", async () => {
+    bus.emitEvent("server.adopted", { profileId: "p3", pid: 300, startedAt: new Date(0).toISOString() });
+    const connection = fakeConnection(sent);
+    connection.send = async (line: string) => {
+      sent.push(line);
+      return line === "$players" ? "PNum Name\n00: -Server-\n01: a\n02: b\n03: c\n04: V[BOT]\n" : "";
+    };
+    await auto.consoleReady("p3", connection);
+    await vi.advanceTimersByTimeAsync(0);
+    // 3 humans of 4 for the shortest: 60 - (1/2) * 40
+    expect(sent).toEqual(["$players", "$setrespawntime 40"]);
+  });
+
   it("ignores a second server.started for the same process and restarts on a relaunch", async () => {
     started(100);
     await auto.consoleReady("p1", fakeConnection(sent));

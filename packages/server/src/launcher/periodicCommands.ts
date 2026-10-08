@@ -138,12 +138,17 @@ export class PeriodicCommandScheduler {
     this.log = options.log ?? ((m) => console.log(m));
   }
 
-  /** Begin a run for a newly started server. Re-arming the same run is a no-op. */
-  arm(runKey: string, settings: PeriodicCommandSettings | null): void {
+  /**
+   * Begin a run for a newly started server. Re-arming the same run is a
+   * no-op. `resumed`: the server has run for a while (Pyrodeck re-attached to
+   * it), so its start lines went out already.
+   */
+  arm(runKey: string, settings: PeriodicCommandSettings | null, options: { resumed?: boolean } = {}): void {
     if (this.runKey === runKey) return;
     this.stop();
     this.runKey = runKey;
     this.settings = settings?.enabled ? settings : null;
+    this.startSent = options.resumed === true;
   }
 
   /** The console session is ready: send the start lines (once per run) and start the ticks. */

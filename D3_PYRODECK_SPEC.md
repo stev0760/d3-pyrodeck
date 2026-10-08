@@ -871,11 +871,14 @@ value means what the last server on the machine left. Verified on the Matcen Deb
 operator's own `$statmsgs on` (`*Statistical Messages: On`).
 
 Periodic commands (`launcher/periodicCommands.ts`, `launcher/profileAutomation.ts`) follow one server run:
-`ProcessManager.start` emits `server.started` (`{ profileId, pid, args, reason: "manual"|"playlist" }`) for every
-profile launch; the automation loads the profile's settings and waits; when the launch's auto-connect session is ready
-it sends the start lines, then a round every interval over that session, skipping rounds while the connection is down.
-The run ends on the process's exit (and on `server.stopped`/`server.crashed` from the bus); a second `server.started`
-for the same pid is ignored. Lines must start with `$` or `say `, be printable ASCII and at most 200 characters (the
+`ProcessManager.start` emits `server.started` (`{ profileId, pid, args, reason }`) for every launch, by hand, by a
+playlist, the supervisor or the schedule; the automation loads the profile's settings and waits; when the launch's
+auto-connect session is ready it sends the start lines, then a round every interval over that session, skipping rounds
+while the connection is down. Every new login (a reconnect after the link dropped) hands the run the new session; the
+start lines still go once per run. `server.adopted` (Pyrodeck re-attached to a running server after its own restart)
+starts a run without the start lines, and respawn scaling first reads who is on with one `$players`. The run ends on
+the process's exit (and on `server.stopped`/`server.crashed` from the bus); a second `server.started` for the same pid
+is ignored. Lines must start with `$` or `say `, be printable ASCII and at most 200 characters (the
 `Say` cvar's limit, `dedicated_server.cpp:181`; the console drops lines past 254 bytes, `:1656`). A round sends at most
 5 lines; `startLines` and `all`-mode `lines` are capped at 5, the others at 20. Verified live: `[127.0.0.1] say PRO
 start line: welcome` / `*-Server- says: PRO start line: welcome`, then one minute apart `*-Server- says: PRO periodic

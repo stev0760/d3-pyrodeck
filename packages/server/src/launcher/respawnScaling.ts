@@ -129,6 +129,16 @@ export class RespawnScaler {
     this.settings = settings?.enabled ? settings : null;
   }
 
+  /** Whether this run scales the respawn time (the profile has it on). */
+  isArmed(): boolean {
+    return this.settings !== null;
+  }
+
+  /** Who is on, from `$players` (a server Pyrodeck re-attached to). */
+  setPlayers(names: string[]): void {
+    this.humans = new Set(names.filter((n) => !isBotName(n)));
+  }
+
   consoleReady(send: SendLine): void {
     if (!this.settings) return;
     this.send = send;
