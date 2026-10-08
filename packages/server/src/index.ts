@@ -19,6 +19,7 @@ import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
 import { scheduleRoutes } from "./routes/schedule.js";
+import { alertRoutes } from "./routes/alerts.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 
 const PORT = parseInt(process.env.PYRODECK_PORT ?? "3001", 10);
@@ -115,6 +116,7 @@ async function main() {
   await app.register(playlistRoutes);
   // Starts the weekly schedule's 30 s tick.
   await app.register(scheduleRoutes);
+  await app.register(alertRoutes);
 
   app.get("/api/health", async () => ({ status: "ok" }));
 

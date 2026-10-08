@@ -833,6 +833,11 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 |--------|------|-------------|
 | `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
 | `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) |
+| `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
+| `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
+| `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
+
+`GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`: it has its own route.
 
 ---
 
@@ -1259,6 +1264,20 @@ emails, service mode and priority class). No `$` command or console output chang
   count is unknown and the stop waits for the deadline. One `say` when the wait begins.
 - Nothing is persisted but the settings. After a Pyrodeck restart: inside a run, the start is made; outside one, nothing
   is stopped. A server stopped by hand inside a run stays down until the next run.
+
+### D.3 Email alerts (`ops/mailSettings.ts`, `ops/MailNotifier.ts`, `routes/alerts.ts`)
+
+- `pyrodeck.json` `mail: { enabled (false), host, port, tls, user, password, from, recipients (≤ 10), events }`. The
+  password is stored as entered (SMTP AUTH needs it), never returned (`passwordSet`), never logged; `pyrodeck.json`
+  is written with mode 0600. Addresses are single mailboxes with no spaces, commas, angle brackets or line breaks.
+- Events from the bus: `server.started` (manual → started; relaunch → relaunched; schedule → started, schedule;
+  playlist → not mailed), `server.stopped` (manual, empty-restart → stopped; schedule → stopped, schedule; playlist →
+  not mailed), `server.crashed`, `server.hung`, `player.kicked`, `player.banned` (a reason matching `/profan/i` is a
+  profanity ban), `schedule.skipped`. Mailed when any of its checklist entries is ticked. Defaults: crashed, hung,
+  relaunched, banned, profanity ban, schedule on; started, stopped, kicked off.
+- Batching: a burst is sent 10 s after its first event, never sooner than 60 s after the previous mail; identical events
+  are listed once; at most 50 per mail (the rest counted). nodemailer, 10 s connect and greeting timeouts. `none` sends
+  plain SMTP (`ignoreTLS`), `starttls` requires the upgrade, `tls` is implicit TLS.
 
 ---
 

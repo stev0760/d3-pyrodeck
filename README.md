@@ -176,7 +176,8 @@ Point Pyrodeck at your D3 installation directory, select or create a server prof
 
 ## Operations
 
-Settings that keep an unattended server running. The schedule lives in each profile.
+Settings that keep an unattended server running. The schedule lives in each profile; the rest are in the **Settings**
+tab.
 
 - **Weekly schedule.** Edit a profile and add windows (day, start, end, in the Pyrodeck machine's local time; an end at
   or before the start runs past midnight). At a window's start Pyrodeck launches the profile if no server is running. At
@@ -184,6 +185,11 @@ Settings that keep an unattended server running. The schedule lives in each prof
   the wait you set at the latest; players get one warning in chat. A server you stop by hand during a window stays
   stopped until the next window. The Launch panel shows the next scheduled start or stop. Only one server runs at a
   time, so a window whose start finds another profile's server running is skipped, with a toast.
+- **Email alerts.** SMTP host, port, security (STARTTLS, TLS or none), login, From, up to ten recipients, and a
+  checklist: server started, stopped, crashed, hung or relaunched; player kicked or banned; profanity bans; schedule
+  actions. Off by default. Events that arrive together go out in one mail, at most one mail a minute. **Send test mail**
+  tries the settings on screen before you save them. The SMTP password is kept in `config/pyrodeck.json` (now
+  written readable by its owner only) and never sent back to the browser.
 
 ## Hosting mission downloads
 

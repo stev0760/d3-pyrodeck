@@ -5,6 +5,7 @@ import {
   sanitizeStoredMissionHost,
   type MissionHostSettings,
 } from "../gamefiles/missionHostSettings.js";
+import { DEFAULT_MAIL_SETTINGS, sanitizeStoredMail, type MailSettings } from "../ops/mailSettings.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -25,6 +26,8 @@ export interface PyrodeckConfig {
   adminPasswordHash: string | null;
   /** Mission download listener (gamefiles/MissionHost.ts). Set via /api/mission-host only. */
   missionHost: MissionHostSettings;
+  /** Email alerts (ops/mailSettings.ts). Set via /api/alerts/mail only; the password is never returned. */
+  mail: MailSettings;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -44,6 +47,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   preferredMode: "connect",
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
+  mail: { ...DEFAULT_MAIL_SETTINGS, events: { ...DEFAULT_MAIL_SETTINGS.events } },
 };
 
 /**
@@ -101,6 +105,9 @@ function migrateConfig(
   if ("missionHost" in raw) {
     migrated.missionHost = sanitizeStoredMissionHost(raw.missionHost);
   }
+  if ("mail" in raw) {
+    migrated.mail = sanitizeStoredMail(raw.mail);
+  }
 
   return migrated;
 }
@@ -142,7 +149,9 @@ export class PyrodeckConfigManager {
   private async persist(): Promise<void> {
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(this.config, null, 2));
+    // Owner-only: the file holds the SMTP password (and the admin password hash).
+    await fs.writeFile(this.filePath, JSON.stringify(this.config, null, 2), { mode: 0o600 });
+    await fs.chmod(this.filePath, 0o600).catch(() => {});
   }
 
   get(): PyrodeckConfig {

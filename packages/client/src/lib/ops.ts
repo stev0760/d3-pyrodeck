@@ -31,6 +31,53 @@ export interface ScheduleState {
   entries: ScheduleEntry[];
 }
 
+export type MailTlsMode = "none" | "starttls" | "tls";
+
+export const MAIL_EVENTS = [
+  { key: "started", label: "Server started" },
+  { key: "stopped", label: "Server stopped" },
+  { key: "crashed", label: "Server crashed" },
+  { key: "hung", label: "Server hung" },
+  { key: "relaunched", label: "Server relaunched" },
+  { key: "kicked", label: "Player kicked" },
+  { key: "banned", label: "Player banned" },
+  { key: "profanityBan", label: "Profanity ban" },
+  { key: "schedule", label: "Schedule actions" },
+] as const;
+export type MailEventKey = (typeof MAIL_EVENTS)[number]["key"];
+
+export interface MailSettingsView {
+  enabled: boolean;
+  host: string;
+  port: number;
+  tls: MailTlsMode;
+  user: string;
+  passwordSet: boolean;
+  from: string;
+  recipients: string[];
+  events: Record<MailEventKey, boolean>;
+}
+
+export interface MailStatus {
+  lastSentAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  pending: number;
+}
+
+export interface MailState {
+  settings: MailSettingsView;
+  status: MailStatus;
+}
+
+export interface MailTestResult {
+  ok: boolean;
+  messageId: string | null;
+  accepted: string[];
+  rejected: string[];
+  error: string | null;
+}
+
 /** GET a JSON resource; null on any failure. */
 export async function getJson<T>(url: string): Promise<T | null> {
   try {

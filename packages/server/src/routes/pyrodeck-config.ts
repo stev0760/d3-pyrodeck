@@ -17,7 +17,8 @@ export async function pyrodeckConfigRoutes(
   await pyrodeckConfig.load();
 
   app.get("/api/pyrodeck/config", async () => {
-    const { adminPasswordHash: _, ...config } = pyrodeckConfig.get();
+    // The SMTP settings (and their password) are served by /api/alerts/mail only.
+    const { adminPasswordHash: _, mail: _mail, ...config } = pyrodeckConfig.get();
     return {
       ...config,
       needsSetup: pyrodeckConfig.needsSetup(),
@@ -25,9 +26,14 @@ export async function pyrodeckConfigRoutes(
   });
 
   app.put("/api/pyrodeck/config", async (request, reply) => {
-    // The mission host has its own route (validation, listener restart).
-    const { adminPasswordHash: _, missionHost: _host, ...updates } =
-      request.body as Partial<PyrodeckConfig>;
+    // The mission host and the operations settings have their own routes
+    // (validation, listener restart, the SMTP password).
+    const {
+      adminPasswordHash: _,
+      missionHost: _host,
+      mail: _mail,
+      ...updates
+    } = request.body as Partial<PyrodeckConfig>;
 
     // Validate gamePath if being changed
     if (updates.gamePath !== undefined && updates.gamePath !== null) {
@@ -67,7 +73,7 @@ export async function pyrodeckConfigRoutes(
     }
 
     const saved = await pyrodeckConfig.save(updates);
-    const { adminPasswordHash: _hash, ...config } = saved;
+    const { adminPasswordHash: _hash, mail: _savedMail, ...config } = saved;
     return {
       ...config,
       needsSetup: pyrodeckConfig.needsSetup(),
