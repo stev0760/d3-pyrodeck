@@ -24,7 +24,7 @@ pnpm monorepo:
 - `$` commands have two layers in D3:
   - **Engine layer** (bot commands): `$addbot`, `$removebot`, `$botlist`, `$servercaps` — always work from telnet
   - **DMFC layer** (game commands): `$kick`, `$ban`, `$scores`, `$endlevel` — go through game DLL
-- `$kick`/`$ban` don't work on bots via DMFC (`CheckPlayerNum` rejects synthetic players). Use `$removebot` for bots.
+- `$kick` works on bots from Matcen 0.8.4 (`MultiDisconnectPlayer` hands a bot to `BotRemove`); `$removebot` is still the bot command. Never `$ban` a bot: DMFC would ban its address, which is the server's own (Pyrodeck refuses).
 - Web admin auth exists (scrypt hash + cookie session) but is skipped automatically on localhost when no password is set — dev workflow needs no login
 
 ## UI Testing Pipeline

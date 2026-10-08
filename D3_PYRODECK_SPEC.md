@@ -31,7 +31,7 @@ The tool is completely separate from the Descent 3 engine fork. It lives in its 
 
 ### 1.3 Inspirations
 
-- **D3Server3** (Thomas / dateiliste.com, originally by (DE)Hunter) — Windows GUI tool, the gold standard for D3 server management. The 3.0.83 binary, audited in `docs/D3SERVER3_AUDIT.md`, runs several servers at once, each launched from a stored configuration with its own `-autoexec` file and ports. It relaunches a server whose process dies, kills and relaunches one whose console stays silent for 120 s, restarts empty servers after an uptime limit, starts and stops servers on a weekly schedule, registers them with GameSpy-protocol trackers, and applies nickname rules and downloaded ban lists to joining players. The profanity filter with warn/kick/ban escalation and email alerts, the Windows service mode and the process priority control credited to it here before are not in that binary: no string mentions them, and its imports rule them out. They may belong to a later 3.2 release, or to memory. Many community installers bundled it. Our goal is to rebuild and modernize this experience as a cross-platform web app.
+- **D3Server3** (Thomas / dateiliste.com, originally by (DE)Hunter) — Windows GUI tool, the gold standard for D3 server management. The 3.0.83 binary, audited in `docs/D3SERVER3_AUDIT.md`, runs several servers at once, each launched from a stored configuration with its own `-autoexec` file and ports. It relaunches a server whose process dies, kills and relaunches one whose console stays silent for 120 s, restarts empty servers after an uptime limit, starts and stops servers on a weekly schedule, registers them with GameSpy-protocol trackers, and applies nickname rules and downloaded ban lists to joining players. Later releases add more, per the author's archived manual and release notes (`docs/D3SERVER3_AUDIT.md` §6; the last release is 3.2.3.0, 2014-10-22): a profanity filter with kick and ban thresholds (3.1.3.0), external commands run on server events (3.0.90 on), which is how it sent email (through Blat), a Windows service mode through `ServiceExe` (3.0.84, reliable from 3.0.85), and process priority for the tool and its servers (3.1.9.0). None of these is in the 3.0.83 binary. Many community installers bundled it. Our goal is to rebuild and modernize this experience as a cross-platform web app.
 - **DD3 (Direct Descent 3)** (BitNix / Anders "BotNak" Larsson) — Windows GUI for Direct TCP/IP servers. Notable for: auto-hang detection + restart, dynamic IP re-publishing, web-based server listing at descent.dk, modem dial-up automation.
 - **descent3console** (roncli) — Node.js module providing the most comprehensive programmatic API for D3 telnet interaction. Full EventEmitter-based parsing of all 9 game type scoring events, kill streaks, revenge tracking, efficiency stats. Reference implementation for our parser architecture.
 - **descent3launcher** (roncli) — Node.js module for programmatic server launch with granular ship/weapon/powerup control. Reference for our Launch Mode config generation.
@@ -624,7 +624,7 @@ D3 dedicated server prints `"Ending level."` to stdout at the end of every level
 #### Rotation Sequence
 1. `"Ending level."` fires → rotation triggered
 2. If a vote is in progress, immediately tally votes and use winner; otherwise advance the playlist index per mode
-3. Announce next mission in-game: `say Changing mission to: <label>`
+3. Announce next mission in-game: `say Changing mission to <label>` (filtered: printable ASCII, no `%`, no colon)
 4. `processManager.stop()` — graceful quit → SIGTERM → SIGKILL fallback
 5. `ensureConfigReference("MissionName", missionName)` patches the active profile's `.cfg` file in place
 6. `processManager.start()` — new D3 process with updated config
@@ -710,11 +710,8 @@ All REST endpoints are prefixed with `/api`. WebSocket endpoint is `/ws`.
 
 ### 8.3 Commands
 
-All commands flow through WebSocket for real-time streaming. The REST endpoint is a convenience for one-shot commands.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/command` | Send a raw command; returns collected response |
+All console commands flow through the WebSocket (`/ws`), so their output streams back as it arrives. There is no
+REST endpoint for a raw command.
 
 **WebSocket message types:**
 
