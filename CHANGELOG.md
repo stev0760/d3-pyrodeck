@@ -10,6 +10,7 @@ All notable changes to D3 Pyrodeck are documented here.
 - **Email alerts** on server events (started, stopped, crashed, hung, relaunched, player kicked or banned, profanity ban, schedule actions) over SMTP, in a new Settings tab. Off by default; bursts are batched into one mail, at most one a minute; **Send test mail** checks the settings first. Uses `nodemailer`.
 - **Process priority** for the game server (below normal to high), applied after every launch, playlist restart, scheduled start and relaunch, and to a running server when changed. A refused change (raising priority without privilege) is a warning, not a failure.
 - **Update notice:** a banner when GitHub has a newer Pyrodeck release, checked at most once a day; never downloads anything; can be turned off.
+- **Import a profile from a launch script** (`.bat`, `.cmd`, `.sh`): the `-dedicated` line is read the way the engine reads its command line, with a preview of the game directory, program and config before the profile is created. Flags a profile can't hold yet are kept on it as imported flags.
 
 ### Changed
 - `config/pyrodeck.json` is written readable by its owner only, since it now holds the SMTP password.

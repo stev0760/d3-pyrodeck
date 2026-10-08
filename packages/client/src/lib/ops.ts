@@ -101,6 +101,28 @@ export interface UpdateStatus {
   checkedAt: string | null;
 }
 
+export interface LaunchScriptPreview {
+  script: {
+    shell: "cmd" | "sh";
+    commandLine: string | null;
+    executable: string | null;
+    workingDir: string | null;
+    args: string[];
+    flags: Record<string, string | true>;
+    priorityHint: PriorityClass | null;
+    warnings: string[];
+  };
+  profile: {
+    name: string;
+    gamePath: string | null;
+    executablePath: string | null;
+    configFile: string | null;
+    importedArgs: string[];
+    notes: string[];
+  };
+  checks: Record<"gamePath" | "executable" | "configFile", { valid: boolean; errors: string[] }>;
+}
+
 /** GET a JSON resource; null on any failure. */
 export async function getJson<T>(url: string): Promise<T | null> {
   try {

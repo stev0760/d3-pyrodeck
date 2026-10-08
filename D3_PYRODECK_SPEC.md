@@ -832,7 +832,8 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/schedule` | `{ timeZone, now, entries: [{ profileId, name, enabled, next: { action, at, atLocal } \| null, pendingStop: { deadline, deadlineLocal } \| null }] }` |
-| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) |
+| `PATCH` | `/api/profiles/:id` | Also takes `schedule: { enabled, windows: [{ day, start, end }], stopWaitMinutes } \| null` (400 with `errors` when invalid) and `importedArgs: string[] \| null` |
+| `POST` | `/api/profiles` | Also takes `importedArgs` (with `existingConfigFile`) |
 | `GET` | `/api/alerts/mail` | `{ settings (no password; passwordSet), status: { lastSentAt, lastError, lastErrorAt, pending } }` |
 | `PUT` | `/api/alerts/mail` | Body `{ enabled, host, port, tls: "none"\|"starttls"\|"tls", user, password?, from, recipients, events }`; no `password` keeps the stored one, `""` clears it; returns `{ settings, status, warnings }` |
 | `POST` | `/api/alerts/mail/test` | Optional body as for PUT (unsaved settings); sends one mail now: `{ ok, messageId, accepted, rejected, error }` |
@@ -840,6 +841,7 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 | `PUT` | `/api/process-priority` | Body `{ priorityClass: "below-normal"\|"normal"\|"above-normal"\|"high" }`; saves and applies to a running server |
 | `GET` | `/api/update-check` | `{ enabled, current, latest, available, url, checkedAt }` |
 | `PUT` | `/api/update-check` | Body `{ enabled }` |
+| `POST` | `/api/launch-script/preview` | Body `{ text, fileName? }` (64 KB max): `{ script, profile: { name, gamePath, executablePath, configFile, importedArgs, notes }, checks }`; creates nothing |
 
 `GET /api/pyrodeck/config` no longer returns `mail`, and `PUT /api/pyrodeck/config` ignores `mail`,
 `processPriority` and `updateCheck`: each has its own route.
@@ -1248,6 +1250,13 @@ emails, service mode and priority class). No `$` command or console output chang
 
 ### D.1 Engine facts (Matcen source, read 2026-10-07)
 
+- **Command line** (`Descent3/args.cpp`): a flag matches case-insensitively with any of the prefixes `-`, `--`, `+`
+  (`SkipArgPrefix` :91, `FindArg` :107-128); the first occurrence wins (scan from 1, :115); a value is the next argument.
+  At most 30 arguments of at most 100 bytes each (`args.h` :22-23, copied with `strncpy` at :83). `-d` (exact, lower case)
+  also names the server config (`FindArgChar("-dedicated", 'd')`, `dedicated_server.cpp` :322); the config is
+  `GameArgs[t + 1]` (:340). `+host` is `-useport` (`init.cpp` :1811-1814) and `+ip` is `-useip` (`networking.cpp`
+  :591-594). Read elsewhere: `-autoexec` (`dmfcbase.cpp` :4921), `-pxoport` (`init.cpp` :1819), `-gamespyport`
+  (`gamespy.cpp` :144), `-gspyfile` (:113), `-framecap` (`init.cpp` :1091), `-nomultibmp` (:1078), `-tempdir` (:1971).
 - **`$players`** (`dmfcinputcommand.cpp` :394) prints `PNum Name` then `%02d: %s` per connected, playing slot
   (`CheckPlayerNum`, `dmfcbase.cpp` :1801). On a dedicated server slot 0 is the server (`multi_server.cpp` :757, named
   `-Server-` at `dedicated_server.cpp` :301). Verified on the Matcen Debug build: an empty server answers
@@ -1301,6 +1310,18 @@ emails, service mode and priority class). No `$` command or console output chang
   version comparison with pre-release precedence. The link is the release's `html_url` only when it is under
   `https://github.com/<owner>/<repo>/releases/`. `pyrodeck.json` `updateCheck: { enabled (true) }`. While the repository
   is private the API answers 404 and no banner shows.
+
+### D.6 Import from a launch script (`ops/launchScript.ts`, `routes/launch-script.ts`)
+
+- Shell from the extension, else from the content. cmd: `^` continuations, `set` variables, `%~dp0`/`%CD%`, `cd /d`,
+  `pushd`, `start ["title"] [/d dir] [/min] [/high…]`, `call`. sh: `\` continuations, `NAME=value`, `$(dirname "$0")`,
+  `${0%/*}`, `cd`, `exec`, `nohup`, `env`, `nice`, `screen`, a command inside one quoted argument (tmux, `sh -c`).
+  Redirections and pipes are dropped.
+- The plan: game path = the directory changed to, else the program's, else the config's; config file = the
+  `-dedicated` value's name (it must be in the game path, Pyrodeck passes `-dedicated ./<cfg>`); `-autoexec` of the game
+  path's own `autoexec.dmfc` is dropped (Pyrodeck passes it); every other argument is kept verbatim on the profile as
+  `importedArgs`, shown in the Launch panel. The client creates the profile with `POST /api/profiles`
+  (`existingConfigFile`), so a config missing from the game path is refused there.
 
 ---
 

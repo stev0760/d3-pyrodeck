@@ -52,6 +52,8 @@ export interface ServerProfile {
   postStart?: PostStartSettings;
   /** Weekly start/stop windows. */
   schedule?: ProfileSchedule;
+  /** Launch flags from an imported script that the profile does not apply. */
+  importedArgs?: string[];
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -233,6 +235,7 @@ export function useLauncher() {
         description?: string | null;
         postStart?: PostStartSettings | null;
         schedule?: ProfileSchedule | null;
+        importedArgs?: string[] | null;
       },
     ): Promise<ServerProfile | null> => {
       setError(null);

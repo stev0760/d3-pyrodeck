@@ -41,6 +41,11 @@ export interface ServerProfile {
   postStart?: PostStartSettings;
   /** Weekly start/stop windows (ops/schedule.ts). Unset = no schedule. */
   schedule?: ProfileSchedule;
+  /**
+   * Launch flags read from an imported batch file or shell script that this
+   * profile does not apply, kept verbatim for the operator to see.
+   */
+  importedArgs?: string[];
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -263,6 +268,8 @@ export class ServerProfileManager {
       postStart?: PostStartSettings | null;
       /** Already validated; null clears the schedule. */
       schedule?: ProfileSchedule | null;
+      /** Already sanitized; null or [] clears them. */
+      importedArgs?: string[] | null;
     },
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
@@ -304,6 +311,13 @@ export class ServerProfileManager {
         delete profile.schedule;
       } else {
         profile.schedule = updates.schedule;
+      }
+    }
+    if (updates.importedArgs !== undefined) {
+      if (!updates.importedArgs || updates.importedArgs.length === 0) {
+        delete profile.importedArgs;
+      } else {
+        profile.importedArgs = updates.importedArgs;
       }
     }
 
@@ -369,6 +383,7 @@ export class ServerProfileManager {
     if (source.gamePath) profile.gamePath = source.gamePath;
     if (source.executablePath) profile.executablePath = source.executablePath;
     if (source.postStart) profile.postStart = { ...source.postStart };
+    if (source.importedArgs) profile.importedArgs = [...source.importedArgs];
 
     profiles.push(profile);
     await this.saveProfiles(profiles);

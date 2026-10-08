@@ -112,6 +112,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 - Weekly schedule per profile: start and stop windows by weekday and time (see Operations)
+- Import a profile from the `.bat`/`.sh` that launched an old server (see Operations)
 
 ### Responsive Layout
 - Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
@@ -196,6 +197,11 @@ tab.
   classes of the same names.
 - **Update notice.** Pyrodeck asks GitHub once a day for the latest release and shows a banner with a link when it is
   newer. It never downloads anything. A failed check (offline, rate limit) shows nothing. Turn it off in Settings.
+- **Import from a launch script.** In the Launch panel, **Import script**: paste or pick the batch file or shell script
+  that ran `Descent3 -dedicated <cfg> ...`. Pyrodeck reads its flags the way the engine does (any case, `-`, `--` or
+  `+`; the first one wins), shows where it found the game, program and config, and creates a profile linked to that
+  config. Flags a profile cannot hold yet (ports, frame cap, tracker files) are kept on the profile as "imported flags"
+  for reference. The config must already be in the game directory.
 
 ## Hosting mission downloads
 

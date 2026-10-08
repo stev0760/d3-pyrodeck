@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MissionHostSettings } from "./MissionHostSettings";
 import { ScheduleFields, EMPTY_SCHEDULE, describeNextAction } from "./ScheduleFields";
+import { LaunchScriptImport } from "./LaunchScriptImport";
 import { Separator } from "@/components/ui/separator";
 import { getJson, type ProfileSchedule, type ScheduleState } from "@/lib/ops";
 
@@ -21,7 +22,7 @@ const STATUS_COLORS: Record<string, string> = {
   crashed: "bg-destructive",
 };
 
-type PanelMode = "listing" | "creating" | "editing" | "confirming-delete";
+type PanelMode = "listing" | "creating" | "editing" | "importing" | "confirming-delete";
 
 interface PathFormState {
   name: string;
@@ -348,6 +349,25 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
     if (ok) setMode("listing");
   };
 
+  // ── Import from a launch script ───────────────────────────────────────────
+  if (mode === "importing") {
+    return (
+      <div className="space-y-3">
+        <LaunchScriptImport
+          createProfile={createProfile}
+          onCreated={(profile) => {
+            setSelectedProfileId(profile.id);
+            setMode("listing");
+          }}
+          onCancel={cancel}
+        />
+        {error && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded-md px-2 py-1.5 break-words">{error}</p>
+        )}
+      </div>
+    );
+  }
+
   // ── Delete confirmation ────────────────────────────────────────────────────
   if (mode === "confirming-delete") {
     return (
@@ -455,6 +475,14 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <Button onClick={startCreating} className="w-full font-score tracking-wide">
             + New Profile
           </Button>
+          <Button
+            variant="link"
+            size="xs"
+            onClick={() => setMode("importing")}
+            className="w-full px-0 text-muted-foreground"
+          >
+            Import from a launch script
+          </Button>
         </div>
       ) : (
         <div className="space-y-2">
@@ -503,6 +531,18 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
                 </div>
               ) : (
                 <p className="text-xs text-destructive">No executable — click Edit to configure.</p>
+              )}
+              {selectedProfile.importedArgs && selectedProfile.importedArgs.length > 0 && (
+                <div className="bg-muted rounded-md px-2 py-1 text-[10px] text-muted-foreground">
+                  Imported flags, not applied:{" "}
+                  <span className="font-mono text-foreground/80 break-all">{selectedProfile.importedArgs.join(" ")}</span>{" "}
+                  <button
+                    onClick={() => void updateProfile(selectedProfile.id, { importedArgs: null })}
+                    className="text-primary hover:underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -577,14 +617,24 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
             </p>
           )}
 
-          <Button
-            variant="link"
-            size="xs"
-            onClick={startCreating}
-            className="w-full px-0 text-muted-foreground"
-          >
-            + New Profile
-          </Button>
+          <div className="flex">
+            <Button
+              variant="link"
+              size="xs"
+              onClick={startCreating}
+              className="flex-1 px-0 text-muted-foreground"
+            >
+              + New Profile
+            </Button>
+            <Button
+              variant="link"
+              size="xs"
+              onClick={() => setMode("importing")}
+              className="flex-1 px-0 text-muted-foreground"
+            >
+              Import script
+            </Button>
+          </div>
         </div>
       )}
 

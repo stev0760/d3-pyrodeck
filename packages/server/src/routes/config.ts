@@ -17,6 +17,7 @@ import {
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { sanitizePostStart } from "../launcher/postStartSettings.js";
 import { validateSchedule } from "../ops/schedule.js";
+import { sanitizeImportedArgs } from "../ops/launchScript.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -137,6 +138,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       gamePath?: string;
       /** Override the global D3 executable for this profile. */
       executablePath?: string;
+      /** Launch flags from an imported script that the profile does not apply (shown to the operator). */
+      importedArgs?: unknown;
     };
 
     try {
@@ -158,6 +161,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
             executablePath: body.executablePath ?? null,
           });
         }
+        const importedArgs = sanitizeImportedArgs(body.importedArgs);
+        if (importedArgs) profile = await manager.update(profile.id, { importedArgs });
       } else {
         profile = await manager.create(
           body.name,
@@ -193,8 +198,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       executablePath?: string | null;
       postStart?: unknown;
       schedule?: unknown;
+      importedArgs?: unknown;
     };
-    const { postStart, schedule, ...rest } = body;
+    const { postStart, schedule, importedArgs, ...rest } = body;
     let validSchedule;
     if (schedule !== undefined && schedule !== null) {
       const check = validateSchedule(schedule);
@@ -208,6 +214,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       // Whitelisted values only; null or nothing valid clears the settings.
       ...(postStart !== undefined ? { postStart: sanitizePostStart(postStart) } : {}),
       ...(schedule !== undefined ? { schedule: validSchedule ?? null } : {}),
+      ...(importedArgs !== undefined ? { importedArgs: sanitizeImportedArgs(importedArgs) } : {}),
     };
 
     try {
