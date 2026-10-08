@@ -18,8 +18,10 @@ import {
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { sanitizePostStart } from "../launcher/postStartSettings.js";
 import {
+  consoleWarnings,
   effectivePorts,
   findPortConflicts,
+  localConsoleUseipNote,
   sanitizeStoredLaunchOptions,
   validateLaunchOptions,
   type ProfilePorts,
@@ -124,6 +126,19 @@ async function profilePorts(profile: ServerProfile): Promise<ProfilePorts> {
     }
   }
   return { name: profile.name, game: ports.game, gameSpy: ports.gameSpy, console: consolePort };
+}
+
+/** The console settings in a profile's config file, or null when it can't be read. */
+async function profileConsole(profile: ServerProfile): Promise<{ allowRemote: boolean; port: number } | null> {
+  const gamePath = profile.gamePath ?? pyrodeckConfig.get().gamePath;
+  if (!gamePath) return null;
+  try {
+    const cfg = await new ServerProfileManager(CONFIG_DIR, gamePath).readFile(profile.configFile);
+    const { allowRemote, port } = extractTelnetConfig(parseDedicatedCfg(cfg));
+    return { allowRemote, port };
+  } catch {
+    return null;
+  }
 }
 
 /** Ports `profile` shares with other profiles or with Pyrodeck's own listeners. */
@@ -304,7 +319,17 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
     }
-    if (launchOptions !== undefined) warnings.push(...(await portConflictWarnings(profile)));
+    if (launchOptions !== undefined) {
+      warnings.push(...(await portConflictWarnings(profile)));
+      // -useip decides where an AllowRemoteConsole=1 console listens, and
+      // older engines cannot be logged in to with -useip and 0.
+      const consoleCfg = await profileConsole(profile);
+      if (consoleCfg) {
+        warnings.push(
+          ...consoleWarnings(sanitizeStoredLaunchOptions(profile.launchOptions), consoleCfg.allowRemote, consoleCfg.port),
+        );
+      }
+    }
     return { ...profile, warnings };
   });
 
@@ -593,7 +618,12 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       await manager.writeFile(profile.configFile, cfgContent);
 
       // RemoteConsolePort lives here: check it against the other profiles.
-      return { ok: true, warnings: await portConflictWarnings(profile) };
+      // The form itself warns about AllowRemoteConsole=1; the -useip case
+      // needs the profile's launch options, which only the server has here.
+      const warnings = await portConflictWarnings(profile);
+      const note = localConsoleUseipNote(sanitizeStoredLaunchOptions(profile.launchOptions), data.allowRemoteConsole === true);
+      if (note) warnings.push(note);
+      return { ok: true, warnings };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to write config";
       return reply.status(400).send({ error: message });

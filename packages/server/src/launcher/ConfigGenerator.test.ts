@@ -7,6 +7,9 @@ import {
   generateMpsFile,
   parseBotRoster,
   generateBotRoster,
+  extractTelnetConfig,
+  generateDedicatedCfg,
+  PYRODECK_DEFAULTS,
 } from "./ConfigGenerator.js";
 
 // ---------------------------------------------------------------------------
@@ -324,5 +327,39 @@ describe("generateBotRoster", () => {
     expect(reparsed.defaultDifficulty).toBe("rookie");
     expect(reparsed.bots[0].name).toBe("Alpha");
     expect(reparsed.bots[1].difficulty).toBe("insane");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Remote console settings
+// ---------------------------------------------------------------------------
+
+describe("remote console settings", () => {
+  it("reads AllowRemoteConsole as the engine does: 1 is remote, 0 or absent is local only", () => {
+    const remote = extractTelnetConfig(parseDedicatedCfg("AllowRemoteConsole=1\nRemoteConsolePort=2106\nConsolePassword=pw\n"));
+    expect(remote).toEqual({ allowRemote: true, port: 2106, password: "pw" });
+    expect(extractTelnetConfig(parseDedicatedCfg("AllowRemoteConsole=0\nConsolePassword=pw\n"))).toEqual({
+      allowRemote: false,
+      port: 2092,
+      password: "pw",
+    });
+    expect(extractTelnetConfig(parseDedicatedCfg("ConsolePassword=pw\n")).allowRemote).toBe(false);
+  });
+
+  it("generates new configs with a local-only console, a port and a password", () => {
+    const cfg = generateDedicatedCfg({ remoteConsolePort: 2106 });
+    expect(cfg).toContain("AllowRemoteConsole=0\n");
+    expect(cfg).toContain("RemoteConsolePort=2106\n");
+    const telnet = extractTelnetConfig(parseDedicatedCfg(cfg));
+    expect(telnet.allowRemote).toBe(false);
+    expect(telnet.password).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("still writes AllowRemoteConsole=1 when asked", () => {
+    expect(generateDedicatedCfg({ allowRemoteConsole: true })).toContain("AllowRemoteConsole=1\n");
+  });
+
+  it("recommends a local-only console for new structured configs", () => {
+    expect(PYRODECK_DEFAULTS.allowRemoteConsole).toBe(false);
   });
 });

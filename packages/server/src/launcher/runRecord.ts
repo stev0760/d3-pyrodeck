@@ -21,6 +21,11 @@ export interface RunRecord {
   telnetPort: number;
   /** The profile's launch options; -useip decides where the console listens. */
   launchOptions?: LaunchOptions | null;
+  /**
+   * AllowRemoteConsole=1 at launch (with 0 the console is on 127.0.0.1).
+   * Absent in records written before 0.5.1, whose launches all had 1.
+   */
+  allowRemoteConsole?: boolean;
   /** ISO time Pyrodeck spawned the process. */
   startedAt: string;
   /**

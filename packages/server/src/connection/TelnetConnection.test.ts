@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import net from "node:net";
+import type { AddressInfo } from "node:net";
 import { TelnetConnection } from "./TelnetConnection.js";
 
 // Test the echo stripping logic by accessing it through a subclass
@@ -87,5 +89,41 @@ describe("TelnetConnection color-code stripping", () => {
     const r2 = conn.testStripColors(Buffer.concat([r1.carry, chunk2]));
     expect(r2.cleaned.toString("utf-8")).toBe("B");
     expect(r2.carry.length).toBe(0);
+  });
+});
+
+describe("TelnetConnection login refusals", () => {
+  /** A console stand-in on 127.0.0.1 that handles each connection with `onConnection`. */
+  async function withConsole(onConnection: (socket: net.Socket) => void, run: (port: number) => Promise<void>): Promise<void> {
+    const server = net.createServer(onConnection);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await run((server.address() as AddressInfo).port);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it("says the server closed before the prompt when it refuses the peer (AllowRemoteConsole=0)", async () => {
+    await withConsole(
+      (socket) => socket.end(),
+      async (port) => {
+        await expect(new TelnetConnection().connect("127.0.0.1", port, "pw")).rejects.toThrow(
+          /closed the connection before asking for the password/,
+        );
+      },
+    );
+  });
+
+  it("says authentication failed when it closes after the password", async () => {
+    await withConsole(
+      (socket) => {
+        socket.write("Enter server password: ");
+        socket.once("data", () => socket.end());
+      },
+      async (port) => {
+        await expect(new TelnetConnection().connect("127.0.0.1", port, "wrong")).rejects.toThrow(/^Authentication failed/);
+      },
+    );
   });
 });

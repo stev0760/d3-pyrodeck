@@ -27,7 +27,13 @@ import {
 } from "../launcher/playlistInstance.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
-import { consoleHostFor, sanitizeStoredLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
+import {
+  consoleHostFor,
+  consoleWarnings,
+  localConsoleUseipNote,
+  sanitizeStoredLaunchOptions,
+  type LaunchOptions,
+} from "../launcher/launchOptions.js";
 import { buildTeamSettingLines, sanitizeStoredTeamSettings } from "../launcher/teamSettings.js";
 import { ProfileAutomation } from "../launcher/profileAutomation.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
@@ -112,6 +118,7 @@ serverEvents.onEvent("server.started", ({ pid, args }) => {
       logPath: config.logPath ?? null,
       telnetPort: config.telnetPort,
       launchOptions: config.launchOptions ?? null,
+      allowRemoteConsole: config.allowRemoteConsole ?? true,
       startedAt: (status.startedAt ?? new Date()).toISOString(),
       ...(linux ? { linux: { startTicks: linux.startTicks, bootId: linux.bootId } } : {}),
     };
@@ -272,11 +279,23 @@ interface ConsoleConnectOptions {
 }
 
 /**
- * The name to log in to the launched console with: a server started with
- * -useip listens on that address only (ProcessManager.consoleHost).
+ * The address to log in to the launched console at (ProcessManager.consoleHost):
+ * 127.0.0.1, which an AllowRemoteConsole=0 console accepts and nothing else,
+ * or the -useip address of an AllowRemoteConsole=1 console.
  */
 function consoleHostName(host: string | undefined): string {
-  return host && host !== "127.0.0.1" ? host : "localhost";
+  return host || "127.0.0.1";
+}
+
+/**
+ * Say in Pyrodeck's log what the launched profile's console exposes
+ * (launchOptions.ts consoleWarnings): an AllowRemoteConsole=1 console is open
+ * to the network, and the -useip case older engines cannot log in to.
+ */
+function logConsoleWarnings(configFile: string, launch: Pick<LaunchConfig, "launchOptions" | "allowRemoteConsole" | "telnetPort">): void {
+  for (const w of consoleWarnings(launch.launchOptions, launch.allowRemoteConsole ?? true, launch.telnetPort)) {
+    console.warn(`[Pyrodeck] ${configFile}: ${w}`);
+  }
 }
 
 /** Log in to the launched server's remote console and make it the active session. */
@@ -364,7 +383,9 @@ async function connectConsole(
 
     console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const launch = processManager.getLaunchConfig();
+    const note = launch ? localConsoleUseipNote(launch.launchOptions, launch.allowRemoteConsole ?? true) : null;
+    const message = `${err instanceof Error ? err.message : String(err)}${note ? ` ${note}` : ""}`;
     console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
     if (again) throw err;
     wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
@@ -595,9 +616,9 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
     const cfgPath = path.join(gamePath, activeProfile.configFile);
     const cfgContent = await fs.readFile(cfgPath, "utf-8");
     const telnetCfg = extractTelnetConfig(parseDedicatedCfg(cfgContent));
-    if (!telnetCfg.enabled || !telnetCfg.password) {
+    if (!telnetCfg.password) {
       pauseAfterFailedRotation(
-        `${activeProfile.configFile} has no remote console (AllowRemoteConsole=1 and ConsolePassword are required), so Pyrodeck cannot restart and watch the server`,
+        `${activeProfile.configFile} has no ConsolePassword, so Pyrodeck cannot log in to the console to restart and watch the server`,
         entry.label,
       );
       return;
@@ -630,11 +651,13 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         logPath,
         telnetPort: telnetCfg.port,
         telnetPassword: telnetCfg.password,
+        allowRemoteConsole: telnetCfg.allowRemote,
         profileId: activeProfile.id,
         launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
         autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(activeProfile.teamSettings)),
       },
     };
+    logConsoleWarnings(activeProfile.configFile, currentRotationLaunch.launch);
     rotationHealth.begin();
     const token = rotationHealth.token();
     broadcastPlaylistStatus();
@@ -918,9 +941,10 @@ async function reattachToRunningServer(): Promise<void> {
     return;
   }
 
-  // A server started with -useip has its console on that address only.
+  // 127.0.0.1, or the -useip address of a console that takes remote connections.
   const launchOptions = sanitizeStoredLaunchOptions(record.launchOptions);
-  const host = consoleHostName(consoleHostFor(launchOptions) ?? undefined);
+  const allowRemoteConsole = record.allowRemoteConsole ?? true;
+  const host = consoleHostName(consoleHostFor(launchOptions, allowRemoteConsole) ?? undefined);
 
   if (process.platform !== "linux") {
     // Only "a process with this PID is alive" is known here; prove it is the
@@ -947,6 +971,7 @@ async function reattachToRunningServer(): Promise<void> {
     logPath: record.logPath ?? undefined,
     telnetPort: record.telnetPort,
     telnetPassword: password,
+    allowRemoteConsole,
     profileId: record.profileId ?? undefined,
     launchOptions,
   };
@@ -1017,30 +1042,23 @@ export async function startServer(opts: { profileId?: string; reason: "manual" |
 
   const cfgPath = path.join(gamePath, configFile);
 
-  // Parse the config file for the telnet port/password. Both are always set
-  // from the parsed config below before use (every other path returns), so
-  // they're declared without a dead initializer.
+  // Parse the config file for the console port, password and
+  // AllowRemoteConsole. They are always set from the parsed config below
+  // before use (every other path returns), so they're declared without a dead
+  // initializer. Either AllowRemoteConsole works for a server launched here:
+  // with 0 Pyrodeck logs in on 127.0.0.1.
   let telnetPort: number;
   let telnetPassword: string;
+  let allowRemoteConsole: boolean;
 
   try {
     const cfgContent = await fs.readFile(cfgPath, "utf-8");
     const entries = parseDedicatedCfg(cfgContent);
     const telnetCfg = extractTelnetConfig(entries);
 
-    if (!telnetCfg.enabled) {
-      return {
-        ok: false,
-        code: 400,
-        error:
-          "AllowRemoteConsole is not enabled in " +
-          configFile +
-          ". Pyrodeck requires remote console access.",
-      };
-    }
-
     telnetPort = telnetCfg.port;
     telnetPassword = telnetCfg.password ?? "";
+    allowRemoteConsole = telnetCfg.allowRemote;
   } catch {
     return {
       ok: false,
@@ -1120,6 +1138,8 @@ export async function startServer(opts: { profileId?: string; reason: "manual" |
     }
   }
 
+  logConsoleWarnings(configFile, { launchOptions, allowRemoteConsole, telnetPort });
+
   // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
   registerAutoConnect(telnetPassword);
 
@@ -1133,6 +1153,7 @@ export async function startServer(opts: { profileId?: string; reason: "manual" |
         logPath,
         telnetPort,
         telnetPassword,
+        allowRemoteConsole,
         profileId: opts.profileId,
         launchOptions,
         autoexecBlock,

@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   consoleHostFor,
+  consoleWarnings,
   effectivePorts,
   findPortConflicts,
   launchOptionArgs,
+  localConsoleUseipNote,
   sanitizeStoredLaunchOptions,
   validateLaunchOptions,
 } from "./launchOptions.js";
@@ -112,10 +114,16 @@ describe("launchOptionArgs", () => {
 });
 
 describe("consoleHostFor and effectivePorts", () => {
-  it("follows -useip, except the wildcard", () => {
-    expect(consoleHostFor({ bindIp: "192.168.0.103" })).toBe("192.168.0.103");
-    expect(consoleHostFor({ bindIp: "0.0.0.0" })).toBeNull();
-    expect(consoleHostFor(null)).toBeNull();
+  it("follows -useip for an AllowRemoteConsole=1 console, except the wildcard", () => {
+    expect(consoleHostFor({ bindIp: "192.168.0.103" }, true)).toBe("192.168.0.103");
+    expect(consoleHostFor({ bindIp: "0.0.0.0" }, true)).toBeNull();
+    expect(consoleHostFor(null, true)).toBeNull();
+  });
+
+  it("uses 127.0.0.1 for an AllowRemoteConsole=0 console whatever -useip says", () => {
+    expect(consoleHostFor({ bindIp: "203.0.113.7" }, false)).toBeNull();
+    expect(consoleHostFor({ bindIp: "192.168.0.103" }, false)).toBeNull();
+    expect(consoleHostFor(null, false)).toBeNull();
   });
 
   it("falls back to the engine's default ports", () => {
@@ -154,5 +162,36 @@ describe("findPortConflicts", () => {
       [],
     );
     expect(findPortConflicts(self, [], [{ name: "mission host", port: 2106 }])[0]).toMatch(/mission host port/);
+  });
+});
+
+describe("console warnings", () => {
+  it("warns that an AllowRemoteConsole=1 console is open to the network, with its port", () => {
+    const warnings = consoleWarnings(null, true, 2106);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/AllowRemoteConsole=1/);
+    expect(warnings[0]).toMatch(/TCP port 2106/);
+    expect(warnings[0]).toMatch(/firewall/);
+    expect(consoleWarnings({ bindIp: "203.0.113.7" }, true, 2092)).toHaveLength(1);
+  });
+
+  it("says nothing for the recommended AllowRemoteConsole=0 without -useip", () => {
+    expect(consoleWarnings(null, false, 2092)).toEqual([]);
+    expect(consoleWarnings({ bindIp: "0.0.0.0" }, false, 2092)).toEqual([]);
+    expect(consoleWarnings({ gamePort: 2116 }, false, 2092)).toEqual([]);
+  });
+
+  it("explains AllowRemoteConsole=0 with -useip: fine on Matcen 0.10.8+, no login on older engines", () => {
+    const note = localConsoleUseipNote({ bindIp: "203.0.113.7" }, false);
+    expect(note).toMatch(/203\.0\.113\.7/);
+    expect(note).toMatch(/Matcen 0\.10\.8/);
+    expect(note).toMatch(/accept only 127\.0\.0\.1/);
+    expect(consoleWarnings({ bindIp: "203.0.113.7" }, false, 2092)).toEqual([note]);
+  });
+
+  it("has no -useip note for AllowRemoteConsole=1 or a loopback bind address", () => {
+    expect(localConsoleUseipNote({ bindIp: "203.0.113.7" }, true)).toBeNull();
+    expect(localConsoleUseipNote({ bindIp: "127.0.0.1" }, false)).toBeNull();
+    expect(localConsoleUseipNote(null, false)).toBeNull();
   });
 });

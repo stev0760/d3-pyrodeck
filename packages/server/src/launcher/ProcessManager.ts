@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { NO_PROFILE_ID, serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
-import { consoleHostFor, launchOptionArgs, type LaunchOptions } from "./launchOptions.js";
+import { consoleHostFor, launchOptionArgs, localConsoleUseipNote, type LaunchOptions } from "./launchOptions.js";
 import { syncAutoexecBlock } from "./autoexecBlock.js";
 
 /** Who started the process (carried on `server.started`). */
@@ -104,6 +104,12 @@ export interface LaunchConfig {
   logPath?: string;
   telnetPort: number;
   telnetPassword: string;
+  /**
+   * AllowRemoteConsole=1 in the config. Unset reads as 1, the only setting
+   * Pyrodeck launched with before 0.5.1. With 0 the console is reached on
+   * 127.0.0.1 whatever -useip says (launchOptions.ts consoleHostFor).
+   */
+  allowRemoteConsole?: boolean;
 }
 
 /** DMFC startup script: the Config tab's "Startup Commands", kept in the game directory. */
@@ -213,7 +219,7 @@ const CONSOLE_QUIT_WINDOW_MS = 30_000;
  *   stateChange(state: ProcessState)
  *   stdout(data: string)
  *   stderr(data: string)
- *   telnetReady(port: number, host: string)  — host: where the console listens (-useip, else 127.0.0.1)
+ *   telnetReady(port: number, host: string)  — host: where to reach the console (consoleHost())
  *   exit(code: number | null, signal: string | null)
  *   logWarning(message: string)  — logging failed; server runs but output isn't saved
  */
@@ -506,9 +512,13 @@ export class ProcessManager extends EventEmitter {
     this.startTelnetProbe(config.telnetPort, this.consoleHost());
   }
 
-  /** Where the launched server's console listens: its -useip address, else loopback. */
+  /**
+   * Where to reach the launched server's console: 127.0.0.1, or the -useip
+   * address of a server whose console takes remote connections.
+   */
   consoleHost(): string {
-    return consoleHostFor(this.launchConfig?.launchOptions) ?? "127.0.0.1";
+    const config = this.launchConfig;
+    return consoleHostFor(config?.launchOptions, config?.allowRemoteConsole ?? true) ?? "127.0.0.1";
   }
 
   /**
@@ -830,9 +840,12 @@ export class ProcessManager extends EventEmitter {
 
       if (Date.now() - startTime > TELNET_PROBE_TIMEOUT_MS) {
         this.stopTelnetProbe();
+        const config = this.launchConfig;
+        const note = localConsoleUseipNote(config?.launchOptions, config?.allowRemoteConsole ?? true);
         this.emit(
           "stderr",
-          `Telnet readiness probe timed out after ${TELNET_PROBE_TIMEOUT_MS / 1000}s. Server may not have remote console enabled.\n`,
+          `Telnet readiness probe timed out after ${TELNET_PROBE_TIMEOUT_MS / 1000}s: nothing answered on the ` +
+            `console port ${host}:${port}.${note ? ` ${note}` : ""}\n`,
         );
         return;
       }

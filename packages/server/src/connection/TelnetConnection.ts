@@ -171,7 +171,15 @@ export class TelnetConnection implements ServerConnection {
 
       const onClose = () => {
         cleanup();
-        reject(new Error("Authentication failed — server closed connection"));
+        // Closed before the prompt: the engine refused the peer itself (an
+        // AllowRemoteConsole=0 console takes 127.0.0.1 only), not the password.
+        reject(
+          new Error(
+            passwordSent
+              ? "Authentication failed — server closed connection"
+              : "The server closed the connection before asking for the password",
+          ),
+        );
       };
 
       const cleanup = () => {

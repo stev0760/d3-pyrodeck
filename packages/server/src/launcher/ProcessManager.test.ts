@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs, survivableCommand } from "./ProcessManager.js";
+import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs, survivableCommand, type LaunchConfig } from "./ProcessManager.js";
 import { readProcessFacts } from "./runRecord.js";
 import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
 import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END } from "./autoexecBlock.js";
@@ -323,7 +323,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => 
   });
 
   /** A server some earlier Pyrodeck started: not this ProcessManager's child. */
-  const adoptOutsideServer = () => {
+  const adoptOutsideServer = (extra: Partial<LaunchConfig> = {}) => {
     outside = spawn(exe, [], { stdio: "ignore", detached: true });
     const pid = outside.pid!;
     pm.adopt({
@@ -337,6 +337,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => 
         telnetPort: UNUSED_PORT,
         telnetPassword: "x",
         profileId: "p1",
+        ...extra,
       },
       isAlive: async () => (await readProcessFacts(pid)).alive,
     });
@@ -364,6 +365,21 @@ describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => 
     const ready = new Promise<number>((resolve) => pm.once("telnetReady", resolve));
     adoptOutsideServer();
     expect(await ready).toBe(UNUSED_PORT);
+  });
+
+  it("logs in to an AllowRemoteConsole=0 console on 127.0.0.1, whatever -useip says", async () => {
+    const ready = new Promise<string>((resolve) => pm.once("telnetReady", (_port: number, host: string) => resolve(host)));
+    adoptOutsideServer({ launchOptions: { bindIp: "203.0.113.7" }, allowRemoteConsole: false });
+    expect(pm.consoleHost()).toBe("127.0.0.1");
+    expect(await ready).toBe("127.0.0.1");
+  });
+
+  it("logs in to an AllowRemoteConsole=1 console at its -useip address (also when the setting is unrecorded)", async () => {
+    adoptOutsideServer({ launchOptions: { bindIp: "203.0.113.7" }, allowRemoteConsole: true });
+    expect(pm.consoleHost()).toBe("203.0.113.7");
+    await pm.stop();
+    adoptOutsideServer({ launchOptions: { bindIp: "203.0.113.7" } });
+    expect(pm.consoleHost()).toBe("203.0.113.7");
   });
 });
 

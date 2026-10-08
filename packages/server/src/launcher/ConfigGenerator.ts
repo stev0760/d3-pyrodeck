@@ -64,9 +64,15 @@ export function getCfgValues(
 /**
  * Extract telnet connection info from a parsed config.
  * Used by ProcessManager to auto-connect after launching.
+ *
+ * The engine always opens its console; a ConsolePassword is what makes it
+ * usable. `allowRemote` is AllowRemoteConsole=1: connections from other
+ * machines are accepted (Connect mode from elsewhere needs it). With 0, the
+ * engine's default, only 127.0.0.1 gets in, which is all Pyrodeck needs for a
+ * server it launches on this machine (launchOptions.ts consoleHostFor).
  */
 export function extractTelnetConfig(entries: DedicatedCfgEntry[]): {
-  enabled: boolean;
+  allowRemote: boolean;
   port: number;
   password: string | undefined;
 } {
@@ -75,7 +81,7 @@ export function extractTelnetConfig(entries: DedicatedCfgEntry[]): {
   const password = getCfgValue(entries, "ConsolePassword");
 
   return {
-    enabled: allowRemote === "1",
+    allowRemote: allowRemote?.trim() === "1",
     port: port ? parseInt(port, 10) : 2092,
     password,
   };
@@ -245,7 +251,8 @@ const D3_DEFAULTS: DedicatedCfgData = {
 /** Pyrodeck-recommended defaults for new server configs. */
 export const PYRODECK_DEFAULTS: Partial<DedicatedCfgData> = {
   pps: 20,
-  allowRemoteConsole: true,
+  // Console on this machine only; Pyrodeck needs no more for a server it launches.
+  allowRemoteConsole: false,
   remoteConsolePort: 2092,
   randomizeRespawn: true,
   disallowedPowerups: ["Guided", "4PackGuided"],
@@ -512,6 +519,8 @@ export interface DedicatedCfgDefaults {
   killGoal?: number;
   consolePassword?: string;
   remoteConsolePort?: number;
+  /** AllowRemoteConsole=1: accept console connections from other machines. Default off. */
+  allowRemoteConsole?: boolean;
 }
 
 /**
@@ -522,7 +531,9 @@ export interface DedicatedCfgDefaults {
  * - Key=Value syntax, one per line (no comments — D3 only strips ; and # in some parsers)
  * - Key casing must match CVar registration (e.g. Scriptname not ScriptName)
  * - ConnectionName is required for network mode
- * - AllowRemoteConsole=1 is required for Pyrodeck telnet access
+ * - ConsolePassword is what Pyrodeck logs in with. AllowRemoteConsole=0 keeps
+ *   the console to connections from 127.0.0.1, all Pyrodeck needs for a server
+ *   it launches here; set 1 only for Connect mode from another machine.
  */
 export function generateDedicatedCfg(
   opts: DedicatedCfgDefaults = {},
@@ -541,7 +552,7 @@ export function generateDedicatedCfg(
     `PPS=${opts.pps ?? 20}`,
     `Timelimit=${opts.timeLimit ?? 0}`,
     `Killgoal=${opts.killGoal ?? 0}`,
-    `AllowRemoteConsole=1`,
+    `AllowRemoteConsole=${opts.allowRemoteConsole ? 1 : 0}`,
     `RemoteConsolePort=${port}`,
     `ConsolePassword=${password}`,
   ];

@@ -176,13 +176,62 @@ export function launchOptionArgs(options: LaunchOptions | null | undefined): str
 }
 
 /**
- * The address the remote console listens on: with -useip it binds that
- * address only (dedicated_server.cpp:1441-1443), so a connection to the
- * loopback address would be refused. Null means the usual local address.
+ * The address Pyrodeck reaches the launched server's remote console at, or
+ * null for 127.0.0.1. From dedicated_server.cpp (InitDedicatedSocket,
+ * ListenDedicatedSocket):
+ *
+ * - AllowRemoteConsole=0 (the engine's default): every engine (retail 1.4,
+ *   upstream, Matcen) accepts console connections from 127.0.0.1 only, and
+ *   Matcen 0.10.8+ also listens on 127.0.0.1 only. Pyrodeck connects to
+ *   127.0.0.1 whatever -useip says (see localConsoleUseipNote for the older
+ *   engines that listen on the -useip address instead).
+ * - AllowRemoteConsole=1: the console listens on nw_GetThisIP(), the -useip
+ *   address when one is given (else every interface), so with -useip a
+ *   connection to the loopback address would be refused.
  */
-export function consoleHostFor(options: LaunchOptions | null | undefined): string | null {
+export function consoleHostFor(options: LaunchOptions | null | undefined, allowRemoteConsole: boolean): string | null {
+  if (!allowRemoteConsole) return null;
   const ip = options?.bindIp;
   return ip && ip !== "0.0.0.0" ? ip : null;
+}
+
+/**
+ * AllowRemoteConsole=0 with -useip on an engine older than Matcen 0.10.8:
+ * the console listens on the -useip address only, but accepts 127.0.0.1
+ * only, so no local connection gets in (one to the -useip address comes
+ * from that address). Pyrodeck cannot tell the engine apart before it logs
+ * in, so it says this wherever the combination is saved, launched or fails.
+ */
+export function localConsoleUseipNote(options: LaunchOptions | null | undefined, allowRemoteConsole: boolean): string | null {
+  const bind = consoleHostFor(options, true);
+  if (allowRemoteConsole || !bind || bind === "127.0.0.1") return null;
+  return (
+    `AllowRemoteConsole=0 with bind address ${bind} (-useip): Matcen 0.10.8 and later keep the console on ` +
+    `127.0.0.1, where Pyrodeck logs in. Older engines (retail 1.4, upstream Descent 3, Matcen before 0.10.8) ` +
+    `put it on ${bind} but accept only 127.0.0.1, so Pyrodeck cannot log in to them; on those, clear the bind ` +
+    "address, or set AllowRemoteConsole=1 and keep the console port closed in the firewall."
+  );
+}
+
+/**
+ * What to tell the operator about a profile's console: that an
+ * AllowRemoteConsole=1 console is open to the network, or the -useip case
+ * above. Empty for the recommended AllowRemoteConsole=0.
+ */
+export function consoleWarnings(
+  options: LaunchOptions | null | undefined,
+  allowRemoteConsole: boolean,
+  consolePort: number,
+): string[] {
+  if (allowRemoteConsole) {
+    return [
+      `AllowRemoteConsole=1: the server's console (TCP port ${consolePort}, password sent in clear) is reachable ` +
+        "from the network; firewall it. Pyrodeck on this machine does not need it; only Connect mode from " +
+        "another machine does.",
+    ];
+  }
+  const note = localConsoleUseipNote(options, allowRemoteConsole);
+  return note ? [note] : [];
 }
 
 export interface EffectivePorts {

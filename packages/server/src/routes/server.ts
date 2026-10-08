@@ -8,6 +8,7 @@ import {
 import { SessionManager } from "../session/SessionManager.js";
 import { probeCapabilities } from "../session/probeCapabilities.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
+import { isLoopbackName } from "../middleware/requestSource.js";
 
 export const sessionManager = new SessionManager();
 export const responseParser = new ResponseParser();
@@ -89,7 +90,14 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
       };
     } catch (err) {
       sessionManager.remove(session.id);
-      const message = err instanceof Error ? err.message : String(err);
+      let message = err instanceof Error ? err.message : String(err);
+      // A refused, silent or prompt-less console on another machine is most
+      // often one that takes local connections only.
+      if (!isLoopbackName(host) && !message.startsWith("Authentication failed")) {
+        message +=
+          ". A server on another machine needs AllowRemoteConsole=1 in its dedicated.cfg and its console port " +
+          "open to this machine; with AllowRemoteConsole=0 its console takes connections from its own machine only.";
+      }
       return reply.status(502).send({ error: message });
     }
   });

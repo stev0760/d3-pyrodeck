@@ -116,6 +116,12 @@ export function ConnectionForm({
             />
           </div>
 
+          <p className="text-xs text-muted-foreground">
+            A server on another machine needs <span className="font-mono">AllowRemoteConsole=1</span> in its
+            dedicated.cfg. With <span className="font-mono">AllowRemoteConsole=0</span> its console takes connections
+            from its own machine only (host 127.0.0.1).
+          </p>
+
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <Button

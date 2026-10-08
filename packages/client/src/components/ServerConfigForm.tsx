@@ -759,44 +759,55 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
           </div>
         </Section>
 
-        {/* Remote Console */}
+        {/* Remote Console: Pyrodeck logs in with the port and password. */}
         <Section title="Remote Console">
-          <Toggle
-            checked={data.allowRemoteConsole}
-            onChange={(v) => update({ allowRemoteConsole: v })}
-            label="Allow remote console (required for Pyrodeck)"
-          />
-          {data.allowRemoteConsole && (
-            <Row>
-              <Field label="Port">
-                <NumberInput
-                  value={data.remoteConsolePort}
-                  onChange={(v) =>
-                    update({ remoteConsolePort: Math.min(65535, Math.max(1, v)) })
-                  }
-                  min={1}
-                  max={65535}
+          <Row>
+            <Field label="Port">
+              <NumberInput
+                value={data.remoteConsolePort}
+                onChange={(v) =>
+                  update({ remoteConsolePort: Math.min(65535, Math.max(1, v)) })
+                }
+                min={1}
+                max={65535}
+              />
+            </Field>
+            <Field label="Password">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={data.consolePassword}
+                  onChange={(e) => update({ consolePassword: e.target.value })}
+                  className="flex-1 px-2 py-1.5 bg-background border border-border rounded text-sm font-mono text-foreground/90 focus:outline-none focus:ring-1 focus:ring-ring"
                 />
-              </Field>
-              <Field label="Password">
-                <div className="flex gap-1">
-                  <input
-                    type="text"
-                    value={data.consolePassword}
-                    onChange={(e) => update({ consolePassword: e.target.value })}
-                    className="flex-1 px-2 py-1.5 bg-background border border-border rounded text-sm font-mono text-foreground/90 focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <button
-                    onClick={() => update({ consolePassword: randomPassword() })}
-                    className="px-2 py-1 text-xs font-score tracking-wide text-muted-foreground hover:text-foreground/80 border border-border rounded hover:bg-muted transition-colors"
-                    title="Generate random password"
-                  >
-                    Gen
-                  </button>
-                </div>
-              </Field>
-            </Row>
-          )}
+                <button
+                  onClick={() => update({ consolePassword: randomPassword() })}
+                  className="px-2 py-1 text-xs font-score tracking-wide text-muted-foreground hover:text-foreground/80 border border-border rounded hover:bg-muted transition-colors"
+                  title="Generate random password"
+                >
+                  Gen
+                </button>
+              </div>
+            </Field>
+          </Row>
+          <div className="mt-2 space-y-1">
+            <Toggle
+              checked={data.allowRemoteConsole}
+              onChange={(v) => update({ allowRemoteConsole: v })}
+              label="Accept console connections from other machines (AllowRemoteConsole)"
+            />
+            {data.allowRemoteConsole ? (
+              <p className="text-[11px] text-amber-400">
+                The console is reachable from the network (plain TCP, password sent in clear); firewall port{" "}
+                {data.remoteConsolePort}. Only Connect mode from another machine needs this.
+              </p>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                The console takes connections from this machine only, which is all Pyrodeck needs to run a server it
+                launches here. Turn this on only to connect from Pyrodeck on another machine.
+              </p>
+            )}
+          </div>
         </Section>
 
         {/* Ships */}
