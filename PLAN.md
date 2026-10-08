@@ -378,7 +378,7 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels)
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [ ] IP access control UI (hosts.allow/deny editor + `$rehash`)
-- [ ] Scheduled auto-commands (D3Server3-style: run command every N minutes)
+- [x] Scheduled auto-commands (D3Server3-style: run command every N minutes) — per-profile Periodic Commands (start lines + every N minutes; in order, random or all)
 - [ ] Dark/light theme toggle
 - [ ] Multi-server UI (tabs or sidebar, multiple D3 instances)
 - [ ] Player list sorting/filtering

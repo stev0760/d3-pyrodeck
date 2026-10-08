@@ -58,6 +58,15 @@ export interface TeamSettings {
   hoardMinOrbs?: number;
 }
 
+/** Console lines at start and every N minutes (server: launcher/periodicCommands.ts). */
+export interface PeriodicCommandSettings {
+  enabled: boolean;
+  startLines: string[];
+  lines: string[];
+  intervalMinutes: number;
+  mode: "all" | "sequential" | "random";
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -71,6 +80,7 @@ export interface ServerProfile {
   postStart?: PostStartSettings;
   launchOptions?: LaunchOptions;
   teamSettings?: TeamSettings;
+  periodicCommands?: PeriodicCommandSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -80,6 +90,7 @@ export interface ProfileSettingsPayload {
   postStart?: PostStartSettings | null;
   launchOptions?: Record<string, string | number | boolean> | null;
   teamSettings?: Record<string, unknown> | null;
+  periodicCommands?: Record<string, unknown> | null;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */

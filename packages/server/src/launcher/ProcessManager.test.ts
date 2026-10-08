@@ -5,6 +5,7 @@ import path from "node:path";
 import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
 import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
 import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END } from "./autoexecBlock.js";
+import { serverEvents, type ServerEventMap } from "../events/ServerEvents.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -180,6 +181,36 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
     await expect
       .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
       .toContain(`-autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
+  });
+
+  it("reports a profile launch as server.started with its pid, args and reason", async () => {
+    const seen: ServerEventMap["server.started"][] = [];
+    const listener = (e: ServerEventMap["server.started"]) => seen.push(e);
+    serverEvents.onEvent("server.started", listener);
+    try {
+      await launch(undefined); // no profile: not reported
+      await pm.stop();
+      await pm.start({
+        executablePath: exe,
+        gamePath: dir,
+        configFile: "server.cfg",
+        telnetPort: UNUSED_PORT,
+        telnetPassword: "x",
+        profileId: "p1",
+        launchOptions: { gamePort: 2116 },
+        reason: "playlist",
+      });
+      expect(seen).toEqual([
+        {
+          profileId: "p1",
+          pid: pm.getStatus().pid,
+          args: ["-dedicated", "./server.cfg", "-useport", "2116"],
+          reason: "playlist",
+        },
+      ]);
+    } finally {
+      serverEvents.offEvent("server.started", listener);
+    }
   });
 
   it("reports no log at all as state none", async () => {

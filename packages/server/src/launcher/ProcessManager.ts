@@ -3,6 +3,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { serverEvents, type ServerEventMap } from "../events/ServerEvents.js";
 import { consoleHostFor, launchOptionArgs, type LaunchOptions } from "./launchOptions.js";
 import { syncAutoexecBlock } from "./autoexecBlock.js";
 
@@ -63,6 +64,8 @@ export interface LaunchConfig {
    * the file alone.
    */
   autoexecBlock?: string[];
+  /** Why this process starts, reported with `server.started`. Default "manual". */
+  reason?: ServerEventMap["server.started"]["reason"];
   /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
   profileId?: string;
   /** Optional path to write server log file. If set, stdout/stderr are written here. */
@@ -256,6 +259,15 @@ export class ProcessManager extends EventEmitter {
     this.status.exitSignal = null;
     this.status.stoppedAt = null;
     this.status.activeProfileId = config.profileId ?? null;
+
+    if (config.profileId && this.child.pid !== undefined) {
+      serverEvents.emitEvent("server.started", {
+        profileId: config.profileId,
+        pid: this.child.pid,
+        args,
+        reason: config.reason ?? "manual",
+      });
+    }
 
     // Open log file if configured
     this.logPath = config.logPath ?? null;

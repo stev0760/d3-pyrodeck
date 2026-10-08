@@ -25,6 +25,7 @@ import {
   type ProfilePorts,
 } from "../launcher/launchOptions.js";
 import { validateTeamSettings } from "../launcher/teamSettings.js";
+import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -233,8 +234,9 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       postStart?: unknown;
       launchOptions?: unknown;
       teamSettings?: unknown;
+      periodicCommands?: unknown;
     };
-    const { postStart, launchOptions, teamSettings, ...rest } = body;
+    const { postStart, launchOptions, teamSettings, periodicCommands, ...rest } = body;
     const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
     // Whitelisted values only; null or nothing valid clears the settings.
     if (postStart !== undefined) updates.postStart = sanitizePostStart(postStart);
@@ -251,6 +253,11 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const check = validateTeamSettings(teamSettings);
       errors.push(...check.errors);
       updates.teamSettings = check.settings;
+    }
+    if (periodicCommands !== undefined) {
+      const check = validatePeriodicSettings(periodicCommands);
+      errors.push(...check.errors);
+      updates.periodicCommands = check.settings;
     }
     if (errors.length > 0) {
       return reply.status(400).send({ error: errors.join(" "), details: errors });

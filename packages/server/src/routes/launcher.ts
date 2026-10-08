@@ -24,6 +24,8 @@ import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import { sanitizeStoredLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
 import { buildTeamSettingLines, sanitizeStoredTeamSettings } from "../launcher/teamSettings.js";
+import { ProfileAutomation } from "../launcher/profileAutomation.js";
+import { serverEvents } from "../events/ServerEvents.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 
@@ -32,6 +34,13 @@ export { playlistManager };
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
+
+/** Periodic commands for the launched profile (server.started → console ready → exit). */
+export const profileAutomation = new ProfileAutomation({
+  loadProfile: (id) => new ServerProfileManager(CONFIG_DIR, "").read(id).catch(() => null),
+});
+profileAutomation.listen(serverEvents);
+processManager.on("exit", () => profileAutomation.serverDown());
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -208,6 +217,10 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
       // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
       // one command at a time, so these never interleave with other replies.
       void applyPostStartSettings(connection);
+
+      // The profile's start lines, then its periodic lines every N minutes.
+      const launchedProfileId = processManager.getStatus().activeProfileId;
+      if (launchedProfileId) void profileAutomation.consoleReady(launchedProfileId, connection);
 
       // Anchor playlist timer if a playlist is active
       if (playlistManager.isActive()) {
@@ -494,6 +507,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         profileId: activeProfile.id,
         launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
         autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(activeProfile.teamSettings)),
+        reason: "playlist",
       },
     };
     rotationHealth.begin();

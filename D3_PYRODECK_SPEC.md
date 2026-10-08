@@ -833,6 +833,7 @@ raises an error toast; the Launch panel keeps it on screen until the next launch
 |-------|-------|--------|
 | `launchOptions` | `{ bindIp?, gamePort?, frameCap?, noMultiBmp?, gameSpyPort?, gameSpyFile? }` or `null` | Flags after `-dedicated <cfg>`: `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport`, `-gspyfile` |
 | `teamSettings` | `{ allowTeamChange?, autoBalance?, teamNames?: { red?, blue?, green?, yellow? }, hoardMinOrbs? }` or `null` | Lines in the Startup Commands block at launch: `$allowteamchange on\|off`, `$autobalance on\|off`, `$setteamname <0-3> <name>`, `$mincount <1-12>` |
+| `periodicCommands` | `{ enabled, startLines: string[], lines: string[], intervalMinutes, mode: "all"\|"sequential"\|"random" }` or `null` | Console lines: `startLines` once per launch when the console session is ready, `lines` every `intervalMinutes` (1-1440) |
 
 Invalid values are refused with 400 and `details: string[]`; the stored profile is untouched. The response is the
 profile plus `warnings: string[]`, problems that do not block the save. Saving launch options checks the profile's game
@@ -857,6 +858,17 @@ no maximum. DMFC saves allow-team-change and auto-balance in the engine's prefer
 value means what the last server on the machine left. Verified on the Matcen Debug build: `*Allow Team Changing: On`,
 `*Auto Team Balance: On`, `Red changed team name to Crimson`, `*Hoard Orb Score Minimum Count Set To 3`, after the
 operator's own `$statmsgs on` (`*Statistical Messages: On`).
+
+Periodic commands (`launcher/periodicCommands.ts`, `launcher/profileAutomation.ts`) follow one server run:
+`ProcessManager.start` emits `server.started` (`{ profileId, pid, args, reason: "manual"|"playlist" }`) for every
+profile launch; the automation loads the profile's settings and waits; when the launch's auto-connect session is ready
+it sends the start lines, then a round every interval over that session, skipping rounds while the connection is down.
+The run ends on the process's exit (and on `server.stopped`/`server.crashed` from the bus); a second `server.started`
+for the same pid is ignored. Lines must start with `$` or `say `, be printable ASCII and at most 200 characters (the
+`Say` cvar's limit, `dedicated_server.cpp:181`; the console drops lines past 254 bytes, `:1656`). A round sends at most
+5 lines; `startLines` and `all`-mode `lines` are capped at 5, the others at 20. Verified live: `[127.0.0.1] say PRO
+start line: welcome` / `*-Server- says: PRO start line: welcome`, then one minute apart `*-Server- says: PRO periodic
+tick A` and `... tick B`.
 
 ---
 

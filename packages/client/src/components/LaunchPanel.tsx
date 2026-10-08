@@ -6,12 +6,16 @@ import { MissionHostSettings } from "./MissionHostSettings";
 import { Separator } from "@/components/ui/separator";
 import {
   LaunchOptionsFields,
+  PeriodicFields,
   TeamSettingsFields,
   launchOptionsPayload,
   launchOptionsToForm,
+  periodicPayload,
+  periodicToForm,
   teamSettingsPayload,
   teamSettingsToForm,
   type LaunchOptionsForm,
+  type PeriodicForm,
   type TeamSettingsForm,
 } from "./ProfileLaunchSettings";
 
@@ -38,6 +42,7 @@ interface PathFormState {
   postStart: PostStartSettings;
   launchOptions: LaunchOptionsForm;
   teamSettings: TeamSettingsForm;
+  periodic: PeriodicForm;
 }
 
 const EMPTY_FORM: PathFormState = {
@@ -47,6 +52,7 @@ const EMPTY_FORM: PathFormState = {
   postStart: {},
   launchOptions: launchOptionsToForm(undefined),
   teamSettings: teamSettingsToForm(undefined),
+  periodic: periodicToForm(undefined),
 };
 
 type OnOff = "default" | "on" | "off";
@@ -262,6 +268,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       postStart: { ...(selectedProfile.postStart ?? {}) },
       launchOptions: launchOptionsToForm(selectedProfile.launchOptions),
       teamSettings: teamSettingsToForm(selectedProfile.teamSettings),
+      periodic: periodicToForm(selectedProfile.periodicCommands),
     });
     setValidationErrors([]);
     setSaveWarnings([]);
@@ -330,6 +337,7 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
       postStart: Object.keys(form.postStart).length > 0 ? form.postStart : null,
       launchOptions: launchOptionsPayload(form.launchOptions),
       teamSettings: teamSettingsPayload(form.teamSettings),
+      periodicCommands: periodicPayload(form.periodic),
     });
     setSaving(false);
     if (updated) {
@@ -404,6 +412,13 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <TeamSettingsFields
             values={form.teamSettings}
             onChange={(teamSettings) => setForm((prev) => ({ ...prev, teamSettings }))}
+          />
+        )}
+
+        {!isCreate && (
+          <PeriodicFields
+            values={form.periodic}
+            onChange={(periodic) => setForm((prev) => ({ ...prev, periodic }))}
           />
         )}
 

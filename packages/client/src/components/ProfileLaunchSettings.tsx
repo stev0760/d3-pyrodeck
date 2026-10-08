@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { LaunchOptions, TeamKey, TeamSettings } from "../hooks/useLauncher.ts";
+import type { LaunchOptions, PeriodicCommandSettings, TeamKey, TeamSettings } from "../hooks/useLauncher.ts";
 
 /**
  * Profile settings that shape a launch (Launch panel → Edit). The server
@@ -288,6 +288,113 @@ export function TeamSettingsFields({
         Team names are one word of up to 15 characters. DMFC remembers team changes and auto balance between runs, so
         "Server default" means whatever the last server on this machine left.
       </p>
+    </SettingsSection>
+  );
+}
+
+// ── Periodic commands ────────────────────────────────────────────────────────
+
+const TEXTAREA_CLASS =
+  "w-full mt-0.5 bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground font-mono resize-y focus:outline-none focus:ring-1 focus:ring-ring";
+
+export interface PeriodicForm {
+  enabled: boolean;
+  startLines: string;
+  lines: string;
+  intervalMinutes: string;
+  mode: PeriodicCommandSettings["mode"];
+}
+
+export function periodicToForm(p: PeriodicCommandSettings | undefined): PeriodicForm {
+  return {
+    enabled: p?.enabled ?? true,
+    startLines: (p?.startLines ?? []).join("\n"),
+    lines: (p?.lines ?? []).join("\n"),
+    intervalMinutes: String(p?.intervalMinutes ?? 10),
+    mode: p?.mode ?? "sequential",
+  };
+}
+
+const splitLines = (text: string) =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+
+/** The PATCH value: null when there are no lines. */
+export function periodicPayload(f: PeriodicForm): Record<string, unknown> | null {
+  const startLines = splitLines(f.startLines);
+  const lines = splitLines(f.lines);
+  if (startLines.length === 0 && lines.length === 0) return null;
+  return { enabled: f.enabled, startLines, lines, intervalMinutes: f.intervalMinutes.trim(), mode: f.mode };
+}
+
+function periodicSummary(f: PeriodicForm): string {
+  const n = splitLines(f.lines).length;
+  const s = splitLines(f.startLines).length;
+  if (n === 0 && s === 0) return "None";
+  if (!f.enabled) return "Paused";
+  const parts: string[] = [];
+  if (s > 0) parts.push(`${s} at start`);
+  if (n > 0) parts.push(`${n} every ${f.intervalMinutes || "?"} min`);
+  return parts.join(", ");
+}
+
+/** Lines sent once when the console connects, and every N minutes while the server runs. */
+export function PeriodicFields({ values, onChange }: { values: PeriodicForm; onChange: (v: PeriodicForm) => void }) {
+  const set = (patch: Partial<PeriodicForm>) => onChange({ ...values, ...patch });
+  return (
+    <SettingsSection title="Periodic Commands" summary={periodicSummary(values)}>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        One line each: a <code>$</code> command or <code>say</code> and a message (200 characters at most). Sent only
+        while Pyrodeck is connected to this profile's launched server.
+      </p>
+      <label className="flex items-center gap-2 text-xs text-foreground/80">
+        <input type="checkbox" checked={values.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+        Send them
+      </label>
+      <label className="block text-[10px] text-muted-foreground">
+        At start (once per launch, up to 5)
+        <textarea
+          value={values.startLines}
+          onChange={(e) => set({ startLines: e.target.value })}
+          rows={2}
+          placeholder="say Welcome to the server"
+          className={TEXTAREA_CLASS}
+          spellCheck={false}
+        />
+      </label>
+      <label className="block text-[10px] text-muted-foreground">
+        Every interval (up to 20; all-each-time up to 5)
+        <textarea
+          value={values.lines}
+          onChange={(e) => set({ lines: e.target.value })}
+          rows={3}
+          placeholder={"say Rules: no spawn camping\nsay Join us on Discord: example.org/d3"}
+          className={TEXTAREA_CLASS}
+          spellCheck={false}
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-1.5">
+        <TextField
+          label="Interval (minutes)"
+          value={values.intervalMinutes}
+          onChange={(intervalMinutes) => set({ intervalMinutes })}
+          placeholder="10"
+        />
+        <label className="text-[10px] text-muted-foreground">
+          Each interval
+          <select
+            value={values.mode}
+            onChange={(e) => set({ mode: e.target.value as PeriodicForm["mode"] })}
+            className={SELECT_CLASS}
+          >
+            <option value="sequential">Next line, in order</option>
+            <option value="random">One random line</option>
+            <option value="all">All lines</option>
+          </select>
+        </label>
+      </div>
     </SettingsSection>
   );
 }

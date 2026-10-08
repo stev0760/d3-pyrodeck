@@ -5,15 +5,17 @@ import { generateDedicatedCfg, type DedicatedCfgDefaults } from "../launcher/Con
 import type { PostStartSettings } from "../launcher/postStartSettings.js";
 import type { LaunchOptions } from "../launcher/launchOptions.js";
 import type { TeamSettings } from "../launcher/teamSettings.js";
+import type { PeriodicCommandSettings } from "../launcher/periodicCommands.js";
 
 /** Per-profile settings stored as one object each; null in an update clears it. */
 export interface ProfileSettingsUpdate {
   postStart?: PostStartSettings | null;
   launchOptions?: LaunchOptions | null;
   teamSettings?: TeamSettings | null;
+  periodicCommands?: PeriodicCommandSettings | null;
 }
 
-const SETTINGS_KEYS = ["postStart", "launchOptions", "teamSettings"] as const;
+const SETTINGS_KEYS = ["postStart", "launchOptions", "teamSettings", "periodicCommands"] as const;
 
 /**
  * A server profile is lightweight metadata stored in Pyrodeck's config dir.
@@ -53,6 +55,8 @@ export interface ServerProfile {
   launchOptions?: LaunchOptions;
   /** DMFC team options and the Hoard orb count, written into the Startup Commands file at launch. */
   teamSettings?: TeamSettings;
+  /** Console lines sent at start and every N minutes while the server runs. */
+  periodicCommands?: PeriodicCommandSettings;
   createdAt: string;
   lastLaunchedAt?: string;
 }
