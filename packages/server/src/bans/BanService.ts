@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { serverEvents, type ServerEvents } from "../events/ServerEvents.js";
+import { isBotName } from "../events/consoleLines.js";
 import { findSlot, listPlayers, type ConsoleLink, type ConsoleProvider } from "../players/consoleLink.js";
 import { chatName, removePlayer, type ActionDeps } from "../players/playerActions.js";
 import { BanStore, checkNamePattern, type HostsDenySource, type NameBan } from "./BanStore.js";
@@ -11,6 +12,11 @@ import {
   removeHostsEntry,
   type HostsLine,
 } from "./hostsFile.js";
+
+/** 0.0.0.0 and 127.0.0.0/8: denying these would lock out players on the server machine itself. */
+export function isLocalAddress(ip: string): boolean {
+  return ip === "0.0.0.0" || ip.startsWith("127.");
+}
 
 export interface BanSettings {
   hostsDenyPath: string | null;
@@ -205,6 +211,10 @@ export class BanService {
     reason: string,
     opts: { hostsDeny: boolean; nameBan: boolean; slot?: number },
   ): Promise<ActionResult & { ip?: string }> {
+    if (isBotName(name)) {
+      // A bot's "address" is the server's own (`$playerinfo` prints 127.0.1.1:0 for one).
+      return { ok: false, error: "Bots have no address to ban; remove the bot instead." };
+    }
     const link = this.deps.console(profileId);
     if (!link) return { ok: false, error: "No console session to that server." };
     const shown = reason.trim() || "banned by the admin";
@@ -225,7 +235,9 @@ export class BanService {
     if (!result.ok) return result;
     const notes: string[] = [`Banned ${chatName(name)} until the server restarts.`];
     if (opts.hostsDeny) {
-      if (ip) {
+      if (ip && isLocalAddress(ip)) {
+        notes.push(`${ip} is this machine's own address, so it was not added to hosts.deny.`);
+      } else if (ip) {
         const added = await this.addHostsDeny(ip, shown, name);
         notes.push(added.ok ? added.message : added.error);
       } else {

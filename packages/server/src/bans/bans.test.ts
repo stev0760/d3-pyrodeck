@@ -227,6 +227,16 @@ describe("BanService", () => {
     ]);
   });
 
+  it("refuses to ban a bot and never denies the server machine's own address", async () => {
+    expect(await svc.ban("p1", "Alpha[BOT]", "x", { hostsDeny: true, nameBan: false })).toMatchObject({ ok: false });
+    const local = svc as unknown as { deps: { lookupAddress: () => Promise<string> } };
+    local.deps.lookupAddress = async () => "127.0.0.1";
+    const result = await svc.ban("p1", "Bob", "x", { hostsDeny: true, nameBan: false });
+    expect(result).toMatchObject({ ok: true });
+    expect(result.ok && result.message).toContain("not added to hosts.deny");
+    expect(sent).not.toContain("$rehash");
+  });
+
   it("kicks a banned name when it joins, and sends $rehash at a level start", async () => {
     await svc.addNameBan("Grief*", "banned name");
     bus.emitEvent("player.identified", { profileId: "p1", name: "Griefer", slot: 2 });

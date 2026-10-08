@@ -901,7 +901,7 @@ playlist rotation included, forgets it. Bans that last are the engine's `netgame
 | `POST` | `/api/bans/rehash` | `$rehash` on the open console |
 | `PUT` | `/api/bans/settings` | Body `{ hostsDenyPath?, rehashOnLevelStart? }` |
 | `POST` | `/api/players/kick` | Body `{ name, reason?, slot? }`: `say <name> kicked - <reason>`, 2 s, re-check the slot with `$players`, `$kick <slot>`; emits `player.kicked` |
-| `POST` | `/api/players/ban` | Body `{ name, reason?, hostsDeny? (default true), nameBan?, slot? }`: as kick but `$ban`, then the address into hosts.deny and the name into the list; emits `player.banned` |
+| `POST` | `/api/players/ban` | Body `{ name, reason?, hostsDeny? (default true), nameBan?, slot? }`: as kick but `$ban`, then the address into hosts.deny and the name into the list; emits `player.banned`. Refuses bots (`$playerinfo` gives a bot the server's own address, `127.0.1.1`) and never writes `0.0.0.0` or `127.x` to hosts.deny |
 
 Settings (`pyrodeck.json` → `players`): `hostsDenyPath` (absolute path; null = the server's
 directory below), `rehashOnLevelStart` (default `true`). Name bans and the notes on hosts.deny
