@@ -7,6 +7,7 @@ import { serverEvents } from "../events/ServerEvents.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import { countHumanPlayers } from "../parser/parsers/players.js";
 import { Scheduler } from "../ops/Scheduler.js";
+import { sayToAll } from "../players/playerActions.js";
 import { formatLocalWhen } from "../ops/schedule.js";
 
 /**
@@ -45,7 +46,7 @@ export const scheduler = new Scheduler({
   },
   say: async (text) => {
     const session = sessionManager.getActive();
-    if (session?.state === "ready") await session.connection.send(`say ${text}`);
+    if (session?.state === "ready") await session.connection.send(sayToAll(text));
   },
   skipped: (profileId, action, reason) => {
     serverEvents.emitEvent("schedule.skipped", { profileId, action, reason });

@@ -21,10 +21,15 @@ import { findSlot, listPlayers, type ConsoleLink } from "./consoleLink.js";
 export const KICK_SAY_DELAY_MS = 2000;
 const SAY_MAX = 150;
 
-/** Remove what the chat line must not carry: control characters, and `%` for clients that format it. */
+/**
+ * Remove what the chat line must not carry: anything but printable ASCII
+ * (the console reads bytes and the game's font draws no UTF-8), and `%`,
+ * which the dedicated server's console output and some clients treat as a
+ * format directive (PrintDedicatedMessage hands the text to con_Printf as
+ * the format, dedicated_server.cpp:1388).
+ */
 function cleanChat(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/[\x00-\x1f\x7f-\x9f%]/g, "").trim();
+  return text.replace(/[^\x20-\x7e]|%/g, "").trim();
 }
 
 /** A `say` command everyone sees. */

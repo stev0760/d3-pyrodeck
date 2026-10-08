@@ -34,6 +34,7 @@ import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { ConsoleQuitWatch } from "../launcher/consoleQuit.js";
+import { chatName, sayToAll } from "../players/playerActions.js";
 import { Supervisor } from "../launcher/Supervisor.js";
 import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
 import {
@@ -154,9 +155,12 @@ playlistManager.on("serverInfoRaw", (raw: string) => {
  * Build a single-line vote prompt sized for D3's 2-line chat window.
  * Example: "Vote next mission (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
  */
+// Labels and voters' names are the operator's and the players' text: every
+// line goes through sayToAll (no `%`, printable ASCII, no colon, which the
+// engine would read as a chat destination).
 function buildVotePromptLine(options: PlaylistEntry[]): string {
   const parts = options.map((o, i) => `${i + 1}=${o.label}`).join("  ");
-  return `say Vote next mission (type 1-${options.length}): ${parts}`;
+  return sayToAll(`Vote next mission (type 1-${options.length}) - ${parts}`);
 }
 
 playlistManager.on("voteAnnounce", (options: PlaylistEntry[], timeoutMs: number) => {
@@ -187,7 +191,7 @@ playlistManager.on(
     if (!playlistManager.sendCommandFn) return;
     const verb = payload.changed ? "changed vote to" : "voted for";
     playlistManager.sendCommandFn(
-      `say [Vote ${payload.voterCount}] ${payload.playerName} ${verb}: ${payload.option.label}`,
+      sayToAll(`[Vote ${payload.voterCount}] ${chatName(payload.playerName)} ${verb} ${payload.option.label}`),
     ).catch(() => {});
   },
 );
@@ -200,7 +204,7 @@ playlistManager.on("voteResult", (winner: PlaylistEntry, counts: number[]) => {
 
   // Announce winner in-game
   if (playlistManager.sendCommandFn) {
-    playlistManager.sendCommandFn(`say Vote closed — next mission: ${winner.label}`)
+    playlistManager.sendCommandFn(sayToAll(`Vote closed. Next mission is ${winner.label}`))
       .catch(() => {});
   }
 });
@@ -541,7 +545,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
     // Announce rotation if server is running
     if (playlistManager.sendCommandFn && processManager.isRunning()) {
       try {
-        await playlistManager.sendCommandFn(`say Changing mission to: ${entry.label}`);
+        await playlistManager.sendCommandFn(sayToAll(`Changing mission to ${entry.label}`));
         await new Promise((r) => setTimeout(r, 1000));
       } catch { /* ignore */ }
     }

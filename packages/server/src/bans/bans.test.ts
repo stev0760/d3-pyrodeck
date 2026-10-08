@@ -129,6 +129,7 @@ describe("chat commands", () => {
     expect(sayToAll("Bob kicked: spam")).toBe("say Bob kicked - spam");
     expect(sayToSlot(3, "warning: language")).toBe("say 3: warning: language");
     expect(sayToAll("50%\x01off")).toBe("say 50off");
+    expect(sayToAll("Vote closed \u2014 next: Caf\u00e9")).toBe("say Vote closed  next - Caf");
   });
 });
 
