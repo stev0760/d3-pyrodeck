@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ProcessManager, type LaunchConfig } from "../launcher/ProcessManager.js";
+import { ProcessManager, type LaunchConfig, type StopReason } from "../launcher/ProcessManager.js";
 import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
@@ -24,12 +24,82 @@ import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
+import { serverEvents } from "../events/ServerEvents.js";
+import { ServerLineMonitor } from "../launcher/ServerLineMonitor.js";
+import { Supervisor } from "../launcher/Supervisor.js";
+import { validateSupervisorSettings } from "../launcher/supervisorSettings.js";
+import {
+  clearRunRecord,
+  decideAdopt,
+  readLinuxIdentity,
+  readProcessFacts,
+  readRunRecord,
+  writeRunRecord,
+  type RunRecord,
+} from "../launcher/runRecord.js";
 
 export { playlistManager };
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
+
+// Joins, leaves, chat and level starts onto the event bus, read from the
+// launched process's stdout (from the console for a re-attached one).
+const lineMonitor = new ServerLineMonitor();
+lineMonitor.onConsoleQuit = () => processManager.noteConsoleQuit();
+serverEvents.onEvent("server.started", ({ profileId }) => lineMonitor.reset(profileId));
+serverEvents.onEvent("server.adopted", ({ profileId }) => lineMonitor.reset(profileId));
+
+// One line per event in Pyrodeck's own log: the history D3Server3 kept in
+// its event log.
+serverEvents.onEvent("server.started", (e) => console.log(`[Server] started (${e.reason}), pid ${e.pid}`));
+serverEvents.onEvent("server.stopped", (e) =>
+  console.log(`[Server] stopped (${e.reason}${e.via ? `, ${e.via}` : ""}), pid ${e.pid}`),
+);
+serverEvents.onEvent("server.crashed", (e) =>
+  console.log(`[Server] crashed, pid ${e.pid} (${e.signal ? `signal ${e.signal}` : `exit code ${e.code}`})`),
+);
+serverEvents.onEvent("server.hung", (e) =>
+  console.log(`[Server] hung, pid ${e.pid}: console silent ${Math.round(e.silentForMs / 1000)} s`),
+);
+serverEvents.onEvent("server.adopted", (e) => console.log(`[Server] re-attached, pid ${e.pid} (started ${e.startedAt})`));
+serverEvents.onEvent("level.started", (e) => console.log(`[Server] level ${e.level ?? "?"} started`));
+serverEvents.onEvent("player.joined", (e) => console.log(`[Server] ${e.name} joined`));
+serverEvents.onEvent("player.left", (e) => console.log(`[Server] ${e.name} left`));
+
+// The running server's PID and launch, on disk, so the next Pyrodeck can
+// re-attach to it (reattachToRunningServer). Writes and removals are queued
+// so a quick exit cannot leave a stale record behind.
+let runRecordQueue: Promise<void> = Promise.resolve();
+function queueRunRecord(task: () => Promise<void>): void {
+  runRecordQueue = runRecordQueue.then(task).catch((err) => {
+    console.warn(`[Pyrodeck] Could not update ${CONFIG_DIR}/running-server.json: ${err instanceof Error ? err.message : err}`);
+  });
+}
+serverEvents.onEvent("server.started", ({ pid, args }) => {
+  queueRunRecord(async () => {
+    const config = processManager.getLaunchConfig();
+    const status = processManager.getStatus();
+    if (!config || status.pid !== pid) return;
+    const linux = process.platform === "linux" ? await readLinuxIdentity(pid) : null;
+    const record: RunRecord = {
+      version: 1,
+      pid,
+      profileId: config.profileId ?? null,
+      executablePath: config.executablePath,
+      gamePath: config.gamePath,
+      configFile: config.configFile,
+      args,
+      logPath: config.logPath ?? null,
+      telnetPort: config.telnetPort,
+      startedAt: (status.startedAt ?? new Date()).toISOString(),
+      ...(linux ? { linux: { startTicks: linux.startTicks, bootId: linux.bootId } } : {}),
+    };
+    if (processManager.getStatus().pid !== pid) return; // already gone
+    await writeRunRecord(CONFIG_DIR, record);
+  });
+});
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -138,7 +208,7 @@ async function applyPostStartSettings(connection: ServerConnection): Promise<voi
 
 /**
  * Register a one-shot telnetReady handler so auto-connect fires after (re)start.
- * Called from POST /start and from the playlist rotate handler.
+ * Called from POST /start, the playlist rotate handler and the supervisor.
  *
  * `healthToken` is set for a playlist restart: the result is then reported to
  * the rotation health check (healthy once `$servercaps` gets an answer, or a
@@ -148,89 +218,114 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
   // Remove any stale once-handler from a launch that crashed before telnet was ready
   processManager.removeAllListeners("telnetReady");
 
-  processManager.once("telnetReady", async (port: number) => {
+  processManager.once("telnetReady", (port: number) => {
     console.log(`[Pyrodeck] D3 telnet ready on port ${port}, auto-connecting...`);
-
-    try {
-      // Disconnect any stale session
-      const existing = sessionManager.getActive();
-      if (existing) {
-        sessionManager.remove(existing.id);
-      }
-
-      const connection = new TelnetConnection();
-      const session = sessionManager.create(
-        connection,
-        "localhost",
-        port,
-        telnetPassword,
-      );
-
-      sessionManager.updateState(session.id, "connecting");
-      await connection.connect("localhost", port, telnetPassword);
-
-      // Probe capabilities
-      sessionManager.updateState(session.id, "probing");
-      const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
-        if (healthToken !== undefined) rotationHealth.healthy(healthToken);
-        if (sessionManager.getActive()?.id !== session.id) return;
-        sessionManager.updateCapabilities(session.id, late);
-        wsBroadcast("capabilities", serializeCaps(late));
-      });
-
-      sessionManager.updateCapabilities(session.id, capabilities);
-      sessionManager.updateState(session.id, "ready");
-      wireSessionToClients();
-
-      // Wire up graceful quit
-      processManager.sendQuitFn = async () => {
-        try { await connection.send("quit"); } catch { /* connection may be dead */ }
-      };
-
-      // Wire playlist manager's command sender
-      playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
-
-      if (healthToken === undefined) {
-        // User-started launch: nothing to verify. (Also unsticks a playlist
-        // left "restarting" by a rotation the operator took over by hand.)
-        playlistManager.markRotationComplete();
-      } else if (answered) {
-        // Playlist restart: the console answered $servercaps, the server is up.
-        // A silent first probe waits for the background re-probe (above) or
-        // the health check's deadline.
-        rotationHealth.healthy(healthToken);
-      }
-
-      // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
-      // one command at a time, so these never interleave with other replies.
-      void applyPostStartSettings(connection);
-
-      // Anchor playlist timer if a playlist is active
-      if (playlistManager.isActive()) {
-        playlistManager.anchorTimer().catch(() => {});
-      }
-
-      // Broadcast to WS clients
-      wsBroadcast("connection_state", { state: "ready" });
-      wsBroadcast("capabilities", serializeCaps(capabilities));
-
-      // Broadcast current playlist status
-      if (playlistManager.getStatus().activePlaylistId) {
-        wsBroadcast("playlist_status", playlistStatusPayload());
-      }
-
-      console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
-      wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
-      if (healthToken === undefined) {
-        playlistManager.markRotationComplete();
-      } else {
-        rotationHealth.failure(`remote console login failed (${message})`, healthToken);
-      }
-    }
+    void connectConsole(port, telnetPassword, { healthToken }).catch(() => {});
   });
+}
+
+interface ConsoleConnectOptions {
+  /** Playlist restart health token (see registerAutoConnect). */
+  healthToken?: number;
+  /**
+   * Log in again to a server that has been up for a while (the console link
+   * dropped, or Pyrodeck re-attached to it): no post-start settings, no toast
+   * on failure. Throws on failure so the caller can retry.
+   */
+  again?: boolean;
+  /**
+   * Anchor an active playlist's timer even when logging in again (after a
+   * re-attach). Each anchor costs a `$netgameinfo`, which leaks engine
+   * memory, so a plain reconnect keeps the timer it has.
+   */
+  anchorPlaylist?: boolean;
+}
+
+/** Log in to the launched server's remote console and make it the active session. */
+async function connectConsole(port: number, telnetPassword: string, opts: ConsoleConnectOptions = {}): Promise<void> {
+  const { healthToken, again = false, anchorPlaylist = !again } = opts;
+  try {
+    // Disconnect any stale session
+    const existing = sessionManager.getActive();
+    if (existing) {
+      sessionManager.remove(existing.id);
+    }
+
+    const connection = new TelnetConnection();
+    const session = sessionManager.create(
+      connection,
+      "localhost",
+      port,
+      telnetPassword,
+    );
+
+    sessionManager.updateState(session.id, "connecting");
+    await connection.connect("localhost", port, telnetPassword);
+
+    // Probe capabilities
+    sessionManager.updateState(session.id, "probing");
+    const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
+      if (healthToken !== undefined) rotationHealth.healthy(healthToken);
+      if (sessionManager.getActive()?.id !== session.id) return;
+      sessionManager.updateCapabilities(session.id, late);
+      wsBroadcast("capabilities", serializeCaps(late));
+    });
+
+    sessionManager.updateCapabilities(session.id, capabilities);
+    sessionManager.updateState(session.id, "ready");
+    wireSessionToClients();
+
+    // Wire up graceful quit
+    processManager.sendQuitFn = async () => {
+      try { await connection.send("quit"); } catch { /* connection may be dead */ }
+    };
+
+    // Wire playlist manager's command sender
+    playlistManager.sendCommandFn = async (cmd: string) => connection.send(cmd);
+
+    if (healthToken === undefined) {
+      // User-started launch: nothing to verify. (Also unsticks a playlist
+      // left "restarting" by a rotation the operator took over by hand.)
+      playlistManager.markRotationComplete();
+    } else if (answered) {
+      // Playlist restart: the console answered $servercaps, the server is up.
+      // A silent first probe waits for the background re-probe (above) or
+      // the health check's deadline.
+      rotationHealth.healthy(healthToken);
+    }
+
+    // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
+    // one command at a time, so these never interleave with other replies.
+    if (!again) void applyPostStartSettings(connection);
+
+    watchConsole(connection, port, telnetPassword);
+
+    // Anchor playlist timer if a playlist is active
+    if (playlistManager.isActive() && anchorPlaylist) {
+      playlistManager.anchorTimer().catch(() => {});
+    }
+
+    // Broadcast to WS clients
+    wsBroadcast("connection_state", { state: "ready" });
+    wsBroadcast("capabilities", serializeCaps(capabilities));
+
+    // Broadcast current playlist status
+    if (playlistManager.getStatus().activePlaylistId) {
+      wsBroadcast("playlist_status", playlistStatusPayload());
+    }
+
+    console.log(`[Pyrodeck] Launch Mode: auto-connected to D3 server (session ${session.id})`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Pyrodeck] Launch Mode: telnet auto-connect failed: ${message}`);
+    if (again) throw err;
+    wsBroadcast("error", { message: `Auto-connect failed: ${message}` });
+    if (healthToken === undefined) {
+      playlistManager.markRotationComplete();
+    } else {
+      rotationHealth.failure(`remote console login failed (${message})`, healthToken);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +351,7 @@ function broadcastPlaylistStatus(): void {
 /** Spawn the rotation's server and start the health deadline. Throws if the spawn fails. */
 async function launchForRotation(rl: RotationLaunch, token: number): Promise<void> {
   registerAutoConnect(rl.telnetPassword, token);
-  await processManager.start(rl.launch);
+  await processManager.start(rl.launch, "playlist");
   rotationHealth.arm();
 }
 
@@ -314,7 +409,7 @@ rotationHealth.on("retry", async (_attempt: number, reason: string) => {
     if (existing) sessionManager.remove(existing.id);
     processManager.sendQuitFn = null;
     playlistManager.sendCommandFn = null;
-    if (processManager.isRunning()) await processManager.stop();
+    if (processManager.isRunning()) await processManager.stop("playlist");
 
     // The operator may have taken over (Stop/Launch) while we were stopping.
     if (rotationHealth.token() !== token || !rotationHealth.isPending()) return;
@@ -425,7 +520,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
 
     const launchStatus = processManager.getStatus();
     if (launchStatus.state === "running" || launchStatus.state === "starting") {
-      await processManager.stop();
+      await processManager.stop("playlist");
     }
     // From here on the server is down: a failure pauses the playlist instead
     // of leaving it "restarting" behind a dead server.
@@ -515,6 +610,129 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Supervisor (D3Server3 parity): relaunch after a crash, kill and relaunch a
+// hung server, restart an empty one after an uptime limit. Settings are global
+// (pyrodeck.json); see launcher/Supervisor.ts for the rules.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stop the launched server on request and drop its console session. The
+ * Launch panel's Stop, the supervisor and the scheduler go through here.
+ *
+ * `quit` over the console is sent only for a manual stop. Otherwise the
+ * session is closed first and the process is signalled, as a playlist
+ * rotation does: closing from our side keeps the console port out of
+ * TIME_WAIT, so a relaunch need not wait for the port (waitForPortFree).
+ */
+export async function stopServer(reason: StopReason, options: { kill?: boolean } = {}): Promise<void> {
+  takeOverFromRotation();
+  playlistManager.sendCommandFn = null;
+  if (reason !== "manual") dropConsoleSession();
+  await processManager.stop(reason, options);
+  dropConsoleSession();
+  wsBroadcast("connection_state", { state: "disconnected" });
+}
+
+function dropConsoleSession(): void {
+  processManager.sendQuitFn = null;
+  const session = sessionManager.getActive();
+  if (session) sessionManager.remove(session.id);
+}
+
+/** Start the last launch again, into a new log file next to the last one. */
+async function relaunchLast(): Promise<void> {
+  const last = processManager.getLaunchConfig();
+  if (!last) throw new Error("there is no launch to repeat");
+  if (processManager.isRunning()) return;
+
+  let logPath = last.logPath;
+  if (logPath) {
+    let label = path.basename(last.configFile, path.extname(last.configFile));
+    if (last.profileId) {
+      try {
+        label = (await new ServerProfileManager(CONFIG_DIR, "").read(last.profileId)).name;
+      } catch {
+        // profile deleted since launch: keep the config name
+      }
+    }
+    const fresh = path.join(path.dirname(logPath), buildLogFilename(label));
+    const logError = await prepareLogFile(fresh);
+    if (logError) {
+      wsBroadcast("error", { message: `Relaunch: ${logError} The server restarts without a log.` });
+      logPath = undefined;
+    } else {
+      logPath = fresh;
+    }
+  }
+
+  dropConsoleSession();
+  registerAutoConnect(last.telnetPassword);
+  await processManager.start({ ...last, logPath }, "relaunch");
+}
+
+export const supervisor = new Supervisor({
+  relaunch: relaunchLast,
+  stop: (reason, options) => stopServer(reason, options),
+  command: async (cmd) => {
+    const session = sessionManager.getActive();
+    if (!session || session.state !== "ready" || !session.connection.isConnected()) {
+      throw new Error("no console");
+    }
+    return session.connection.send(cmd);
+  },
+  isRunning: () => processManager.isRunning(),
+  rotationPending: () => rotationHealth.isPending(),
+  notify: (message, level) => {
+    if (level === "error") {
+      console.warn(`[Supervisor] ${message}`);
+      wsBroadcast("error", { message });
+    } else {
+      console.log(`[Supervisor] ${message}`);
+    }
+  },
+});
+
+/**
+ * Feed a logged-in console to the supervisor, and log in again if the link
+ * drops while the server runs. A re-attached server has no stdout, so its
+ * console also feeds the line monitor and the playlist's level detection.
+ */
+function watchConsole(connection: ServerConnection, port: number, telnetPassword: string): void {
+  connection.onData((text) => {
+    supervisor.consoleActivity();
+    if (processManager.getStatus().adopted) {
+      lineMonitor.push(text);
+      playlistManager.onStdoutChunk(text);
+    }
+  });
+  connection.onDisconnect(() => scheduleConsoleReconnect(port, telnetPassword));
+  stopConsoleReconnect();
+  supervisor.consoleReady();
+}
+
+// D3Server3 logs in again 5 s after its console link drops.
+const CONSOLE_RECONNECT_MS = 5_000;
+let consoleReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleConsoleReconnect(port: number, telnetPassword: string): void {
+  if (consoleReconnectTimer || processManager.getStatus().state !== "running") return;
+  consoleReconnectTimer = setTimeout(async () => {
+    consoleReconnectTimer = null;
+    if (processManager.getStatus().state !== "running") return;
+    try {
+      await connectConsole(port, telnetPassword, { again: true });
+    } catch {
+      scheduleConsoleReconnect(port, telnetPassword);
+    }
+  }, CONSOLE_RECONNECT_MS);
+}
+
+function stopConsoleReconnect(): void {
+  if (consoleReconnectTimer) clearTimeout(consoleReconnectTimer);
+  consoleReconnectTimer = null;
+}
+
 // Wire process events to WebSocket broadcasts
 processManager.on("stateChange", (state: string) => {
   // Trailing output (e.g. the stderr lines explaining a crash) must reach
@@ -527,6 +745,9 @@ processManager.on("stateChange", (state: string) => {
   if (state === "stopped" || state === "crashed") {
     playlistManager.clearCurrentLevel();
   }
+  // Read before the health check reacts below: once it gives up it is idle,
+  // and the supervisor must still know the crash was the rotation's.
+  const rotationOwned = rotationHealth.isPending();
   // A playlist restart that dies before it answers fails its health check now,
   // not at the deadline. Only while armed ("waiting"): the old process being
   // stopped for a retry is not this attempt's crash.
@@ -536,6 +757,18 @@ processManager.on("stateChange", (state: string) => {
       `server exited during startup (${exitSignal ? `signal ${exitSignal}` : `exit code ${exitCode}`})`,
       rotationHealth.token(),
     );
+  }
+  if (state === "stopped" || state === "crashed") {
+    stopConsoleReconnect();
+    queueRunRecord(() => clearRunRecord(CONFIG_DIR));
+    const { exitCode, exitSignal, stopReason } = processManager.getStatus();
+    supervisor.processDown({
+      crashed: state === "crashed",
+      stopReason,
+      rotationOwned,
+      code: exitCode,
+      signal: exitSignal,
+    });
   }
 });
 
@@ -575,6 +808,7 @@ processManager.on("stdout", (data: string) => {
   queueProcessOutput("stdout", data);
   // Feed to playlist manager unbatched — level-end detection stays immediate
   playlistManager.onStdoutChunk(data);
+  lineMonitor.push(data);
 });
 
 processManager.on("stderr", (data: string) => {
@@ -588,7 +822,89 @@ processManager.on("logWarning", (message: string) => {
   wsBroadcast("error", { message });
 });
 
+/**
+ * Re-attach to the server the previous Pyrodeck run launched, if it is still
+ * running (D3Server3 does the same with its saved process IDs). What works
+ * afterwards: status, console, Stop, the supervisor, playlist level
+ * detection (from the console). What does not: the server's stdout is gone
+ * with the old Pyrodeck, so the Output tab and the log file get nothing more,
+ * and its exit code is not known.
+ */
+async function reattachToRunningServer(): Promise<void> {
+  const record = await readRunRecord(CONFIG_DIR);
+  if (!record) return;
+  const forget = async (why: string) => {
+    console.log(`[Pyrodeck] Not re-attaching to server PID ${record.pid}: ${why}`);
+    await clearRunRecord(CONFIG_DIR);
+  };
+
+  const decision = decideAdopt(record, await readProcessFacts(record.pid), process.platform);
+  if (!decision.adopt) return forget(decision.reason);
+
+  let password: string | null;
+  try {
+    const cfg = await fs.readFile(path.join(record.gamePath, record.configFile), "utf-8");
+    password = extractTelnetConfig(parseDedicatedCfg(cfg)).password ?? null;
+  } catch {
+    password = null;
+  }
+  if (!password) {
+    // Leave the record: the server runs, Pyrodeck just cannot log in to it.
+    console.warn(`[Pyrodeck] Server PID ${record.pid} is still running, but ${record.configFile} has no console password; not re-attaching.`);
+    return;
+  }
+
+  if (process.platform !== "linux") {
+    // Only "a process with this PID is alive" is known here; prove it is the
+    // server by logging in to its console first.
+    const probe = new TelnetConnection();
+    try {
+      await probe.connect("localhost", record.telnetPort, password);
+    } catch (err) {
+      return forget(`no server answers on console port ${record.telnetPort} (${err instanceof Error ? err.message : err})`);
+    } finally {
+      await probe.disconnect();
+    }
+  }
+
+  const linux = record.linux;
+  const isAlive = async (): Promise<boolean> => {
+    const facts = await readProcessFacts(record.pid);
+    return facts.alive && (!linux || facts.linux?.startTicks === linux.startTicks);
+  };
+  const config: LaunchConfig = {
+    executablePath: record.executablePath,
+    gamePath: record.gamePath,
+    configFile: record.configFile,
+    logPath: record.logPath ?? undefined,
+    telnetPort: record.telnetPort,
+    telnetPassword: password,
+    profileId: record.profileId ?? undefined,
+  };
+
+  processManager.removeAllListeners("telnetReady");
+  processManager.once("telnetReady", (port: number) => {
+    connectConsole(port, password, { again: true, anchorPlaylist: true }).catch((err) => {
+      wsBroadcast("error", {
+        message: `Re-attached to the running server, but its console login failed (${err instanceof Error ? err.message : err}). Retrying every 5 s.`,
+      });
+      scheduleConsoleReconnect(port, password);
+    });
+  });
+  processManager.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
+  console.log(`[Pyrodeck] Re-attached to the server Pyrodeck launched before it restarted (PID ${record.pid})`);
+}
+
 export async function launcherRoutes(app: FastifyInstance): Promise<void> {
+  // pyrodeck.json is loaded by now (it was not when this module was evaluated).
+  supervisor.applySettings(pyrodeckConfig.get().supervisor);
+  app.addHook("onClose", async () => supervisor.dispose());
+  try {
+    await reattachToRunningServer();
+  } catch (err) {
+    console.warn(`[Pyrodeck] Re-attach failed: ${err instanceof Error ? err.message : err}`);
+  }
+
   app.post("/api/launcher/start", async (request, reply) => {
     if (processManager.isRunning()) {
       return reply.status(409).send({ error: "Server is already running" });
@@ -758,29 +1074,47 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: "Server is not running" });
     }
 
-    takeOverFromRotation();
-    playlistManager.sendCommandFn = null;
-
     // Stop while the telnet session is still wired so ProcessManager can try
     // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
     // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
     // absorbs that on the next launch.
-    await processManager.stop();
-
-    // Clean up session after the process is down
-    processManager.sendQuitFn = null;
-    const session = sessionManager.getActive();
-    if (session) {
-      sessionManager.remove(session.id);
-    }
-
-    wsBroadcast("connection_state", { state: "disconnected" });
+    await stopServer("manual");
 
     return { ok: true, status: processManager.getStatus() };
   });
 
   app.get("/api/launcher/status", async () => {
-    return { ...processManager.getStatus(), missionHost: missionHost.getStatus() };
+    return {
+      ...processManager.getStatus(),
+      missionHost: missionHost.getStatus(),
+      supervisor: supervisor.snapshot(),
+    };
+  });
+
+  /** GET /api/launcher/supervisor: the saved settings and the live state. */
+  app.get("/api/launcher/supervisor", async () => supervisor.snapshot());
+
+  /**
+   * PUT /api/launcher/supervisor  { relaunchOnCrash, hangCheck, hangProbeAfterSec,
+   *   hangRestartAfterSec, emptyRestart, emptyRestartAfterHours, emptyRestartGraceSec }
+   * Fields left out keep their saved value. Applies at once.
+   */
+  app.put("/api/launcher/supervisor", async (request, reply) => {
+    const check = validateSupervisorSettings(request.body, pyrodeckConfig.get().supervisor);
+    if (check.errors.length > 0) {
+      return reply.status(400).send({ error: check.errors.join(" "), errors: check.errors });
+    }
+    await pyrodeckConfig.save({ supervisor: check.settings });
+    supervisor.applySettings(check.settings);
+    return supervisor.snapshot();
+  });
+
+  /** POST /api/launcher/supervisor/cancel-relaunch: leave a crashed server down. */
+  app.post("/api/launcher/supervisor/cancel-relaunch", async (_request, reply) => {
+    if (!supervisor.cancelRelaunch()) {
+      return reply.status(409).send({ error: "No relaunch is pending" });
+    }
+    return supervisor.snapshot();
   });
 
   app.get("/api/launcher/detect", async (_request, reply) => {

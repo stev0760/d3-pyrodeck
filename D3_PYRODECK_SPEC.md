@@ -813,8 +813,11 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 |--------|------|-------------|
 | `POST` | `/api/launcher/start` | Start local D3 dedicated server process |
 | `POST` | `/api/launcher/stop` | Stop local server (graceful) |
-| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed) |
+| `GET` | `/api/launcher/status` | Process state (running / stopped / crashed), plus `missionHost` and `supervisor` (Addendum D) |
 | `PUT` | `/api/launcher/config` | Update `dedicated.cfg` settings |
+| `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum D) |
+| `PUT` | `/api/launcher/supervisor` | Save supervisor settings (fields left out keep their value); applies at once |
+| `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
 
 **Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
 auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the
@@ -1222,6 +1225,152 @@ ephemeral port: byte-identical body with Content-Length, 404 for retail, travers
 unknown, wrong-case and `/api/...`, the bare-LF request, the hold, bind failure). Manual run on
 127.0.0.1:3001/3002: `curl -sI` and a SHA-256 match on a 5.4 MB mission, refusals, port move and
 disable without a restart. **Not verified:** a real game client downloading from the listener.
+
+---
+
+## Addendum D — Supervisor (D3Server3 parity, 2026-10-07, branch `parity/sup`)
+
+The behaviours `docs/D3SERVER3_AUDIT.md` ranks 1, 3 and 13: relaunch after a crash or a hang, restart
+when empty after an uptime limit, and re-attach after Pyrodeck restarts. Engine facts are cited from
+the Matcen tree (`Descent3/`, `netgames/`).
+
+### D.1 Server events and the lines behind them
+
+`packages/server/src/events/ServerEvents.ts` is the bus. `ProcessManager` emits `server.started`
+(with the reason the caller passed: `manual` for the Launch button, `playlist` for a rotation,
+`relaunch` for the supervisor), `server.stopped` (the reason passed to `stop()`) and `server.crashed`
+(an exit nobody asked for). An exit within 30 s of the echo of a `quit` typed at a remote console
+(`[<address>] quit`, printed for every console line by `DedicatedReadTelnet`, dedicated_server.cpp;
+`Quit` is a console variable whose setter leaves the game, `SetCVarNone`) is a stop on request:
+state `stopped`, `server.stopped` with `reason: "manual", via: "console"`.
+
+`ServerLineMonitor` reads the launched process's stdout (the console when re-attached, D.5) and emits:
+
+| Event | Line (English string tables) | Source |
+|---|---|---|
+| `player.joined` | `*<name> has joined the Anarchy` / `CTF` / `the Hyper Anarchy!` / `the Hoard` / `the game` / `the <team> Team` (Entropy and Monsterball capitalise `Has Joined The`) | each mode's `DisplayWelcomeMessage` (e.g. `netgames/anarchy/anarchy.cpp`, `ctf/ctf.cpp`), called from `OnClientPlayerEntersGame` |
+| `player.left` | `*<name> has left the game` (D3.STR 147), `*<name> disconnected!` (D3.STR 247) | `MultiDoLeaveGame` (multi.cpp, the client quit), `MultiDisconnectPlayer` (multi_server.cpp, timeout or kick) |
+| `player.chat` | `*<name> says: <text>` (D3.STR 117) | |
+| `level.started` | `Opening level '<file>.d3l'...` | `LoadLevel` (LoadLevel.cpp, `TXT_DS_OPENLEVEL`) |
+
+HUD messages reach the console as `*<text>` on a dedicated server (`AddLineToHUDMessages`,
+hudmessage.cpp), and `PrintDedicatedMessage` (dedicated_server.cpp) writes every one of these lines to
+stdout and to each remote console. Bots (`[BOT]` callsigns, bot.h `BOT_NAME_SUFFIX`) are not reported.
+Chat is matched before joins and leaves, so typed text cannot pose as one. A HUD line glued after the
+level-load status (`... 100 Percent Complete*X has joined CTF`; the status is printed without a
+newline, Mission.cpp) is still read. A server running other string tables prints other words and is
+not read. No line carries the player's address.
+
+### D.2 Relaunch after a crash
+
+`launcher/Supervisor.ts`, wired in `routes/launcher.ts`. A process that exits in state `crashed`
+(no `stop()` and no console `quit`, D.1) is relaunched with the same `LaunchConfig` (same profile,
+config file, executable and arguments; a new log file next to the last one) and
+`server.started{reason:"relaunch"}`. The wait is 5 s, doubling per failure to 2 min; failures older
+than 30 minutes are forgotten; the seventh failure inside 30 minutes gives up (`gaveUp` in the
+status, an error toast) until the next launch by hand. A relaunch that cannot spawn counts as a
+failure. Launching by hand cancels a pending relaunch and resets the count;
+`POST .../cancel-relaunch` drops it without launching.
+
+Left alone: a stop on request (`server.stopped`: the Stop button, a rotation, the scheduler, a
+console `quit`), and a crash while the rotation health check (`RotationHealthMonitor`) is pending.
+That crash belongs to the rotation, which retries once and then pauses the playlist; the launcher
+reads `rotationHealth.isPending()` before the health check reacts to the crash, because the check is
+idle once it gives up.
+
+`stopServer(reason, {kill})` in `routes/launcher.ts` is the one stop path (Stop button, supervisor;
+the scheduler should use it with `"schedule"`). Only a manual stop sends `quit`; the others close
+Pyrodeck's console session first and signal the process, as a rotation does, so the console port
+is not left in TIME_WAIT on the server's side.
+
+### D.3 Hang check
+
+`launcher/HangWatch.ts`. The engine services the remote console once per server frame
+(`DoDedicatedServerFrame` → `DedicatedReadTelnet`, dedicated_server.cpp) and echoes each line it
+reads before running it, so any console output proves the main loop turns and any command makes
+it print. Once the console is logged in, every chunk of console output resets the silence. After
+`hangProbeAfterSec` (default 59) of silence it sends `$players`
+(`DMFCInputCommand_Players`, dmfcinputcommand.cpp: a header and one line per player, printed with
+`DPrintf` = `PrintDedicatedMessage`, Game2DLL.cpp; vanilla and Matcen alike, and it refreshes the
+player count for D.4). With no output for `hangRestartAfterSec` (default 120) in all it emits
+`server.hung`, kills the process (SIGKILL, no `quit`: a stuck loop never runs it, and the engine's
+SIGTERM handler runs shutdown code in the same stuck process, sdlmain.cpp `fatal_signal_handler`)
+and relaunches it with the D.2 backoff. No `server.stopped` or `server.crashed` follows the kill.
+
+Level loads: no probe and no kill for 120 s after `level.started`. 3202 loads in the Matcen soak
+lab's logs took at most 0.98 s from `Opening level` to the end of the load, and the end of a level
+to the next `Opening level` about 1 s; builds before 0.9.15 stopped running frames for up to 48 s
+after a load (lab log, lazy navigation build on the main thread) and 100 s on DownTown (§3.3). A
+server that hangs during a load is found 120 s + 61 s after the load began.
+
+If the console link drops while the process runs, Pyrodeck logs in again every 5 s (D3Server3
+does the same); the silence keeps counting, so a server that accepts the TCP connection but never
+prompts for the password is still found hung.
+
+### D.4 Restart when empty
+
+Off by default. Checked every 15 s (D3Server3's timer): uptime above `emptyRestartAfterHours`
+(default 24), no human on the server, and at least `emptyRestartGraceSec` (default 130, D3Server3's
+value) since the last one left (since the start if nobody joined). Humans are counted from
+`player.joined`/`player.left` (D.1; `[BOT]` callsigns never count) and from every `$players` reply
+(slot 0 is the server itself). Before restarting, `$players` is sent once more and the restart
+happens only if its reply parses and lists no human. Then `server.stopped{reason:"empty-restart"}`
+and an immediate relaunch (`server.started{reason:"relaunch"}`), not counted as a failure. Not
+during a rotation. A re-attached server (D.5) counts as unknown until its first `$players` reply.
+
+Settings are global (`pyrodeck.json` → `supervisor`, validated like `missionHost`):
+`relaunchOnCrash` (true), `hangCheck` (true), `hangProbeAfterSec` (59, 10..3600),
+`hangRestartAfterSec` (120, at least probe + 10, up to 7200), `emptyRestart` (false),
+`emptyRestartAfterHours` (24, 0.1..8760), `emptyRestartGraceSec` (130, 0..3600).
+
+`supervisor` in `GET /api/launcher/status`: `settings`, `enabled`, `relaunchCount`,
+`recentFailures`, `pendingRelaunch {at, cause}`, `gaveUp {at, reason}`, `lastCrash {at, code,
+signal}`, `lastHang {at, silentForMs}`, `hang {state: off|listening|probing|loading, silentForMs,
+probeAt, restartAt}`, `uptimeMs`, `humans` (null = unknown), `emptySince`, `emptyRestart` (why not
+yet, null when off), `adopted`. The process status also carries `stopReason`.
+
+### D.5 Re-attach after Pyrodeck restarts
+
+For the server to outlive Pyrodeck, `ProcessManager.start` spawns it `detached` (its own process
+group on POSIX, so a Ctrl+C or SIGHUP to Pyrodeck's group does not reach it; outside libuv's
+kill-on-close job object on Windows), and on POSIX through
+`/bin/sh -c 'trap "" PIPE; exec "$0" "$@"' <exe> <args>`. Without that, the first write to stdout
+after Pyrodeck exits raises SIGPIPE, which kills the server: the engine installs no SIGPIPE handler
+(`install_signal_handlers`, sdlmain.cpp) and libuv resets every signal in the child. An ignored
+signal survives `exec`; the PID and `/proc/<pid>/cmdline` are the server's.
+
+`config/running-server.json` (`launcher/runRecord.ts`) holds `pid`, `profileId`, `executablePath`,
+`gamePath`, `configFile`, `args`, `logPath`, `telnetPort`, `startedAt` and, on Linux, the process's
+start time in clock ticks (`/proc/<pid>/stat` field 22) and `/proc/sys/kernel/random/boot_id`. It is
+written on `server.started` and removed when the process goes down; the console password is not
+stored. At startup Pyrodeck adopts the process only if (Linux) it is alive and not a zombie, the
+boot ID and start ticks match (so a reused PID is never taken), argv[0] is the executable and
+`-dedicated` is among the arguments; elsewhere if `process.kill(pid, 0)` finds it, it started after
+the last boot, and a login to its console port with the config file's password succeeds. Anything
+else removes the record and logs why.
+
+An adopted process: state `running`, `adopted: true`, `server.adopted` on the bus; the console logs
+in (no post-start settings; the playlist timer is anchored once); Stop sends `quit`, then SIGTERM
+and SIGKILL by PID; its exit is found by polling every second (exit code unknown, so an exit
+without a request is a crash and the supervisor relaunches it). Its stdout went to the old
+Pyrodeck, so the Output tab and log get nothing more; the console then feeds the line monitor
+(D.1) and the playlist's level detection instead.
+
+### D.6 UI
+
+Launch panel, **Supervisor** (below the Launch/Stop button, above Mission Downloads;
+`components/SupervisorSettings.tsx`). The title row shows a dot and a word: Watching, Probing,
+Relaunch in N s, Gave up or Off. Always visible: the give-up reason, a pending relaunch with its time
+and a **Cancel** button, `Relaunches: N · last crash HH:MM:SS (signal or exit) · last hang`,
+`Up … · N players · empty since …` while a server runs, the hang line (`Console answering`,
+`Console quiet N s (probe at 59 s)`, `$players sent, restart in N s without an answer`, or
+`Level loading: hang check paused`), and `Empty restart: <why not yet>` when that rule is on.
+Opening it shows the three switches with their numbers (probe after / restart after in seconds;
+uptime limit in hours, wait after the last player in seconds) and Save; a refused value shows the
+server's reason. The process status row gains a `Re-attached` badge and a line saying what works
+for an adopted server and that its output is no longer captured, and a signal badge for a crash.
+The launcher status is polled every 2 s while a server is up and every 5 s while it is down, so a
+relaunch shows without a reload.
 
 ---
 

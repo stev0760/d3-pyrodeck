@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs } from "./ProcessManager.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs, survivableCommand } from "./ProcessManager.js";
+import { readProcessFacts } from "./runRecord.js";
+import { ServerEvents } from "../events/ServerEvents.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -124,5 +127,183 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
   it("reports no log at all as state none", async () => {
     await launch(undefined);
     expect(pm.getStatus().log).toEqual({ path: null, state: "none", message: null });
+  });
+});
+
+describe.skipIf(process.platform === "win32")("ProcessManager server events", () => {
+  let dir: string;
+  let exe: string;
+  let pm: ProcessManager;
+  let events: ServerEvents;
+  let seen: string[];
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-pm-ev-"));
+    exe = path.join(dir, "fake-d3");
+    await fs.writeFile(exe, FAKE_SERVER, { mode: 0o755 });
+    events = new ServerEvents();
+    seen = [];
+    events.onEvent("server.started", (p) => seen.push(`started ${p.profileId} ${p.reason} ${p.args.join(" ")}`));
+    events.onEvent("server.stopped", (p) => seen.push(`stopped ${p.reason}${p.via ? ` via ${p.via}` : ""}`));
+    events.onEvent("server.crashed", (p) => seen.push(`crashed ${p.signal}`));
+    pm = new ProcessManager({ events });
+  });
+
+  afterEach(async () => {
+    await pm.stop();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const launch = (reason?: Parameters<ProcessManager["start"]>[1]) =>
+    pm.start(
+      {
+        executablePath: exe,
+        gamePath: dir,
+        configFile: "server.cfg",
+        telnetPort: UNUSED_PORT,
+        telnetPassword: "x",
+        profileId: "p1",
+      },
+      reason,
+    );
+
+  it("reports a start and a requested stop with their reasons", async () => {
+    await launch("schedule");
+    await pm.stop("schedule");
+    expect(pm.getStatus().state).toBe("stopped");
+    expect(seen).toEqual(["started p1 schedule -dedicated ./server.cfg", "stopped schedule"]);
+  });
+
+  it("reports a kill from outside as a crash", async () => {
+    await launch();
+    process.kill(pm.getStatus().pid!, "SIGKILL");
+    await expect.poll(() => pm.getStatus().state, { timeout: 3000 }).toBe("crashed");
+    expect(seen).toEqual(["started p1 manual -dedicated ./server.cfg", "crashed SIGKILL"]);
+  });
+
+  it("reports an exit right after a console quit as a stop, not a crash", async () => {
+    await launch();
+    pm.noteConsoleQuit();
+    process.kill(pm.getStatus().pid!, "SIGTERM");
+    await expect.poll(() => pm.getStatus().state, { timeout: 3000 }).toBe("stopped");
+    expect(seen[1]).toBe("stopped manual via console");
+  });
+
+  it("emits nothing for the kill after a hang (the supervisor reported it)", async () => {
+    await launch("relaunch");
+    await pm.stop("hang", { kill: true });
+    expect(pm.getStatus().state).toBe("stopped");
+    expect(pm.getStatus().exitSignal).toBe("SIGKILL");
+    expect(seen).toEqual(["started p1 relaunch -dedicated ./server.cfg"]);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => {
+  let dir: string;
+  let exe: string;
+  let pm: ProcessManager;
+  let events: ServerEvents;
+  let seen: string[];
+  let outside: ChildProcess | null;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-pm-adopt-"));
+    exe = path.join(dir, "fake-d3");
+    await fs.writeFile(exe, FAKE_SERVER, { mode: 0o755 });
+    events = new ServerEvents();
+    seen = [];
+    events.onEvent("server.adopted", (p) => seen.push(`adopted ${p.profileId} ${p.pid}`));
+    events.onEvent("server.stopped", (p) => seen.push(`stopped ${p.reason}`));
+    events.onEvent("server.crashed", (p) => seen.push(`crashed ${p.code} ${p.signal}`));
+    pm = new ProcessManager({ events });
+    outside = null;
+  });
+
+  afterEach(async () => {
+    await pm.stop();
+    if (outside?.pid) {
+      try {
+        process.kill(outside.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  /** A server some earlier Pyrodeck started: not this ProcessManager's child. */
+  const adoptOutsideServer = () => {
+    outside = spawn(exe, [], { stdio: "ignore", detached: true });
+    const pid = outside.pid!;
+    pm.adopt({
+      pid,
+      startedAt: new Date(Date.now() - 60_000),
+      args: ["-dedicated", "./server.cfg"],
+      config: {
+        executablePath: exe,
+        gamePath: dir,
+        configFile: "server.cfg",
+        telnetPort: UNUSED_PORT,
+        telnetPassword: "x",
+        profileId: "p1",
+      },
+      isAlive: async () => (await readProcessFacts(pid)).alive,
+    });
+    return pid;
+  };
+
+  it("shows a re-attached server as running and stops it on request", async () => {
+    const pid = adoptOutsideServer();
+    expect(pm.getStatus()).toMatchObject({ state: "running", pid, adopted: true, activeProfileId: "p1" });
+    expect(pm.isRunning()).toBe(true);
+    await pm.stop("manual");
+    expect(pm.getStatus()).toMatchObject({ state: "stopped", pid: null, stopReason: "manual" });
+    expect((await readProcessFacts(pid)).alive).toBe(false);
+    expect(seen).toEqual([`adopted p1 ${pid}`, "stopped manual"]);
+  });
+
+  it("notices a re-attached server that dies, as a crash", async () => {
+    const pid = adoptOutsideServer();
+    process.kill(pid, "SIGKILL");
+    await expect.poll(() => pm.getStatus().state, { timeout: 4000 }).toBe("crashed");
+    expect(seen).toEqual([`adopted p1 ${pid}`, "crashed null null"]);
+  });
+
+  it("asks the console to log in once re-attached", async () => {
+    const ready = new Promise<number>((resolve) => pm.once("telnetReady", resolve));
+    adoptOutsideServer();
+    expect(await ready).toBe(UNUSED_PORT);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("ProcessManager launch survives Pyrodeck", () => {
+  it("keeps the server alive when nothing reads its output any more", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-pm-pipe-"));
+    const exe = path.join(dir, "fake-d3");
+    await fs.writeFile(exe, FAKE_SERVER, { mode: 0o755 });
+    const pm = new ProcessManager({ events: new ServerEvents() });
+    try {
+      await pm.start({ executablePath: exe, gamePath: dir, configFile: "s.cfg", telnetPort: UNUSED_PORT, telnetPassword: "x" });
+      const pid = pm.getStatus().pid!;
+      // What Pyrodeck exiting does to the server: the read ends of its pipes close.
+      const child = (pm as unknown as { child: ChildProcess }).child;
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      // The fake server writes every 50 ms; without SIGPIPE ignored it dies on the first one.
+      await new Promise((r) => setTimeout(r, 500));
+      expect((await readProcessFacts(pid)).alive).toBe(true);
+      expect(survivableCommand(exe, ["-dedicated"]).args.slice(2)).toEqual([exe, "-dedicated"]);
+    } finally {
+      await pm.stop();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to start an executable that is not there", async () => {
+    const pm = new ProcessManager({ events: new ServerEvents() });
+    await expect(
+      pm.start({ executablePath: "/nonexistent/Descent3", gamePath: "/", configFile: "s.cfg", telnetPort: UNUSED_PORT, telnetPassword: "x" }),
+    ).rejects.toThrow(/Cannot run \/nonexistent\/Descent3/);
+    expect(pm.getStatus().state).toBe("stopped");
   });
 });

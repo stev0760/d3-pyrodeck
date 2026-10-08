@@ -111,6 +111,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
+- Supervisor: relaunches a crashed server, restarts a hung one, and can restart an empty server after an uptime limit (see [Keeping a server up](#keeping-a-server-up))
 
 ### Responsive Layout
 - Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
@@ -193,6 +194,20 @@ Limits that come from the game client:
 - **Retail missions are never offered** (`d3.mn3`, `d3_2.mn3`, `training.mn3`, `merc.mn3`); the server never advertises links for them.
 - **1999-era clients** (retail-derived builds) accept no port in a link. To reach them as well, forward public port 80 to the listener's port and leave the port out of the public URL (`http://example.org`).
 - The game window does not redraw while a download runs; it resumes when the download finishes. Pyrodeck holds each download for one second before sending, to keep clear of a divide-by-zero in the client's progress display.
+
+## Keeping a server up
+
+In Launch mode Pyrodeck watches the server it started, as D3Server3 did:
+
+- **Crash:** when the game exits without being asked to, Pyrodeck starts it again with the same profile after 5 s. Each further crash doubles the wait, up to 2 minutes. After seven crashes in 30 minutes it stops trying and says so; the next launch by hand starts the count over.
+- **Hang:** when the server's console has been quiet for 59 s, Pyrodeck sends `$players`. If nothing at all comes back by 120 s, it kills the server and starts it again. A level that is loading gets 2 minutes before this applies.
+- **Restart when empty** (off by default): once the server has run longer than a set number of hours, Pyrodeck restarts it when no human is on it and the last one left at least 130 s ago. Bots don't count. It asks the server with `$players` before restarting, so a player it missed is never kicked.
+
+A server you stop (Stop button, a playlist rotation, or `quit` typed at its console) stays down. A crash in the middle of a playlist restart is handled by the playlist's own retry.
+
+The Launch panel's **Supervisor** block shows what it is doing (relaunches so far, the last crash and hang, uptime, players, how long the console has been quiet, why an empty restart has not happened yet) and, when you open it, the three switches and their limits. A pending relaunch has a **Cancel** button for a crashed server you want left down. Pyrodeck's own log gets one `[Server]` line per start, stop, crash, hang, level start, join and leave.
+
+**Pyrodeck restarts do not stop the server.** A server Pyrodeck launched keeps running when Pyrodeck stops, crashes or is upgraded, and the next Pyrodeck re-attaches to it: status, console, Stop and the supervisor work again. Closing Pyrodeck therefore leaves the server up; stop it first if you want it down. After a re-attach the server's own output is not captured any more (it went to the Pyrodeck that started it), so the Output tab and the log file stop at the restart; the console still shows everything the server prints there.
 
 ## Tech Stack
 
