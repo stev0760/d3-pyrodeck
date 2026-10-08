@@ -22,6 +22,9 @@ import {
 } from "../launcher/playlistInstance.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
+import { consoleHostFor, sanitizeStoredLaunchOptions, type LaunchOptions } from "../launcher/launchOptions.js";
+import { buildTeamSettingLines, sanitizeStoredTeamSettings } from "../launcher/teamSettings.js";
+import { ProfileAutomation } from "../launcher/profileAutomation.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
 import { serverEvents } from "../events/ServerEvents.js";
@@ -93,6 +96,7 @@ serverEvents.onEvent("server.started", ({ pid, args }) => {
       args,
       logPath: config.logPath ?? null,
       telnetPort: config.telnetPort,
+      launchOptions: config.launchOptions ?? null,
       startedAt: (status.startedAt ?? new Date()).toISOString(),
       ...(linux ? { linux: { startTicks: linux.startTicks, bootId: linux.bootId } } : {}),
     };
@@ -100,6 +104,13 @@ serverEvents.onEvent("server.started", ({ pid, args }) => {
     await writeRunRecord(CONFIG_DIR, record);
   });
 });
+
+/** Periodic commands and respawn scaling for the launched profile (server.started → console ready → exit). */
+export const profileAutomation = new ProfileAutomation({
+  loadProfile: (id) => new ServerProfileManager(CONFIG_DIR, "").read(id).catch(() => null),
+});
+profileAutomation.listen(serverEvents);
+processManager.on("exit", () => profileAutomation.serverDown());
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -218,9 +229,10 @@ function registerAutoConnect(telnetPassword: string, healthToken?: number): void
   // Remove any stale once-handler from a launch that crashed before telnet was ready
   processManager.removeAllListeners("telnetReady");
 
-  processManager.once("telnetReady", (port: number) => {
-    console.log(`[Pyrodeck] D3 telnet ready on port ${port}, auto-connecting...`);
-    void connectConsole(port, telnetPassword, { healthToken }).catch(() => {});
+  processManager.once("telnetReady", (port: number, host?: string) => {
+    const consoleHost = consoleHostName(host);
+    console.log(`[Pyrodeck] D3 telnet ready on ${consoleHost}:${port}, auto-connecting...`);
+    void connectConsole(consoleHost, port, telnetPassword, { healthToken }).catch(() => {});
   });
 }
 
@@ -241,8 +253,21 @@ interface ConsoleConnectOptions {
   anchorPlaylist?: boolean;
 }
 
+/**
+ * The name to log in to the launched console with: a server started with
+ * -useip listens on that address only (ProcessManager.consoleHost).
+ */
+function consoleHostName(host: string | undefined): string {
+  return host && host !== "127.0.0.1" ? host : "localhost";
+}
+
 /** Log in to the launched server's remote console and make it the active session. */
-async function connectConsole(port: number, telnetPassword: string, opts: ConsoleConnectOptions = {}): Promise<void> {
+async function connectConsole(
+  host: string,
+  port: number,
+  telnetPassword: string,
+  opts: ConsoleConnectOptions = {},
+): Promise<void> {
   const { healthToken, again = false, anchorPlaylist = !again } = opts;
   try {
     // Disconnect any stale session
@@ -254,13 +279,13 @@ async function connectConsole(port: number, telnetPassword: string, opts: Consol
     const connection = new TelnetConnection();
     const session = sessionManager.create(
       connection,
-      "localhost",
+      host,
       port,
       telnetPassword,
     );
 
     sessionManager.updateState(session.id, "connecting");
-    await connection.connect("localhost", port, telnetPassword);
+    await connection.connect(host, port, telnetPassword);
 
     // Probe capabilities
     sessionManager.updateState(session.id, "probing");
@@ -298,7 +323,12 @@ async function connectConsole(port: number, telnetPassword: string, opts: Consol
     // one command at a time, so these never interleave with other replies.
     if (!again) void applyPostStartSettings(connection);
 
-    watchConsole(connection, port, telnetPassword);
+    // The profile's start lines (once per run), then its periodic lines every
+    // N minutes. A new login hands the timers the new connection.
+    const launchedProfileId = processManager.getStatus().activeProfileId;
+    if (launchedProfileId) void profileAutomation.consoleReady(launchedProfileId, connection);
+
+    watchConsole(connection, host, port, telnetPassword);
 
     // Anchor playlist timer if a playlist is active
     if (playlistManager.isActive() && anchorPlaylist) {
@@ -583,6 +613,8 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         telnetPort: telnetCfg.port,
         telnetPassword: telnetCfg.password,
         profileId: activeProfile.id,
+        launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
+        autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(activeProfile.teamSettings)),
       },
     };
     rotationHealth.begin();
@@ -698,7 +730,7 @@ export const supervisor = new Supervisor({
  * drops while the server runs. A re-attached server has no stdout, so its
  * console also feeds the line monitor and the playlist's level detection.
  */
-function watchConsole(connection: ServerConnection, port: number, telnetPassword: string): void {
+function watchConsole(connection: ServerConnection, host: string, port: number, telnetPassword: string): void {
   connection.onData((text) => {
     supervisor.consoleActivity();
     if (processManager.getStatus().adopted) {
@@ -706,7 +738,7 @@ function watchConsole(connection: ServerConnection, port: number, telnetPassword
       playlistManager.onStdoutChunk(text);
     }
   });
-  connection.onDisconnect(() => scheduleConsoleReconnect(port, telnetPassword));
+  connection.onDisconnect(() => scheduleConsoleReconnect(host, port, telnetPassword));
   stopConsoleReconnect();
   supervisor.consoleReady();
 }
@@ -715,15 +747,15 @@ function watchConsole(connection: ServerConnection, port: number, telnetPassword
 const CONSOLE_RECONNECT_MS = 5_000;
 let consoleReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleConsoleReconnect(port: number, telnetPassword: string): void {
+function scheduleConsoleReconnect(host: string, port: number, telnetPassword: string): void {
   if (consoleReconnectTimer || processManager.getStatus().state !== "running") return;
   consoleReconnectTimer = setTimeout(async () => {
     consoleReconnectTimer = null;
     if (processManager.getStatus().state !== "running") return;
     try {
-      await connectConsole(port, telnetPassword, { again: true });
+      await connectConsole(host, port, telnetPassword, { again: true });
     } catch {
-      scheduleConsoleReconnect(port, telnetPassword);
+      scheduleConsoleReconnect(host, port, telnetPassword);
     }
   }, CONSOLE_RECONNECT_MS);
 }
@@ -854,12 +886,16 @@ async function reattachToRunningServer(): Promise<void> {
     return;
   }
 
+  // A server started with -useip has its console on that address only.
+  const launchOptions = sanitizeStoredLaunchOptions(record.launchOptions);
+  const host = consoleHostName(consoleHostFor(launchOptions) ?? undefined);
+
   if (process.platform !== "linux") {
     // Only "a process with this PID is alive" is known here; prove it is the
     // server by logging in to its console first.
     const probe = new TelnetConnection();
     try {
-      await probe.connect("localhost", record.telnetPort, password);
+      await probe.connect(host, record.telnetPort, password);
     } catch (err) {
       return forget(`no server answers on console port ${record.telnetPort} (${err instanceof Error ? err.message : err})`);
     } finally {
@@ -880,15 +916,16 @@ async function reattachToRunningServer(): Promise<void> {
     telnetPort: record.telnetPort,
     telnetPassword: password,
     profileId: record.profileId ?? undefined,
+    launchOptions,
   };
 
   processManager.removeAllListeners("telnetReady");
   processManager.once("telnetReady", (port: number) => {
-    connectConsole(port, password, { again: true, anchorPlaylist: true }).catch((err) => {
+    connectConsole(host, port, password, { again: true, anchorPlaylist: true }).catch((err) => {
       wsBroadcast("error", {
         message: `Re-attached to the running server, but its console login failed (${err instanceof Error ? err.message : err}). Retrying every 5 s.`,
       });
-      scheduleConsoleReconnect(port, password);
+      scheduleConsoleReconnect(host, port, password);
     });
   });
   processManager.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
@@ -926,6 +963,9 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
     // Start with global config; profile may override these
     let gamePath = config.gamePath;
     let executablePath = config.executablePath;
+    let launchOptions: LaunchOptions | null = null;
+    // Only a profile launch owns the block in the Startup Commands file.
+    let autoexecBlock: string[] | undefined;
 
     if (body.profileId) {
       // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
@@ -937,6 +977,8 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         // Per-profile path overrides take precedence over global config
         if (profile.gamePath) gamePath = profile.gamePath;
         if (profile.executablePath) executablePath = profile.executablePath;
+        launchOptions = sanitizeStoredLaunchOptions(profile.launchOptions);
+        autoexecBlock = buildTeamSettingLines(sanitizeStoredTeamSettings(profile.teamSettings));
         await profileManager.markLaunched(body.profileId);
       } catch {
         return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
@@ -1057,6 +1099,8 @@ export async function launcherRoutes(app: FastifyInstance): Promise<void> {
         telnetPort,
         telnetPassword,
         profileId: body.profileId,
+        launchOptions,
+        autoexecBlock,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

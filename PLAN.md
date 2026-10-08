@@ -378,7 +378,12 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels)
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [ ] IP access control UI (hosts.allow/deny editor + `$rehash`)
-- [ ] Scheduled auto-commands (D3Server3-style: run command every N minutes)
+- [ ] Repeat one level of a multi-level mission (D3Server3 "Loop"). Not expressible in `dedicated.cfg`: `SetLevel` only
+      picks the first level (`dedicated_server.cpp:503-513`), and at level end the engine goes to `Multi_next_level` if a
+      `$warp`/`SetLevel` set it, else the next level, wrapping after the last (`gamesequence.cpp:1929-1946`). Options: a
+      one-level copy of the mission (D3Server3 rewrites the `.msn`; a changed `.mn3` must reach players too), or a
+      one-entry playlist with a starting level (a server restart per level). Skipped in the D3Server3 parity wave
+- [x] Scheduled auto-commands (D3Server3-style: run command every N minutes) — per-profile Periodic Commands (start lines + every N minutes; in order, random or all)
 - [ ] Dark/light theme toggle
 - [ ] Multi-server UI (tabs or sidebar, multiple D3 instances)
 - [ ] Player list sorting/filtering

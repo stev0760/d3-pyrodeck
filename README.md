@@ -90,6 +90,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
 - Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
 - Startup Commands (`autoexec.dmfc` in the game directory) reach the server at launch through `-autoexec`
+- Per-profile team settings and Hoard orb count (Launch panel → Edit → Teams and Hoard): allow team changes, auto balance, the four team names, orbs needed to score. Pyrodeck writes them into the Startup Commands file at each launch, between `# pyrodeck: begin` and `# pyrodeck: end`, and leaves every other line alone
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
 - Raw textarea fallback always available via structured/raw toggle
 - Import existing config files as new profiles
@@ -109,6 +110,10 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - D3 install path detection and validation
 - Process lifecycle management (launch, stop, auto-connect via telnet)
 - Per-profile post-start settings applied after every launch and playlist restart: server HUD names (full/team/none), kill message filter (full/simple/none), save stats at level end and on disconnect
+- Per-profile periodic commands (Edit → Periodic Commands): `$` commands or `say` lines sent once when Pyrodeck's console connects to the launched server, and every N minutes while it runs (next line in order, one at random, or all of them; at most 5 per round). They stop with the server and start over on the next launch
+- Per-profile powerup respawn scaling (Edit → Respawn by Players, off by default): `$setrespawntime` moves from a longest time at two human players or fewer to a shortest time at a set player count, bots not counted; sent when the console connects and after the player count settles, only when the value changes. It follows the server's player join and leave events
+- Per-profile launch options (Edit → Launch Options): bind address (`-useip`, IPv4 only; the console is then reached at that address), game port (`-useport`, default 2092/udp), frame cap (`-framecap`, 1-999, default 60), no pilot logos (`-nomultibmp`), GameSpy port and file (`-gamespyport`, `-gspyfile`). Saving a profile, or a server config's console port, warns when another profile uses the same game, GameSpy or console port
+- Join address in the Launch panel: the `host:port` players type into the game's Direct TCP/IP screen, with a Copy button. The port is the profile's game port (2092 unless set); the host is the Join Host setting (set it right there), else the profile's bind address or the mission host's public URL
 - Process status indicator (stopped, starting, running, crashed)
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 - Supervisor: relaunches a crashed server, restarts a hung one, and can restart an empty server after an uptime limit (see [Keeping a server up](#keeping-a-server-up))

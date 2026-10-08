@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { ServerProfileManager } from "../config/ServerProfile.js";
+import { ServerProfileManager, type ServerProfile } from "../config/ServerProfile.js";
 import {
   parseDedicatedCfg,
+  extractTelnetConfig,
   getCfgValue,
   entriesToStructured,
   structuredToString,
@@ -16,6 +17,17 @@ import {
 } from "../launcher/ConfigGenerator.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { sanitizePostStart } from "../launcher/postStartSettings.js";
+import {
+  effectivePorts,
+  findPortConflicts,
+  sanitizeStoredLaunchOptions,
+  validateLaunchOptions,
+  type ProfilePorts,
+} from "../launcher/launchOptions.js";
+import { validateTeamSettings } from "../launcher/teamSettings.js";
+import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
+import { validateRespawnScaling } from "../launcher/respawnScaling.js";
+import { resolveJoinAddress } from "../launcher/joinAddress.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
 import {
   BACKUP_SUFFIX,
@@ -94,6 +106,33 @@ async function getProfileManagerForId(id: string): Promise<{ manager: ServerProf
     manager: new ServerProfileManager(CONFIG_DIR, effectiveGamePath),
     profile,
   };
+}
+
+/** The ports a profile's server holds: launch options plus RemoteConsolePort from its config file. */
+async function profilePorts(profile: ServerProfile): Promise<ProfilePorts> {
+  const ports = effectivePorts(sanitizeStoredLaunchOptions(profile.launchOptions));
+  let consolePort: number | null = null;
+  const gamePath = profile.gamePath ?? pyrodeckConfig.get().gamePath;
+  if (gamePath) {
+    try {
+      const cfg = await new ServerProfileManager(CONFIG_DIR, gamePath).readFile(profile.configFile);
+      consolePort = extractTelnetConfig(parseDedicatedCfg(cfg)).port;
+    } catch {
+      // unreadable config: its console port is unknown
+    }
+  }
+  return { name: profile.name, game: ports.game, gameSpy: ports.gameSpy, console: consolePort };
+}
+
+/** Ports `profile` shares with other profiles or with Pyrodeck's own listeners. */
+async function portConflictWarnings(profile: ServerProfile): Promise<string[]> {
+  const all = await getMetadataManager().list();
+  const self = await profilePorts(profile);
+  const others = await Promise.all(all.filter((p) => p.id !== profile.id).map(profilePorts));
+  const services = [{ name: "Pyrodeck web", port: Number(process.env.PYRODECK_PORT ?? 3001) }];
+  const host = pyrodeckConfig.get().missionHost;
+  if (host.enabled) services.push({ name: "mission host", port: host.port });
+  return findPortConflicts(self, others, services);
 }
 
 export async function configRoutes(app: FastifyInstance): Promise<void> {
@@ -181,7 +220,11 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** Update profile metadata. */
+  /**
+   * Update profile metadata and settings. The response is the profile plus
+   * `warnings` (problems that do not block the save, such as a port another
+   * profile also uses). Invalid settings are refused with 400 and `details`.
+   */
   app.patch("/api/profiles/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = (request.body ?? {}) as {
@@ -191,20 +234,71 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       gamePath?: string | null;
       executablePath?: string | null;
       postStart?: unknown;
+      launchOptions?: unknown;
+      teamSettings?: unknown;
+      periodicCommands?: unknown;
+      respawnScaling?: unknown;
     };
-    const { postStart, ...rest } = body;
-    const updates = {
-      ...rest,
-      // Whitelisted values only; null or nothing valid clears the settings.
-      ...(postStart !== undefined ? { postStart: sanitizePostStart(postStart) } : {}),
-    };
+    const { postStart, launchOptions, teamSettings, periodicCommands, respawnScaling, ...rest } = body;
+    const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
+    // Whitelisted values only; null or nothing valid clears the settings.
+    if (postStart !== undefined) updates.postStart = sanitizePostStart(postStart);
 
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    if (launchOptions !== undefined) {
+      const check = validateLaunchOptions(launchOptions);
+      errors.push(...check.errors);
+      warnings.push(...check.warnings);
+      updates.launchOptions = check.options;
+    }
+    if (teamSettings !== undefined) {
+      const check = validateTeamSettings(teamSettings);
+      errors.push(...check.errors);
+      updates.teamSettings = check.settings;
+    }
+    if (periodicCommands !== undefined) {
+      const check = validatePeriodicSettings(periodicCommands);
+      errors.push(...check.errors);
+      updates.periodicCommands = check.settings;
+    }
+    if (respawnScaling !== undefined) {
+      const check = validateRespawnScaling(respawnScaling);
+      errors.push(...check.errors);
+      updates.respawnScaling = check.settings;
+    }
+    if (errors.length > 0) {
+      return reply.status(400).send({ error: errors.join(" "), details: errors });
+    }
+
+    let profile: ServerProfile;
     try {
-      const profile = await getMetadataManager().update(id, updates);
-      return profile;
+      profile = await getMetadataManager().update(id, updates);
     } catch {
       return reply.status(404).send({ error: "Profile not found" });
     }
+    if (launchOptions !== undefined) warnings.push(...(await portConflictWarnings(profile)));
+    return { ...profile, warnings };
+  });
+
+  /**
+   * The address players join this profile's server at: host (Join Host
+   * setting, -useip, or the mission host's public URL) and game port.
+   */
+  app.get("/api/profiles/:id/join-address", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    let profile: ServerProfile;
+    try {
+      profile = await getMetadataManager().read(id);
+    } catch {
+      return reply.status(404).send({ error: "Profile not found" });
+    }
+    const config = pyrodeckConfig.get();
+    return resolveJoinAddress(
+      sanitizeStoredLaunchOptions(profile.launchOptions),
+      config.joinHost,
+      config.missionHost.publicBaseUrl,
+    );
   });
 
   /** Delete a profile (metadata only — config files in gamePath are preserved). */
@@ -471,7 +565,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const cfgContent = structuredToString(data);
       await manager.writeFile(profile.configFile, cfgContent);
 
-      return { ok: true };
+      // RemoteConsolePort lives here: check it against the other profiles.
+      return { ok: true, warnings: await portConflictWarnings(profile) };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to write config";
       return reply.status(400).send({ error: message });

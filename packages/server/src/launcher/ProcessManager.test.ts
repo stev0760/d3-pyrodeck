@@ -5,7 +5,9 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { AUTOEXEC_FILE, ProcessManager, buildLaunchArgs, survivableCommand } from "./ProcessManager.js";
 import { readProcessFacts } from "./runRecord.js";
-import { ServerEvents } from "../events/ServerEvents.js";
+import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
+import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END } from "./autoexecBlock.js";
+import { ServerEvents, serverEvents, type ServerEventMap } from "../events/ServerEvents.js";
 
 describe("buildLaunchArgs", () => {
   let dir: string;
@@ -49,6 +51,46 @@ describe("buildLaunchArgs", () => {
     const { args, warning } = await buildLaunchArgs(config(gameDir));
     expect(args).toEqual(["-dedicated", "./server.cfg"]);
     expect(warning).toMatch(/Startup Commands not applied/);
+  });
+
+  it.each([
+    [{ bindIp: "192.168.0.103" }, ["-useip", "192.168.0.103"]],
+    [{ gamePort: 2116 }, ["-useport", "2116"]],
+    [{ frameCap: 30 }, ["-framecap", "30"]],
+    [{ noMultiBmp: true }, ["-nomultibmp"]],
+    [{ gameSpyPort: 20206 }, ["-gamespyport", "20206"]],
+    [{ gameSpyFile: "pro-gamespy.cfg" }, ["-gspyfile", "pro-gamespy.cfg"]],
+  ])("passes the launch option %o right after the config file", async (launchOptions, flags) => {
+    const { args } = await buildLaunchArgs({ ...config(dir), launchOptions });
+    expect(args).toEqual(["-dedicated", "./server.cfg", ...flags]);
+  });
+
+  it("passes no launch flags when the profile sets none", async () => {
+    expect((await buildLaunchArgs({ ...config(dir), launchOptions: null })).args).toEqual(["-dedicated", "./server.cfg"]);
+    expect((await buildLaunchArgs({ ...config(dir), launchOptions: {} })).args).toEqual(["-dedicated", "./server.cfg"]);
+  });
+
+  it("passes no flag for a stored option that no longer validates", async () => {
+    for (const stored of [{ gamePort: 0 }, { frameCap: 0 }, { bindIp: "example.org" }, { gameSpyFile: "../x" }]) {
+      const launchOptions = sanitizeStoredLaunchOptions(stored);
+      expect((await buildLaunchArgs({ ...config(dir), launchOptions })).args).toEqual(["-dedicated", "./server.cfg"]);
+    }
+  });
+
+  it("puts launch options before additional args and -autoexec", async () => {
+    await fs.writeFile(path.join(dir, AUTOEXEC_FILE), "$killmsgfilter simple\n");
+    const { args } = await buildLaunchArgs({
+      ...config(dir),
+      launchOptions: { gamePort: 2116, gameSpyPort: 20206 },
+      additionalArgs: ["-useport", "9999"],
+    });
+    // FindArg takes the first match, so the profile's -useport wins.
+    expect(args).toEqual([
+      "-dedicated", "./server.cfg",
+      "-useport", "2116", "-gamespyport", "20206",
+      "-useport", "9999",
+      "-autoexec", path.join(dir, AUTOEXEC_FILE),
+    ]);
   });
 });
 
@@ -122,6 +164,55 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
     await expect
       .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
       .toContain(`Args: -dedicated ./server.cfg -autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
+  });
+
+  it("writes the profile's block into a new Startup Commands file and passes it", async () => {
+    const logPath = path.join(dir, "block.log");
+    await pm.start({
+      executablePath: exe,
+      gamePath: dir,
+      configFile: "server.cfg",
+      logPath,
+      telnetPort: UNUSED_PORT,
+      telnetPassword: "x",
+      autoexecBlock: ["$allowteamchange on", "$setteamname 0 Crimson"],
+    });
+    expect(await fs.readFile(path.join(dir, AUTOEXEC_FILE), "utf-8")).toBe(
+      [AUTOEXEC_BLOCK_BEGIN, "$allowteamchange on", "$setteamname 0 Crimson", AUTOEXEC_BLOCK_END, ""].join("\n"),
+    );
+    await expect
+      .poll(() => fs.readFile(logPath, "utf-8"), { timeout: 3000 })
+      .toContain(`-autoexec ${path.join(dir, AUTOEXEC_FILE)}\n`);
+  });
+
+  it("reports the launch options in server.started's args, with the start reason", async () => {
+    const seen: ServerEventMap["server.started"][] = [];
+    const listener = (e: ServerEventMap["server.started"]) => seen.push(e);
+    serverEvents.onEvent("server.started", listener);
+    try {
+      await pm.start(
+        {
+          executablePath: exe,
+          gamePath: dir,
+          configFile: "server.cfg",
+          telnetPort: UNUSED_PORT,
+          telnetPassword: "x",
+          profileId: "p1",
+          launchOptions: { gamePort: 2116 },
+        },
+        "playlist",
+      );
+      expect(seen).toEqual([
+        {
+          profileId: "p1",
+          pid: pm.getStatus().pid,
+          args: ["-dedicated", "./server.cfg", "-useport", "2116"],
+          reason: "playlist",
+        },
+      ]);
+    } finally {
+      serverEvents.offEvent("server.started", listener);
+    }
   });
 
   it("reports no log at all as state none", async () => {

@@ -10,6 +10,7 @@ import {
   sanitizeStoredSupervisor,
   type SupervisorSettings,
 } from "../launcher/supervisorSettings.js";
+import { checkJoinHost } from "../launcher/joinAddress.js";
 
 export interface PyrodeckConfig {
   /** Directory containing D3 game data (.hog files, missions, config files). Required for Launch mode. */
@@ -32,6 +33,8 @@ export interface PyrodeckConfig {
   missionHost: MissionHostSettings;
   /** Crash relaunch, hang check, restart when empty (launcher/Supervisor.ts). Set via /api/launcher/supervisor only. */
   supervisor: SupervisorSettings;
+  /** Host name or IPv4 address players join at, shown with the game port in the Launch panel. Null = unknown. */
+  joinHost: string | null;
 }
 
 /** Legacy config shape for migration from pre-profile versions. */
@@ -52,6 +55,7 @@ const DEFAULT_CONFIG: PyrodeckConfig = {
   adminPasswordHash: null,
   missionHost: { ...DEFAULT_MISSION_HOST_SETTINGS },
   supervisor: { ...DEFAULT_SUPERVISOR_SETTINGS },
+  joinHost: null,
 };
 
 /**
@@ -111,6 +115,10 @@ function migrateConfig(
   }
   if ("supervisor" in raw) {
     migrated.supervisor = sanitizeStoredSupervisor(raw.supervisor);
+  }
+  if (typeof raw.joinHost === "string") {
+    const check = checkJoinHost(raw.joinHost);
+    migrated.joinHost = "host" in check ? check.host : null;
   }
 
   return migrated;

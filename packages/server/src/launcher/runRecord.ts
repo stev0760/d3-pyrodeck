@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { LaunchOptions } from "./launchOptions.js";
 
 /**
  * The running server, kept on disk so that Pyrodeck can re-attach to it after
@@ -18,6 +19,8 @@ export interface RunRecord {
   args: string[];
   logPath: string | null;
   telnetPort: number;
+  /** The profile's launch options; -useip decides where the console listens. */
+  launchOptions?: LaunchOptions | null;
   /** ISO time Pyrodeck spawned the process. */
   startedAt: string;
   /**

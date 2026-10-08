@@ -9,6 +9,8 @@ export interface PyrodeckConfig {
   logDir: string | null;
   defaultTelnetPort: number;
   preferredMode: "connect" | "launch";
+  /** Host players join at (Launch panel join address); null = unknown. */
+  joinHost?: string | null;
   needsSetup: boolean;
 }
 
@@ -45,6 +47,43 @@ export interface PostStartSettings {
   autoSaveDisconnect?: boolean;
 }
 
+/** Engine flags added after -dedicated at each launch (server: launcher/launchOptions.ts). */
+export interface LaunchOptions {
+  bindIp?: string;
+  gamePort?: number;
+  frameCap?: number;
+  noMultiBmp?: boolean;
+  gameSpyPort?: number;
+  gameSpyFile?: string;
+}
+
+export type TeamKey = "red" | "blue" | "green" | "yellow";
+
+/** DMFC team options and the Hoard orb count, applied at launch (server: launcher/teamSettings.ts). */
+export interface TeamSettings {
+  allowTeamChange?: boolean;
+  autoBalance?: boolean;
+  teamNames?: Partial<Record<TeamKey, string>>;
+  hoardMinOrbs?: number;
+}
+
+/** Console lines at start and every N minutes (server: launcher/periodicCommands.ts). */
+export interface PeriodicCommandSettings {
+  enabled: boolean;
+  startLines: string[];
+  lines: string[];
+  intervalMinutes: number;
+  mode: "all" | "sequential" | "random";
+}
+
+/** Powerup respawn time scaled by human players (server: launcher/respawnScaling.ts). */
+export interface RespawnScaling {
+  enabled: boolean;
+  minSeconds: number;
+  maxSeconds: number;
+  playersForMin: number;
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -56,9 +95,25 @@ export interface ServerProfile {
   executablePath?: string;
   /** Applied over the console after every launch and playlist restart. */
   postStart?: PostStartSettings;
+  launchOptions?: LaunchOptions;
+  teamSettings?: TeamSettings;
+  periodicCommands?: PeriodicCommandSettings;
+  respawnScaling?: RespawnScaling;
   createdAt: string;
   lastLaunchedAt?: string;
 }
+
+/** Profile settings as the edit form sends them: numbers may be strings, the server validates. */
+export interface ProfileSettingsPayload {
+  postStart?: PostStartSettings | null;
+  launchOptions?: Record<string, string | number | boolean> | null;
+  teamSettings?: Record<string, unknown> | null;
+  periodicCommands?: Record<string, unknown> | null;
+  respawnScaling?: Record<string, unknown> | null;
+}
+
+/** A saved profile with the save's non-blocking warnings (shared ports and the like). */
+export type SavedProfile = ServerProfile & { warnings?: string[] };
 
 export interface DetectResult {
   hogFiles: string[];
@@ -233,9 +288,8 @@ export function useLauncher() {
         gamePath?: string | null;
         executablePath?: string | null;
         description?: string | null;
-        postStart?: PostStartSettings | null;
-      },
-    ): Promise<ServerProfile | null> => {
+      } & ProfileSettingsPayload,
+    ): Promise<SavedProfile | null> => {
       setError(null);
       try {
         const res = await fetch(`/api/profiles/${id}`, {
@@ -250,7 +304,7 @@ export function useLauncher() {
           return null;
         }
         await fetchProfiles();
-        return data as ServerProfile;
+        return data as SavedProfile;
       } catch {
         setError("Failed to update profile");
         return null;

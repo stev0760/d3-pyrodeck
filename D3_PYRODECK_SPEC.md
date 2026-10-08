@@ -818,6 +818,13 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 | `GET` | `/api/launcher/supervisor` | Supervisor settings and state (Addendum D) |
 | `PUT` | `/api/launcher/supervisor` | Save supervisor settings (fields left out keep their value); applies at once |
 | `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
+| `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.4.21) |
+
+**Join address (v0.4.21).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
+(`Descent3/descent.h`). `host` is the first of: the global `joinHost` setting (`PUT /api/pyrodeck/config`
+`{ joinHost }`, a host name or IPv4 address without scheme, port or path; empty clears it), the profile's `bindIp` when
+it is public, the host of `missionHost.publicBaseUrl`, the `bindIp` when it is a LAN address. `lanOnly` marks a loopback
+or private host. The Launch panel shows `address` with a Copy button and edits `joinHost` in place.
 
 **Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
 auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the
@@ -829,6 +836,59 @@ restarts the server). After launch, `GET /api/launcher/status` carries
 (first check about 8 s after launch), `failed` on a stream error, an empty or missing file, or a
 file deleted, moved or replaced while the server runs (re-checked every 30 s). A failure also
 raises an error toast; the Launch panel keeps it on screen until the next launch.
+
+**Profile settings (v0.4.21).** `PATCH /api/profiles/:id` takes, besides the metadata and `postStart`:
+
+| Field | Shape | Effect |
+|-------|-------|--------|
+| `launchOptions` | `{ bindIp?, gamePort?, frameCap?, noMultiBmp?, gameSpyPort?, gameSpyFile? }` or `null` | Flags after `-dedicated <cfg>`: `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport`, `-gspyfile` |
+| `teamSettings` | `{ allowTeamChange?, autoBalance?, teamNames?: { red?, blue?, green?, yellow? }, hoardMinOrbs? }` or `null` | Lines in the Startup Commands block at launch: `$allowteamchange on\|off`, `$autobalance on\|off`, `$setteamname <0-3> <name>`, `$mincount <1-12>` |
+| `respawnScaling` | `{ enabled, minSeconds, maxSeconds, playersForMin }` or `null` | `$setrespawntime` from `maxSeconds` (two humans or fewer) down to `minSeconds` (at `playersForMin`, 3-32), linear between; 1-10000 s |
+| `periodicCommands` | `{ enabled, startLines: string[], lines: string[], intervalMinutes, mode: "all"\|"sequential"\|"random" }` or `null` | Console lines: `startLines` once per launch when the console session is ready, `lines` every `intervalMinutes` (1-1440) |
+
+Invalid values are refused with 400 and `details: string[]`; the stored profile is untouched. The response is the
+profile plus `warnings: string[]`, problems that do not block the save. Saving launch options checks the profile's game
+(UDP), GameSpy (UDP) and console (TCP, `RemoteConsolePort` from its config file) ports against every other profile and
+against Pyrodeck's own and the mission host's TCP ports; `PUT /api/profiles/:id/structured-config` runs the same check
+and returns `{ ok, warnings }`.
+
+Launch option rules, from the engine source (`packages/server/src/launcher/launchOptions.ts` cites each line):
+`bindIp` is a dotted IPv4 literal (`inet_addr`; a host name would be ignored, `255.255.255.255` is `INADDR_NONE`), and
+since the server binds its console to it too, Pyrodeck's readiness probe and auto-connect go to that address instead of
+loopback. Ports are 1-65535 (defaults: game 2092, GameSpy 20142). `frameCap` is 1-999 frames per second (default 60;
+0 divides by zero in `init.cpp`). `gameSpyFile` is a plain file name in the game directory.
+
+Team settings ride in the Startup Commands file because DMFC reads exactly one startup script (`ParseStartupScript`,
+`netgames/dmfc/dmfcbase.cpp`), after its saved settings, so they apply before any player joins. At each profile launch
+and playlist restart `ProcessManager.start` rewrites the block between `# pyrodeck: begin` and `# pyrodeck: end` at the
+end of `<gamePath>/autoexec.dmfc` (`launcher/autoexecBlock.ts`): idempotent, operator lines and line endings kept, the
+block removed when nothing is set, the file created only when there is a block to write. DMFC runs the marker lines as
+the unknown command `$#`, which it ignores. Team names are one word of at most 15 characters (DMFC parses one word into
+`MAX_TEAMNAME_LEN` 16); `$mincount` exists only in Hoard (1-12) and other game types ignore it; the open-source Hoard has
+no maximum. DMFC saves allow-team-change and auto-balance in the engine's preferences when a game ends, so an unset
+value means what the last server on the machine left. Verified on the Matcen Debug build: `*Allow Team Changing: On`,
+`*Auto Team Balance: On`, `Red changed team name to Crimson`, `*Hoard Orb Score Minimum Count Set To 3`, after the
+operator's own `$statmsgs on` (`*Statistical Messages: On`).
+
+Periodic commands (`launcher/periodicCommands.ts`, `launcher/profileAutomation.ts`) follow one server run:
+`ProcessManager.start` emits `server.started` (`{ profileId, pid, args, reason: "manual"|"playlist" }`) for every
+profile launch; the automation loads the profile's settings and waits; when the launch's auto-connect session is ready
+it sends the start lines, then a round every interval over that session, skipping rounds while the connection is down.
+The run ends on the process's exit (and on `server.stopped`/`server.crashed` from the bus); a second `server.started`
+for the same pid is ignored. Lines must start with `$` or `say `, be printable ASCII and at most 200 characters (the
+`Say` cvar's limit, `dedicated_server.cpp:181`; the console drops lines past 254 bytes, `:1656`). A round sends at most
+5 lines; `startLines` and `all`-mode `lines` are capped at 5, the others at 20. Verified live: `[127.0.0.1] say PRO
+start line: welcome` / `*-Server- says: PRO start line: welcome`, then one minute apart `*-Server- says: PRO periodic
+tick A` and `... tick B`.
+
+Respawn scaling (`launcher/respawnScaling.ts`) rides the same run. It counts human players from `player.joined` and
+`player.left` for the launched profile (names ending in `[BOT]`, with or without a space, are bots), starting from zero
+at each `server.started`. At console ready it sends the value for the current count, then recomputes 15 s after the
+last join or leave and sends `$setrespawntime <n>` only when `n` differs from the last value sent. DMFC
+(`dmfcinputcommand.cpp:672-700`) clamps below 1, has no upper limit and syncs the netgame to clients; the engine times
+each powerup's return at pickup (`object.cpp:1917-1918`: `respawn_time` × the powerup's `respawn_scalar`), so a change
+applies from the next pickup. Pyrodeck does not itself emit `player.joined`/`player.left`; whichever module parses joins
+and leaves does.
 
 ---
 
