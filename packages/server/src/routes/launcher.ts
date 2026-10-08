@@ -1,7 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ProcessManager, type LaunchConfig } from "../launcher/ProcessManager.js";
+import {
+  ProcessManager,
+  buildLaunchArgs,
+  type LaunchConfig,
+  type ProcessStatus,
+} from "../launcher/ProcessManager.js";
 import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
 import {
   parseDedicatedCfg,
@@ -24,12 +29,25 @@ import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { buildPostStartCommands } from "../launcher/postStartSettings.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { missionHost } from "./mission-host.js";
+import { serverEvents, type ServerEventMap } from "../events/ServerEvents.js";
 
 export { playlistManager };
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 export const processManager = new ProcessManager();
+
+/**
+ * Announce a started server process on the event bus (process priority,
+ * email alerts and supervision listen). The arguments are the ones
+ * ProcessManager.start passed.
+ */
+async function emitStarted(launch: LaunchConfig, reason: ServerEventMap["server.started"]["reason"]): Promise<void> {
+  const pid = processManager.getStatus().pid;
+  if (pid === null) return;
+  const { args } = await buildLaunchArgs(launch);
+  serverEvents.emitEvent("server.started", { profileId: launch.profileId ?? "", pid, args, reason });
+}
 
 // Restore playlist activation state from disk on startup
 playlistManager.restoreState().catch(() => {});
@@ -258,6 +276,7 @@ async function launchForRotation(rl: RotationLaunch, token: number): Promise<voi
   registerAutoConnect(rl.telnetPassword, token);
   await processManager.start(rl.launch);
   rotationHealth.arm();
+  void emitStarted(rl.launch, "playlist");
 }
 
 /** Give up on a rotation restart: pause the playlist and say why, loudly. */
@@ -426,6 +445,13 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
     const launchStatus = processManager.getStatus();
     if (launchStatus.state === "running" || launchStatus.state === "starting") {
       await processManager.stop();
+      if (launchStatus.pid !== null) {
+        serverEvents.emitEvent("server.stopped", {
+          profileId: launchStatus.activeProfileId ?? "",
+          pid: launchStatus.pid,
+          reason: "playlist",
+        });
+      }
     }
     // From here on the server is down: a failure pauses the playlist instead
     // of leaving it "restarting" behind a dead server.
@@ -588,195 +614,233 @@ processManager.on("logWarning", (message: string) => {
   wsBroadcast("error", { message });
 });
 
-export async function launcherRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/api/launcher/start", async (request, reply) => {
-    if (processManager.isRunning()) {
-      return reply.status(409).send({ error: "Server is already running" });
-    }
-    takeOverFromRotation();
+/** Result of startServer/stopServer: the new status, or an HTTP code and message. */
+export type LaunchResult = { ok: true; status: ProcessStatus } | { ok: false; code: number; error: string };
 
-    const body = request.body as {
-      profileId?: string;
-      telnetPort?: number;
-    };
+/**
+ * Start a server from a profile, or from the global dedicated.cfg without
+ * one: the path behind POST /api/launcher/start, also taken by the weekly
+ * schedule.
+ */
+export async function startServer(opts: { profileId?: string; reason: "manual" | "schedule" }): Promise<LaunchResult> {
+  if (processManager.isRunning()) {
+    return { ok: false, code: 409, error: "Server is already running" };
+  }
+  takeOverFromRotation();
 
-    const config = pyrodeckConfig.get();
+  const config = pyrodeckConfig.get();
 
-    // Resolve config file and effective paths from profile (if specified)
-    let configFile = "dedicated.cfg";
-    // Label used to auto-name the log file for this launch; profile name when
-    // launching a profile, otherwise the config filename.
-    let logLabel = path.basename(configFile, path.extname(configFile));
-    // Start with global config; profile may override these
-    let gamePath = config.gamePath;
-    let executablePath = config.executablePath;
+  // Resolve config file and effective paths from profile (if specified)
+  let configFile = "dedicated.cfg";
+  // Label used to auto-name the log file for this launch; profile name when
+  // launching a profile, otherwise the config filename.
+  let logLabel = path.basename(configFile, path.extname(configFile));
+  // Start with global config; profile may override these
+  let gamePath = config.gamePath;
+  let executablePath = config.executablePath;
 
-    if (body.profileId) {
-      // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
-      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath ?? "");
-      try {
-        const profile = await profileManager.read(body.profileId);
-        configFile = profile.configFile;
-        logLabel = profile.name;
-        // Per-profile path overrides take precedence over global config
-        if (profile.gamePath) gamePath = profile.gamePath;
-        if (profile.executablePath) executablePath = profile.executablePath;
-        await profileManager.markLaunched(body.profileId);
-      } catch {
-        return reply.status(404).send({ error: `Profile not found: ${body.profileId}` });
-      }
-    }
-
-    if (!gamePath || !executablePath) {
-      return reply.status(400).send({
-        error: "Game path and executable not configured (set in Pyrodeck Settings or add overrides to the profile)",
-      });
-    }
-
-    const cfgPath = path.join(gamePath, configFile);
-
-    // Parse the config file for the telnet port/password. Both are always set
-    // from the parsed config below before use (every other path returns), so
-    // they're declared without a dead initializer.
-    let telnetPort: number;
-    let telnetPassword: string;
-
+  if (opts.profileId) {
+    // Use a base manager (gamePath unused for reading profiles.json from CONFIG_DIR)
+    const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath ?? "");
     try {
-      const cfgContent = await fs.readFile(cfgPath, "utf-8");
-      const entries = parseDedicatedCfg(cfgContent);
-      const telnetCfg = extractTelnetConfig(entries);
-
-      if (!telnetCfg.enabled) {
-        return reply.status(400).send({
-          error:
-            "AllowRemoteConsole is not enabled in " +
-            configFile +
-            ". Pyrodeck requires remote console access.",
-        });
-      }
-
-      telnetPort = telnetCfg.port;
-      telnetPassword = telnetCfg.password ?? "";
+      const profile = await profileManager.read(opts.profileId);
+      configFile = profile.configFile;
+      logLabel = profile.name;
+      // Per-profile path overrides take precedence over global config
+      if (profile.gamePath) gamePath = profile.gamePath;
+      if (profile.executablePath) executablePath = profile.executablePath;
+      await profileManager.markLaunched(opts.profileId);
     } catch {
-      return reply.status(400).send({
-        error: `Cannot read config file: ${cfgPath}`,
-      });
+      return { ok: false, code: 404, error: `Profile not found: ${opts.profileId}` };
     }
+  }
 
-    if (!telnetPassword) {
-      return reply.status(400).send({
+  if (!gamePath || !executablePath) {
+    return {
+      ok: false,
+      code: 400,
+      error: "Game path and executable not configured (set in Pyrodeck Settings or add overrides to the profile)",
+    };
+  }
+
+  const cfgPath = path.join(gamePath, configFile);
+
+  // Parse the config file for the telnet port/password. Both are always set
+  // from the parsed config below before use (every other path returns), so
+  // they're declared without a dead initializer.
+  let telnetPort: number;
+  let telnetPassword: string;
+
+  try {
+    const cfgContent = await fs.readFile(cfgPath, "utf-8");
+    const entries = parseDedicatedCfg(cfgContent);
+    const telnetCfg = extractTelnetConfig(entries);
+
+    if (!telnetCfg.enabled) {
+      return {
+        ok: false,
+        code: 400,
         error:
-          "ConsolePassword not set in " +
+          "AllowRemoteConsole is not enabled in " +
           configFile +
-          ". Pyrodeck needs a password to connect.",
-      });
+          ". Pyrodeck requires remote console access.",
+      };
     }
 
-    // Disconnect any existing session
-    const existing = sessionManager.getActive();
-    if (existing) {
-      sessionManager.remove(existing.id);
-    }
+    telnetPort = telnetCfg.port;
+    telnetPassword = telnetCfg.password ?? "";
+  } catch {
+    return {
+      ok: false,
+      code: 400,
+      error: `Cannot read config file: ${cfgPath}`,
+    };
+  }
 
-    // Resolve executable path (if relative, join with gamePath)
-    // executablePath is already set from profile override or global config above
-    if (!path.isAbsolute(executablePath)) {
-      executablePath = path.join(gamePath, executablePath);
-    }
+  if (!telnetPassword) {
+    return {
+      ok: false,
+      code: 400,
+      error:
+        "ConsolePassword not set in " +
+        configFile +
+        ". Pyrodeck needs a password to connect.",
+    };
+  }
 
-    // Log file: auto-named per launch in the configured log directory (default:
-    // next to the executable). Create the directory and the file itself BEFORE
-    // launch so a missing or unwritable target fails loudly instead of silently
-    // logging into the void for hours.
-    const logDir = resolveLogDir(config.logDir, executablePath);
-    const logPath = path.join(logDir, buildLogFilename(logLabel));
-    const logError = await prepareLogFile(logPath);
-    if (logError) {
-      return reply.status(400).send({
-        error: `${logError} Set a valid Log Directory in the Logs panel.`,
-      });
-    }
+  // Disconnect any existing session
+  const existing = sessionManager.getActive();
+  if (existing) {
+    sessionManager.remove(existing.id);
+  }
 
-    // If a playlist is active and hasn't been synced to a server yet, override
-    // the profile's MissionName/SetLevel with the playlist's current entry
-    // BEFORE launch — otherwise the first level would be whatever the config
-    // has, and the playlist wouldn't kick in until the first "Ending level."
-    const initialEntry = playlistManager.consumeInitialSync();
-    if (initialEntry) {
-      const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
-      try {
+  // Resolve executable path (if relative, join with gamePath)
+  // executablePath is already set from profile override or global config above
+  if (!path.isAbsolute(executablePath)) {
+    executablePath = path.join(gamePath, executablePath);
+  }
+
+  // Log file: auto-named per launch in the configured log directory (default:
+  // next to the executable). Create the directory and the file itself BEFORE
+  // launch so a missing or unwritable target fails loudly instead of silently
+  // logging into the void for hours.
+  const logDir = resolveLogDir(config.logDir, executablePath);
+  const logPath = path.join(logDir, buildLogFilename(logLabel));
+  const logError = await prepareLogFile(logPath);
+  if (logError) {
+    return {
+      ok: false,
+      code: 400,
+      error: `${logError} Set a valid Log Directory in the Logs panel.`,
+    };
+  }
+
+  // If a playlist is active and hasn't been synced to a server yet, override
+  // the profile's MissionName/SetLevel with the playlist's current entry
+  // BEFORE launch — otherwise the first level would be whatever the config
+  // has, and the playlist wouldn't kick in until the first "Ending level."
+  const initialEntry = playlistManager.consumeInitialSync();
+  if (initialEntry) {
+    const profileManager = new ServerProfileManager(CONFIG_DIR, gamePath);
+    try {
+      await profileManager.ensureConfigReference(
+        configFile,
+        "MissionName",
+        initialEntry.missionName,
+      );
+      if (initialEntry.startingLevel !== undefined) {
         await profileManager.ensureConfigReference(
           configFile,
-          "MissionName",
-          initialEntry.missionName,
+          "SetLevel",
+          String(initialEntry.startingLevel),
         );
-        if (initialEntry.startingLevel !== undefined) {
-          await profileManager.ensureConfigReference(
-            configFile,
-            "SetLevel",
-            String(initialEntry.startingLevel),
-          );
-        }
-        console.log(
-          `[Playlist] Pre-launch: wrote MissionName=${initialEntry.missionName} to ${configFile}`,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return reply.status(500).send({
-          error: `Failed to apply playlist mission to config: ${message}`,
-        });
       }
-    }
-
-    // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
-    registerAutoConnect(telnetPassword);
-
-    // Start the D3 process
-    try {
-      await processManager.start({
-        executablePath,
-        gamePath,
-        configFile,
-        logPath,
-        telnetPort,
-        telnetPassword,
-        profileId: body.profileId,
-      });
+      console.log(
+        `[Playlist] Pre-launch: wrote MissionName=${initialEntry.missionName} to ${configFile}`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return reply.status(500).send({ error: message });
+      return {
+        ok: false,
+        code: 500,
+        error: `Failed to apply playlist mission to config: ${message}`,
+      };
     }
+  }
 
+  // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
+  registerAutoConnect(telnetPassword);
+
+  // Start the D3 process
+  const launch: LaunchConfig = {
+    executablePath,
+    gamePath,
+    configFile,
+    logPath,
+    telnetPort,
+    telnetPassword,
+    profileId: opts.profileId,
+  };
+  try {
+    await processManager.start(launch);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, code: 500, error: message };
+  }
+  void emitStarted(launch, opts.reason);
+
+  return { ok: true, status: processManager.getStatus() };
+}
+
+/**
+ * Stop the running server (graceful quit, then signals): the path behind
+ * POST /api/launcher/stop, also taken by the weekly schedule.
+ */
+export async function stopServer(reason: "manual" | "schedule"): Promise<LaunchResult> {
+  if (!processManager.isRunning()) {
+    return { ok: false, code: 409, error: "Server is not running" };
+  }
+  const { pid, activeProfileId } = processManager.getStatus();
+
+  takeOverFromRotation();
+  playlistManager.sendCommandFn = null;
+
+  // Stop while the telnet session is still wired so ProcessManager can try
+  // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
+  // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
+  // absorbs that on the next launch.
+  await processManager.stop();
+
+  // Clean up session after the process is down
+  processManager.sendQuitFn = null;
+  const session = sessionManager.getActive();
+  if (session) {
+    sessionManager.remove(session.id);
+  }
+
+  wsBroadcast("connection_state", { state: "disconnected" });
+  if (pid !== null) {
+    serverEvents.emitEvent("server.stopped", { profileId: activeProfileId ?? "", pid, reason });
+  }
+
+  return { ok: true, status: processManager.getStatus() };
+}
+
+export async function launcherRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/api/launcher/start", async (request, reply) => {
+    const body = (request.body ?? {}) as { profileId?: string };
+    const result = await startServer({ profileId: body.profileId, reason: "manual" });
+    if (!result.ok) return reply.status(result.code).send({ error: result.error });
     return {
-      status: processManager.getStatus(),
+      status: result.status,
       message: "Server starting",
     };
   });
 
   app.post("/api/launcher/stop", async (_request, reply) => {
-    if (!processManager.isRunning()) {
-      return reply.status(409).send({ error: "Server is not running" });
-    }
-
-    takeOverFromRotation();
-    playlistManager.sendCommandFn = null;
-
-    // Stop while the telnet session is still wired so ProcessManager can try
-    // a graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
-    // If D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
-    // absorbs that on the next launch.
-    await processManager.stop();
-
-    // Clean up session after the process is down
-    processManager.sendQuitFn = null;
-    const session = sessionManager.getActive();
-    if (session) {
-      sessionManager.remove(session.id);
-    }
-
-    wsBroadcast("connection_state", { state: "disconnected" });
-
-    return { ok: true, status: processManager.getStatus() };
+    const result = await stopServer("manual");
+    if (!result.ok) return reply.status(result.code).send({ error: result.error });
+    return { ok: true, status: result.status };
   });
 
   app.get("/api/launcher/status", async () => {
