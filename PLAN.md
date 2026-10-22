@@ -368,6 +368,9 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       the profile's "Start when Pyrodeck starts"), after re-attach, with a crash-loop guard over the supervisor's
       relaunches (spec Addendum F); the game server's environment built from an allowlist, never `PYRODECK_*`;
       `SHA256SUMS.txt` on every release and dry run
+- [x] Node.js security rebuild (v0.5.4, 2026-10-21): the binary on Node.js 24.22.1 (four high-rated fixes; root
+      store NSS 3.131.1 without the compromised eMudhra/emSign roots, which the OS trust store cannot fix for a
+      Node SEA); `.nvmrc` pins the exact version so the release workflow and the packaging script agree
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no

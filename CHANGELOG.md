@@ -2,6 +2,14 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.4] - 2026-10-21
+
+A rebuild on Node.js 24.22.1, the Node.js security release of 2026-10-21. Nothing Pyrodeck does has changed.
+
+### Security
+- **The packaged binary is built on Node.js 24.22.1.** That release fixes the Node.js vulnerabilities announced the same day, four of them rated high (two TLS host name checks that could be bypassed, DNS name truncation, and a Brotli decoder bug rated as remote code execution), and updates the root certificate store built into Node.js to NSS 3.131.1, which drops the eMudhra (emSign) roots after the compromise of their intermediate keys and rejects any chain built on those keys. Pyrodeck's own TLS connections, the update check against GitHub and email alerts over STARTTLS or TLS, verify certificates against the store inside the binary, not the operating system's, so a root store fix reaches a host only through a rebuilt binary. Hosts on 0.5.3 or earlier should upgrade.
+- **`.nvmrc` pins the exact Node.js version** (`24.22.1`) that the release workflow runs and that the packaging script downloads from nodejs.org, so a release build no longer takes whichever Node 24 the build runner has cached.
+
 ## [0.5.3] - 2026-10-08
 
 A release for running unattended: the game comes back after a reboot, it no longer sees Pyrodeck's secrets, and releases carry checksums.

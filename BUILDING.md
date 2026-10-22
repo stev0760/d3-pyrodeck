@@ -148,7 +148,9 @@ Open `http://localhost:3001` (not 5173 — the binary serves the SPA directly on
 2. `pnpm build` — Vite builds the React frontend → `packages/client/dist/`
 3. `esbuild` — bundles `packages/server/dist/index.js` and all npm deps into a single `dist-server/server.cjs`
 4. `node --experimental-sea-config` — creates the Node SEA (Single Executable Application) blob
-5. Copies the platform's `node` binary, injects the blob using:
+5. For Linux and Windows targets, downloads the official nodejs.org build of the running Node version (release
+   builds run the exact version `.nvmrc` pins, so that is the Node inside the binary) and verifies it against
+   `SHASUMS256.txt`; a native macOS build copies the local `node`. Then injects the blob using:
    - Linux: `objcopy` (GNU binutils — most reliable for ELF)
    - Windows: `postject` (via npx, handles PE format)
    - macOS: `postject` with macOS codesigning
