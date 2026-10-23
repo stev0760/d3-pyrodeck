@@ -36,6 +36,7 @@ export function useServerConnection() {
   const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const botModeCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
+  const botPopulationCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
   const levelChangedCallbacksRef = useRef<Array<(level: string | null) => void>>([]);
   const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
@@ -117,6 +118,11 @@ export function useServerConnection() {
             break;
           case "botmode":
             for (const cb of botModeCallbacksRef.current) {
+              cb(msg.payload);
+            }
+            break;
+          case "botpopulation":
+            for (const cb of botPopulationCallbacksRef.current) {
               cb(msg.payload);
             }
             break;
@@ -377,6 +383,16 @@ export function useServerConnection() {
     };
   }, []);
 
+  /** Parsed `$botpopulation` status lines (servers with the `population` feature). */
+  const onBotPopulation = useCallback((callback: (data: unknown) => void) => {
+    botPopulationCallbacksRef.current.push(callback);
+    return () => {
+      botPopulationCallbacksRef.current = botPopulationCallbacksRef.current.filter(
+        (cb) => cb !== callback,
+      );
+    };
+  }, []);
+
   const onServerInfo = useCallback((callback: (data: unknown) => void) => {
     serverInfoCallbacksRef.current.push(callback);
     return () => {
@@ -427,6 +443,7 @@ export function useServerConnection() {
     onBots,
     onBotStats,
     onBotMode,
+    onBotPopulation,
     onServerInfo,
     onLevelChanged,
     onPlaylistEvent,

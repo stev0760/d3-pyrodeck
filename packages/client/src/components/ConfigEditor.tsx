@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ServerProfile } from "../hooks/useLauncher.ts";
 import { ServerConfigForm } from "./ServerConfigForm.tsx";
-import { BotRosterForm } from "./BotRosterForm.tsx";
+import { RosterEditor } from "./compact/RosterEditor.tsx";
+import { ConfirmDialog } from "./compact/ConfirmDialog.tsx";
 
 interface ConfigEditorProps {
   profiles: ServerProfile[];
@@ -177,6 +178,10 @@ function ProfileEditor({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [backup, setBackup] = useState<{ exists: boolean; mtime?: string } | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState(false);
   const [companions, setCompanions] = useState<CompanionInfo | null>(null);
   // For creating new bot roster with custom name
   const [showBotCreate, setShowBotCreate] = useState(false);
@@ -233,21 +238,80 @@ function ProfileEditor({
       if (res.ok) {
         const data = await res.json();
         setContent(data.content);
+        setLoadError(null);
         setDirty(false);
         setSaved(false);
       } else {
+        const body = await res.json().catch(() => ({}));
         setContent("");
+        setLoadError(body.error ?? `Could not read ${filename} (HTTP ${res.status})`);
         setDirty(false);
       }
     } catch {
       setContent("");
+      setLoadError(`Could not read ${filename}: network error`);
       setDirty(false);
     }
   }, []);
 
+  // Whether a previous version of the file exists (every write that changed
+  // it keeps one), for the "Restore previous version" button.
+  const refreshBackup = useCallback(async (filename: string, profileId: string) => {
+    try {
+      const res = await fetch(
+        `/api/profiles/${encodeURIComponent(profileId)}/files/${encodeURIComponent(filename)}/backup`,
+        { credentials: "include" },
+      );
+      setBackup(res.ok ? await res.json() : null);
+    } catch {
+      setBackup(null);
+    }
+  }, []);
+
   useEffect(() => {
-    if (editingFile && selectedProfile) loadFile(editingFile, selectedProfile.id);
-  }, [editingFile, selectedProfile, loadFile]);
+    if (editingFile && selectedProfile) {
+      setSaveError(null);
+      loadFile(editingFile, selectedProfile.id);
+      void refreshBackup(editingFile, selectedProfile.id);
+    } else {
+      setBackup(null);
+    }
+  }, [editingFile, selectedProfile, loadFile, refreshBackup]);
+
+  // A structured form saved the file: the raw text and the backup are stale.
+  const afterStructuredSave = (filename: string) => {
+    if (!selectedProfile) return;
+    fetchCompanions(selectedProfile.id);
+    loadFile(filename, selectedProfile.id);
+    void refreshBackup(filename, selectedProfile.id);
+  };
+
+  const restoreBackup = async () => {
+    if (!selectedProfile || !editingFile) return;
+    setSaving(true);
+    try {
+      const res = await fetch(
+        `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(editingFile)}/restore`,
+        { method: "POST", credentials: "include" },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setContent(body.content ?? "");
+        setDirty(false);
+        setSaved(false);
+        setSaveError(null);
+        fetchCompanions(selectedProfile.id);
+        onRefreshProfiles();
+        void refreshBackup(editingFile, selectedProfile.id);
+      } else {
+        setSaveError(body.error ?? "Restore failed");
+      }
+    } catch {
+      setSaveError("Restore failed: network error");
+    }
+    setSaving(false);
+    setConfirmRestore(false);
+  };
 
   const saveFile = async () => {
     if (!selectedProfile || !editingFile) return;
@@ -265,15 +329,43 @@ function ProfileEditor({
       if (res.ok) {
         setSaved(true);
         setDirty(false);
+        setSaveError(null);
         // Refresh companions in case server config references changed
         fetchCompanions(selectedProfile.id);
         onRefreshProfiles();
+        void refreshBackup(editingFile, selectedProfile.id);
         setTimeout(() => setSaved(false), 2000);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setSaveError(body.error ?? `Save failed (HTTP ${res.status})`);
       }
     } catch {
-      // ignore
+      setSaveError("Save failed: network error");
     }
     setSaving(false);
+  };
+
+  // A new roster starts as the Matcen sample, so the population settings and
+  // their explanations are in the file from the first day.
+  const createRosterFromSample = async (filename: string) => {
+    if (!selectedProfile) return;
+    try {
+      const res = await fetch(`/api/profiles/${encodeURIComponent(selectedProfile.id)}/bot-roster/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filename }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setSaveError(body.error ?? "Could not create the roster");
+        return;
+      }
+      await fetchCompanions(selectedProfile.id);
+      setEditingFile(filename);
+    } catch {
+      setSaveError("Could not create the roster: network error");
+    }
   };
 
   // Create a new companion file with CVar reference
@@ -495,11 +587,7 @@ function ProfileEditor({
                       autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && newBotFilename.trim()) {
-                          createCompanionFile(
-                            newBotFilename.trim(),
-                            "BotCount=0\nBotDifficulty=hotshot\n",
-                            "BotConfig",
-                          );
+                          void createRosterFromSample(newBotFilename.trim());
                           setShowBotCreate(false);
                           setNewBotFilename("bots.cfg");
                         }
@@ -509,11 +597,7 @@ function ProfileEditor({
                       <button
                         onClick={() => {
                           if (newBotFilename.trim()) {
-                            createCompanionFile(
-                              newBotFilename.trim(),
-                              "BotCount=0\nBotDifficulty=hotshot\n",
-                              "BotConfig",
-                            );
+                            void createRosterFromSample(newBotFilename.trim());
                             setShowBotCreate(false);
                             setNewBotFilename("bots.cfg");
                           }
@@ -693,16 +777,42 @@ function ProfileEditor({
                   (isBotRoster && botViewMode === "raw") ||
                   (!isServerCfg && !isBotRoster);
                 return showSave ? (
-                  <button
-                    onClick={saveFile}
-                    disabled={!dirty || saving}
-                    className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-score tracking-wide rounded transition-colors"
-                  >
-                    {saving ? "Saving..." : saved ? "Saved!" : "Save"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {backup?.exists && (
+                      <button
+                        onClick={() => setConfirmRestore(true)}
+                        disabled={saving}
+                        className="text-[11px] text-muted-foreground hover:text-foreground/80 disabled:opacity-50"
+                        title={backup.mtime ? `Saved ${new Date(backup.mtime).toLocaleString()}` : undefined}
+                      >
+                        Restore previous version
+                      </button>
+                    )}
+                    <button
+                      onClick={saveFile}
+                      disabled={!dirty || saving}
+                      className="px-3 py-1 bg-primary hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground text-white text-xs font-score tracking-wide rounded transition-colors"
+                    >
+                      {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+                    </button>
+                  </div>
                 ) : null;
               })()}
             </div>
+            {(loadError || saveError) && (
+              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/40 rounded-md px-2 py-1.5 mb-2 shrink-0 break-words">
+                {loadError ?? saveError}
+              </p>
+            )}
+            <ConfirmDialog
+              open={confirmRestore}
+              onOpenChange={setConfirmRestore}
+              title="Restore the previous version?"
+              description={`${editingFile} goes back to the version saved before the last change. The current content becomes the previous version, so this can be undone the same way.`}
+              confirmLabel="Restore"
+              busy={saving}
+              onConfirm={restoreBackup}
+            />
 
             {/* Structured form or raw textarea */}
             {selectedProfile &&
@@ -711,7 +821,7 @@ function ProfileEditor({
               <ServerConfigForm
                 profileId={selectedProfile.id}
                 onSaved={() => {
-                  fetchCompanions(selectedProfile.id);
+                  afterStructuredSave(selectedProfile.configFile);
                   onRefreshProfiles();
                 }}
               />
@@ -719,9 +829,9 @@ function ProfileEditor({
               companions?.botConfig?.exists &&
               editingFile === companions.botConfig.filename &&
               botViewMode === "structured" ? (
-              <BotRosterForm
+              <RosterEditor
                 profileId={selectedProfile.id}
-                onSaved={() => fetchCompanions(selectedProfile.id)}
+                onSaved={() => afterStructuredSave(companions.botConfig!.filename)}
               />
             ) : (
               <>

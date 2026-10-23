@@ -441,69 +441,17 @@ export function generateMpsFile(data: MpsData): string {
 // Bot roster file (bots.cfg)
 // ---------------------------------------------------------------------------
 
-export interface BotEntry {
-  name: string;
-  ship?: string;       // pyro | phoenix | magnum | blackpyro
-  difficulty?: string; // trainee | rookie | hotshot | ace | insane
-  team?: number;       // 1-indexed (1–4), undefined = auto-balance
-}
-
-export interface BotRosterData {
-  botCount: number;
-  defaultDifficulty?: string;
-  bots: BotEntry[];
-}
-
-/**
- * Parse a bot roster file (Key=Value format) into structured data.
- */
-export function parseBotRoster(content: string): BotRosterData {
-  const entries = parseDedicatedCfg(content);
-  const get = (key: string) => getCfgValue(entries, key);
-
-  const botCount = parseInt10(get("BotCount"), 0);
-  const defaultDifficulty = get("BotDifficulty");
-  const bots: BotEntry[] = [];
-
-  for (let i = 1; i <= botCount; i++) {
-    const name = get(`BotName${i}`);
-    if (!name) continue;
-    const teamVal = get(`BotTeam${i}`);
-    const team = teamVal ? parseInt(teamVal, 10) : undefined;
-    bots.push({
-      name,
-      ship: get(`BotShip${i}`),
-      difficulty: get(`BotDifficulty${i}`),
-      team: team !== undefined && team >= 1 && team <= 4 ? team : undefined,
-    });
-  }
-
-  return { botCount, defaultDifficulty, bots };
-}
-
-/**
- * Generate a bot roster file from structured data.
- */
-export function generateBotRoster(data: BotRosterData): string {
-  const lines: string[] = [
-    `BotCount=${data.bots.length}`,
-  ];
-
-  if (data.defaultDifficulty) {
-    lines.push(`BotDifficulty=${data.defaultDifficulty}`);
-  }
-
-  for (let i = 0; i < data.bots.length; i++) {
-    const bot = data.bots[i];
-    const n = i + 1;
-    lines.push(`BotName${n}=${bot.name}`);
-    if (bot.ship) lines.push(`BotShip${n}=${bot.ship}`);
-    if (bot.difficulty) lines.push(`BotDifficulty${n}=${bot.difficulty}`);
-    if (bot.team !== undefined && bot.team >= 1 && bot.team <= 4) lines.push(`BotTeam${n}=${bot.team}`);
-  }
-
-  return lines.join("\n") + "\n";
-}
+// The roster lives in botRoster.ts (parse, in-place update, generate); the
+// names stay exported from here for the existing imports.
+export {
+  parseBotRoster,
+  generateBotRoster,
+  updateBotRoster,
+  normalizeBotRoster,
+  MAX_ROSTER_BOTS,
+  type BotEntry,
+  type BotRosterData,
+} from "./botRoster.js";
 
 // ---------------------------------------------------------------------------
 // Legacy generate function — kept for backwards compat with ServerProfile

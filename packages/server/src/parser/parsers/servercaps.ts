@@ -29,7 +29,7 @@ export interface ServerCapabilities {
  * - difficulty    $addbot takes a difficulty argument; $botdifficulty exists
  * - teams         $addbot takes a team argument (1-4)
  * - squad_orders  the in-game `!` chat orders exist
- * - population    the $botpopulation console controls exist (no UI yet)
+ * - population    $botpopulation exists and the server keeps seats free for humans (population card)
  */
 export const KNOWN_FEATURES = [
   "bots",

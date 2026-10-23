@@ -19,6 +19,7 @@ import { parseBotstat } from "../parser/parsers/botstat.js";
 import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 import { parseAddbot } from "../parser/parsers/addbot.js";
 import { parseBotmode } from "../parser/parsers/botmode.js";
+import { parseBotpopulation } from "../parser/parsers/botpopulation.js";
 
 // Register parsers
 responseParser.register("$servercaps", parseServercaps);
@@ -28,6 +29,7 @@ responseParser.register("$botstat", parseBotstat);
 responseParser.register("$netgameinfo", parseNetgameinfo);
 responseParser.register("$addbot", parseAddbot);
 responseParser.register("$botmode", parseBotmode);
+responseParser.register("$botpopulation", parseBotpopulation);
 
 /** Serialize capabilities for JSON (Set -> array). */
 export function serializeCaps(caps: ServerCapabilities) {

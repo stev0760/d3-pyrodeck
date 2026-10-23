@@ -134,13 +134,16 @@ function classifyFile(filename: string, content: string): ClassifiedGameFile {
       return { filename, type: "server-config", meta, linkedProfileId: null };
     }
 
-    // Bot roster: contains BotCount= or BotName[
-    const hasBotCount = lines.some((l) => l.startsWith("BotCount="));
-    const hasBotName = lines.some((l) => l.startsWith("BotName["));
+    // Bot roster: has a BotCount= line or a numbered BotName<n>= entry (keys
+    // are case-insensitive to the engine, so they are here too).
+    const hasBotCount = lines.some((l) => /^botcount\s*=/i.test(l));
+    const hasBotName = lines.some((l) => /^botname\d+\s*=/i.test(l));
     if (hasBotCount || hasBotName) {
       for (const line of lines) {
-        if (line.startsWith("BotCount=")) meta.botCount = line.slice(9);
-        if (line.startsWith("BotDifficulty=")) meta.difficulty = line.slice(14);
+        const m = line.match(/^(botcount|botdifficulty)\s*=\s*(.*)$/i);
+        if (!m) continue;
+        if (m[1].toLowerCase() === "botcount") meta.botCount = m[2].trim();
+        else meta.difficulty = m[2].trim();
       }
       return { filename, type: "bot-roster", meta, linkedProfileId: null };
     }
@@ -496,11 +499,52 @@ export class ServerProfileManager {
     return fs.readFile(path.join(this.gamePath, safe), "utf-8");
   }
 
-  /** Write a file to gamePath by filename. */
+  /**
+   * Write a file to gamePath by filename. The previous content, when it
+   * differs, is kept in `<filename>.bak` (one backup, replaced on each change),
+   * and the new content lands through a temp file and a rename so a crash
+   * mid-write never leaves a half file.
+   */
   async writeFile(filename: string, content: string): Promise<void> {
     const safe = this.safeName(filename);
     if (!safe) throw new Error("Invalid filename");
-    await fs.writeFile(path.join(this.gamePath, safe), content);
+    const target = path.join(this.gamePath, safe);
+    let previous: string | null;
+    try {
+      previous = await fs.readFile(target, "utf-8");
+    } catch {
+      previous = null;
+    }
+    if (previous !== null && previous !== content) {
+      await fs.copyFile(target, target + ".bak");
+    }
+    const tmp = target + ".tmp";
+    await fs.writeFile(tmp, content);
+    await fs.rename(tmp, target);
+  }
+
+  /** The backup `writeFile` kept of a file, or null when there is none. */
+  async readBackup(filename: string): Promise<{ content: string; mtime: string } | null> {
+    const safe = this.safeName(filename);
+    if (!safe) throw new Error("Invalid filename");
+    const bak = path.join(this.gamePath, safe + ".bak");
+    try {
+      const [content, stat] = await Promise.all([fs.readFile(bak, "utf-8"), fs.stat(bak)]);
+      return { content, mtime: stat.mtime.toISOString() };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Put the backup back as the file. The content it replaces becomes the new
+   * backup, so a second restore undoes the first.
+   */
+  async restoreBackup(filename: string): Promise<boolean> {
+    const backup = await this.readBackup(filename);
+    if (!backup) return false;
+    await this.writeFile(filename, backup.content);
+    return true;
   }
 
   /** Delete a file from gamePath. */

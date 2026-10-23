@@ -2,6 +2,21 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [Unreleased]
+
+### Added
+- **Population settings in the Bot Roster editor.** "Bots at start" (`BotCount`), "Target players" (`BotTargetPlayers`) and "Reserved seats" (`BotReservedSlots`) sit above the roster, with the sizing rule and a warning when the profile's MaxPlayers is too small for the target. Entries beyond the bots at start are marked as the population manager's pool. Until now only the raw editor could set these keys.
+- **Reset to the sample roster.** One confirmation writes Matcen's sample `bots.cfg` (Reaper, Phantom, Viper and Shadow; four at start, the manager keeping 12 players, one seat free), comments included. A roster created from the Config tab starts from the same sample instead of an empty `BotCount=0`.
+- **Previous versions of config files.** Every write that changes a file in the game directory keeps the old content as `<name>.bak`, one per file. The raw editor and the roster editor offer "Restore previous version"; a restore swaps the two, so it can be undone. New endpoints: `GET /api/profiles/:id/files/:filename/backup`, `POST /api/profiles/:id/files/:filename/restore` and `POST /api/profiles/:id/bot-roster/reset`.
+- **`$botpopulation` is parsed** on servers with the Matcen `population` feature: the `Population:` status line arrives as a `botpopulation` WebSocket message.
+
+### Fixed
+- **Saving the Bot Roster form no longer erases what it does not show.** It regenerated the whole file and dropped `BotTargetPlayers`, `BotReservedSlots`, every comment and any roster entry above `BotCount` (the population manager's pool). The file is now edited in place: the lines the form manages are replaced where they stand and everything else stays. Matcen's sample roster round-trips byte for byte.
+- `BotCount` is the number of bots that join at start, as the engine reads it, not the length of the roster; the form used to force the two equal.
+- The raw editor showed an empty file when a read failed and said nothing when a save failed; both now show the error. After a structured save the Raw view shows the saved text, not the text from before it.
+- A roster file whose keys are not capitalised the usual way (`botcount=`), or that has `BotName1=` lines and no `BotCount=`, is recognised as a roster.
+- Config writes go through a temp file and a rename, so an interrupted write cannot leave a half-written file.
+
 ## [0.5.4] - 2026-10-21
 
 A rebuild on Node.js 24.22.1, the Node.js security release of 2026-10-21. Nothing Pyrodeck does has changed.

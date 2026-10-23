@@ -182,6 +182,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
                   "$botstat": "botstats",
                   "$netgameinfo": "serverinfo",
                   "$botmode": "botmode",
+                  "$botpopulation": "botpopulation",
                 };
                 const msgType = typeMap[commandName];
                 if (msgType) {

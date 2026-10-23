@@ -12,9 +12,11 @@ import {
   generateMpsFile,
   parseBotRoster,
   generateBotRoster,
+  updateBotRoster,
   type DedicatedCfgData,
   type BotRosterData,
 } from "../launcher/ConfigGenerator.js";
+import { SAMPLE_BOT_ROSTER } from "../launcher/sampleBotRoster.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { sanitizePostStart } from "../launcher/postStartSettings.js";
 import {
@@ -575,6 +577,41 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /**
+   * GET /api/profiles/:id/files/:filename/backup
+   * The previous version of a file, kept by every write that changed it.
+   */
+  app.get("/api/profiles/:id/files/:filename/backup", async (request, reply) => {
+    const { id, filename } = request.params as { id: string; filename: string };
+    try {
+      const { manager } = await getProfileManagerForId(id);
+      const backup = await manager.readBackup(filename);
+      return backup ? { exists: true, ...backup } : { exists: false };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Backup not found";
+      return reply.status(404).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/profiles/:id/files/:filename/restore
+   * Put the previous version back; the version it replaces becomes the backup.
+   */
+  app.post("/api/profiles/:id/files/:filename/restore", async (request, reply) => {
+    const { id, filename } = request.params as { id: string; filename: string };
+    try {
+      const { manager } = await getProfileManagerForId(id);
+      const restored = await manager.restoreBackup(filename);
+      if (!restored) {
+        return reply.status(404).send({ error: `No previous version of ${filename}` });
+      }
+      return { ok: true, content: await manager.readFile(filename) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Restore failed";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
   // --- Structured config (bidirectional parse/generate) ---
 
   /**
@@ -687,44 +724,82 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: `Bot roster file not found: ${botConfigFile}` });
       }
 
-      return parseBotRoster(rosterContent);
+      return { filename: botConfigFile, ...parseBotRoster(rosterContent) };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to read bot roster";
       return reply.status(404).send({ error: message });
     }
   });
 
+  /** The roster file a profile's config names, creating the reference when there is none. */
+  async function rosterFileFor(manager: ServerProfileManager, profile: ServerProfile): Promise<string> {
+    const cfgContent = await manager.readFile(profile.configFile);
+    const entries = parseDedicatedCfg(cfgContent);
+    let botConfigFile = getCfgValue(entries, "BotConfig");
+    if (!botConfigFile) {
+      // Auto-create a roster filename alongside the config
+      botConfigFile = profile.configFile.replace(/\.cfg$/i, "-bots.cfg");
+      await manager.ensureConfigReference(profile.configFile, "BotConfig", botConfigFile);
+    }
+    return botConfigFile;
+  }
+
   /**
    * PUT /api/profiles/:id/bot-roster
-   * Write structured bot roster data to the profile's roster file.
+   * Write structured bot roster data into the profile's roster file. An
+   * existing file is edited in place: the population keys, comments and
+   * anything else the form does not manage stay as they were.
    */
   app.put("/api/profiles/:id/bot-roster", async (request, reply) => {
     const { id } = request.params as { id: string };
     const data = request.body as BotRosterData;
 
-    if (!data || typeof data !== "object") {
+    if (!data || typeof data !== "object" || !Array.isArray(data.bots)) {
       return reply.status(400).send({ error: "Invalid roster data" });
     }
 
     try {
       const { manager, profile } = await getProfileManagerForId(id);
+      const botConfigFile = await rosterFileFor(manager, profile);
 
-      const cfgContent = await manager.readFile(profile.configFile);
-      const entries = parseDedicatedCfg(cfgContent);
-      let botConfigFile = getCfgValue(entries, "BotConfig");
-
-      if (!botConfigFile) {
-        // Auto-create a roster filename alongside the config
-        botConfigFile = profile.configFile.replace(/\.cfg$/i, "-bots.cfg");
-        await manager.ensureConfigReference(profile.configFile, "BotConfig", botConfigFile);
+      let existing: string | null = null;
+      try {
+        existing = await manager.readFile(botConfigFile);
+      } catch {
+        existing = null;
       }
-
-      const rosterContent = generateBotRoster(data);
+      const rosterContent = existing === null ? generateBotRoster(data) : updateBotRoster(existing, data);
       await manager.writeFile(botConfigFile, rosterContent);
 
-      return { ok: true, filename: botConfigFile };
+      return { ok: true, filename: botConfigFile, roster: parseBotRoster(rosterContent) };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to write bot roster";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/profiles/:id/bot-roster/reset
+   * Replace the profile's roster with the Matcen sample (four bots, the
+   * population manager keeping 12 players). The old file stays as the backup.
+   */
+  app.post("/api/profiles/:id/bot-roster/reset", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { filename } = (request.body ?? {}) as { filename?: string };
+    try {
+      const { manager, profile } = await getProfileManagerForId(id);
+      let botConfigFile: string;
+      if (typeof filename === "string" && filename.trim()) {
+        // A new roster under the operator's name: point the config at it first.
+        botConfigFile = filename.trim();
+        await manager.ensureConfigReference(profile.configFile, "BotConfig", botConfigFile);
+      } else {
+        botConfigFile = await rosterFileFor(manager, profile);
+      }
+      await manager.writeFile(botConfigFile, SAMPLE_BOT_ROSTER);
+      return { ok: true, filename: botConfigFile, roster: parseBotRoster(SAMPLE_BOT_ROSTER) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reset bot roster";
       return reply.status(400).send({ error: message });
     }
   });
