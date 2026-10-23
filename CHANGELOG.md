@@ -2,13 +2,26 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
-## [Unreleased]
+## [0.5.5] - 2026-10-22
+
+A phone layout, and the bot roster editor made safe: population settings, in-place saves, backups and the sample roster.
 
 ### Added
+- **A phone layout.** Below 768 px the panel is a phone app: one screen at a time, a tab bar (Server, Console, Players, Bots, More), screens in the URL hash so the phone's back button and reloads work, bottom sheets for pickers and actions, confirmations before stopping the server or removing bots, 44 px targets and 16 px inputs. Server launches or stops the selected profile and holds the live server card; Players is a tappable scoreboard with kick and ban; Bots shows the population manager (on servers with the Matcen `population` feature), the bots with their shields, and an add-bot sheet; More holds Profiles, Config, Playlists, Logs, Bans, Rules and Settings. Tablet and desktop are unchanged. See `docs/phone.md`.
+- **A console you can type into on a phone.** The console text as wrapped rows with a command field under it: favourite queries as chips, recent commands behind a history button, matching commands as a `$` word is typed, and a sheet of every command group the server offers (a command without arguments sends on a tap; one with arguments opens to its fields). Launch mode adds a switch to the game's own output.
+- **Add to the home screen.** A web manifest, icons drawn from the Descent logo font and the iOS metas: installed from Safari or Chrome the panel opens full screen with its own icon.
+- **Config on a phone.** The server config form, the bot roster editor with the population settings, startup commands, ship settings and every config file in the game directory, each as a form or raw text with Save and the previous version.
+- **Settings → Layout:** use the desktop layout on a phone, and the way back from there.
 - **Population settings in the Bot Roster editor.** "Bots at start" (`BotCount`), "Target players" (`BotTargetPlayers`) and "Reserved seats" (`BotReservedSlots`) sit above the roster, with the sizing rule and a warning when the profile's MaxPlayers is too small for the target. Entries beyond the bots at start are marked as the population manager's pool. Until now only the raw editor could set these keys.
 - **Reset to the sample roster.** One confirmation writes Matcen's sample `bots.cfg` (Reaper, Phantom, Viper and Shadow; four at start, the manager keeping 12 players, one seat free), comments included. A roster created from the Config tab starts from the same sample instead of an empty `BotCount=0`.
 - **Previous versions of config files.** Every write that changes a file in the game directory keeps the old content as `<name>.bak`, one per file. The raw editor and the roster editor offer "Restore previous version"; a restore swaps the two, so it can be undone. New endpoints: `GET /api/profiles/:id/files/:filename/backup`, `POST /api/profiles/:id/files/:filename/restore` and `POST /api/profiles/:id/bot-roster/reset`.
-- **`$botpopulation` is parsed** on servers with the Matcen `population` feature: the `Population:` status line arrives as a `botpopulation` WebSocket message.
+- **`$botpopulation` is parsed** on servers with the Matcen `population` feature: the `Population:` status line arrives as a `botpopulation` WebSocket message, and the phone's Bots screen turns it into a card with the manager switch, the target and the reserved seats.
+
+### Changed
+- **One session for both layouts.** The connection, launcher, playlist and server-info state live above the layout, so switching between the phone and desktop layouts, or rotating a tablet across 768 px, keeps the console connection.
+- **Console text survives leaving the tab.** Both layouts keep the last 2000 console lines and 5000 lines of game output; the desktop consoles replay them when their tab is opened again.
+- The desktop layout renders its side panels either inline or in a sheet, never both, so a hidden Launch panel no longer polls beside the visible one.
+- `scripts/ui-shots.mjs` screenshots every screen at phone, tablet and desktop sizes for a before-and-after comparison; `scripts/make-icons.sh` regenerates the icons.
 
 ### Fixed
 - **Saving the Bot Roster form no longer erases what it does not show.** It regenerated the whole file and dropped `BotTargetPlayers`, `BotReservedSlots`, every comment and any roster entry above `BotCount` (the population manager's pool). The file is now edited in place: the lines the form manages are replaced where they stand and everything else stays. Matcen's sample roster round-trips byte for byte.
@@ -16,6 +29,8 @@ All notable changes to D3 Pyrodeck are documented here.
 - The raw editor showed an empty file when a read failed and said nothing when a save failed; both now show the error. After a structured save the Raw view shows the saved text, not the text from before it.
 - A roster file whose keys are not capitalised the usual way (`botcount=`), or that has `BotName1=` lines and no `BotCount=`, is recognised as a roster.
 - Config writes go through a temp file and a rename, so an interrupted write cannot leave a half-written file.
+- The Logs tab scrolls inside its panel instead of the whole page.
+- The login and setup pages keep a side margin on a phone.
 
 ## [0.5.4] - 2026-10-21
 

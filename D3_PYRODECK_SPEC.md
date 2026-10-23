@@ -1763,6 +1763,79 @@ running, Not started), the profile and its source, and one line for the state (t
 retry with **Cancel**, the give-up). Profile form: **Start when Pyrodeck starts**, with the profile it replaces, or
 locked with the variable's value.
 
+## Addendum G — Phone layout, shared session, roster round-trip (2026-10-22, v0.5.5, branch `feature/mobile-ui`)
+
+### G.1 Decision
+
+The operator runs the public server from a phone. The desktop layout (§7) stays as it is until the reveal brings
+feedback; below 768 px the client renders a second shell instead. Both shells read one session, so nothing is
+duplicated server-side and nothing is lost switching between them.
+
+### G.2 Session
+
+`session/SessionProvider.tsx` instantiates the connection, launcher, toast, playlist and server-info hooks once,
+above both shells, together with the mode (`pyrodeck-mode`) and two `LineBuffer`s (`lib/lineBuffer.ts`): the console
+(`output` messages plus typed commands, 2000 lines) and the game process (`process_output`, 5000 lines, stdout and
+stderr apart). Buffers join partial lines per kind and notify once per animation frame. The desktop xterm consoles
+replay the buffer on mount, so scrollback survives leaving a tab. `App` picks the shell with `useIsMobile()`:
+`(max-width: 767px)` unless `localStorage["pyrodeck-layout"]` is `desktop`.
+
+### G.3 Routes
+
+The phone shell lives in the URL hash (`lib/hashRoute.ts`, `hooks/useHashRoute.ts`): `#/server`, `#/console`,
+`#/console/output`, `#/players`, `#/players/history`, `#/bots`, `#/more`, `#/more/profiles`, `#/more/config`,
+`#/more/config/server`, `#/more/config/roster`, `#/more/config/raw?file=`, `#/more/config/files`,
+`#/more/playlists`, `#/more/logs`, `#/more/bans`, `#/more/rules`, `#/more/settings`. A tab tap replaces the history
+entry (back from a root leaves the app), a stacked screen pushes with its depth in `history.state`, and `back()` walks
+history when there is somewhere to go, else replaces with the tab root. Sheets do not enter history.
+
+### G.4 Screens
+
+`components/mobile/`: `MobileApp` (h-dvh, safe-area padding, the keyboard inset from `visualViewport`, the tab bar
+hidden while typing), `Screen` (48 px header: wordmark on roots, back and title on stacked screens), `TabBar`,
+`ShellStatus`. Screens: Server (mode switch; profile picker sheet; state; Launch, or Stop behind a confirm; the
+`ServerSidebar` card when connected; saved servers and the connect form in Connect mode; Manage profiles opens the
+Launch panel), Console (`LineView` over the buffer, `ConsoleInput` with favourites, history and `$` suggestions,
+`CommandSheet` from `lib/commands.ts`), Players (`usePlayers` + `PlayerCards`; kick and ban in a sheet; History
+reuses `PlayerHistory`), Bots (`useBots`, `usePopulation` + `PopulationCard`, `BotCards`, the add-bot sheet, Remove
+all behind a confirm), More (Profiles = `LaunchPanel`; Config = `ConfigScreen` with `ServerConfigForm`,
+`RosterEditor`, `RawFileScreen` (`useProfileFile`: content, save, the previous version) and the game-file list;
+Playlists, Logs, Bans, Rules, Settings reused). Shared panels reused inside the shell get phone-sized controls from
+one unlayered CSS overlay scoped to `.pd-mobile` (16 px inputs, 40 px buttons, dark `color-scheme`) and lay
+themselves out from their container (`@container` roots, `@md:` grids), so the desktop rendering is untouched.
+
+### G.5 Home-screen app
+
+`public/manifest.webmanifest` (standalone, `start_url /#/server`, icons 192 and 512 from `scripts/make-icons.sh`),
+`apple-touch-icon`, `viewport-fit=cover`, the iOS standalone metas, `theme-color`. No service worker: the panel needs
+its server.
+
+### G.6 Bot roster: in-place saves, backups, population
+
+`launcher/botRoster.ts`: `BotRosterData { botCount, defaultDifficulty?, targetPlayers?, reservedSlots?, bots[] }`,
+with `botCount` the bots that join at start (0..16, independent of the roster's length; entries above it are the
+population manager's pool, a count above the roster gets built-in names). `parseBotRoster` reads every numbered
+entry and the two population keys, case-insensitive. `updateBotRoster(existing, data)` edits a file in place: managed
+scalars replaced where they stand (the file's key casing kept, later duplicates dropped, missing ones inserted after
+`BotCount`; a scalar undefined in `data` leaves the line alone), the entry block regenerated with its comments kept
+at its head, every other line and the EOL style kept. The Matcen sample roster round-trips byte for byte.
+`ServerProfileManager.writeFile` keeps the previous content as `<name>.bak` and writes through a temp file and a
+rename. Routes: `PUT /api/profiles/:id/bot-roster` edits in place, `POST /api/profiles/:id/bot-roster/reset` writes
+the sample (optionally under a new `filename`, creating the `BotConfig=` line), `GET
+/api/profiles/:id/files/:filename/backup`, `POST /api/profiles/:id/files/:filename/restore` (swaps the two).
+`parser/parsers/botpopulation.ts` parses the Tier 1 `Population:` line into a `botpopulation` message
+(`{manager, target, reserve, humans, bots, seatsUsed, seats, botLimit, note?}`); the client polls `$botpopulation`
+every 5 s while the `population` feature is advertised and re-queries 300 ms after `on`, `off`, `target n`,
+`reserve n`.
+
+### G.7 Verification
+
+`scripts/ui-shots.mjs` captures every screen at 390x844, 360x780, 768x1024 and 1440x900, idle and with a launched
+server; a desktop capture before the work is the baseline, and `magick compare -metric AE` must report zero for every
+idle desktop and tablet screen after it (the Logs tab and the live screens carry changing text). Server vitest covers
+the roster round-trip, the population parser and the backups; client vitest covers the line buffer, the hash routes
+and the command table.
+
 ---
 
 *This spec is the handoff artifact for implementation via Claude Code agents. All design decisions are locked unless explicitly revisited. Extend with addenda rather than in-place edits to preserve decision history.*

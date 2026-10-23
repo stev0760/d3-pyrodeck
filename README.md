@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.5.5** — A phone layout. Below 768 px the panel is a phone app: a tab bar (Server, Console, Players, Bots, More), one screen at a time, bottom sheets for pickers and actions, a console with a real command field and a sheet of every command, and a home-screen install; tablet and desktop are unchanged, and both layouts share one session ([docs/phone.md](docs/phone.md)). The bot roster editor gains the population settings (`BotTargetPlayers`, `BotReservedSlots`, bots at start) and no longer erases what it does not show: saves edit the file in place, every config write keeps a `.bak` with a restore, and the Matcen sample roster is one confirmation away. `$botpopulation` is parsed and shown as a card on the phone's Bots screen.
+
 **v0.5.4** — Rebuilt on Node.js 24.22.1, the Node.js security release of 2026-10-21: fixes for four high-rated Node.js vulnerabilities, and a root certificate store without the compromised eMudhra (emSign) roots. Pyrodeck's own TLS connections (the update check, email alerts) trust the store inside the binary, so this fix arrives only with a rebuilt binary; hosts on 0.5.3 or earlier should upgrade. `.nvmrc` now pins the exact Node.js version a release is built on.
 
 **v0.5.3** — Unattended operation. **Autostart**: `PYRODECK_AUTOSTART_PROFILE=<profile name>`, or **Start when Pyrodeck starts** on one profile, launches it when Pyrodeck starts, after re-attach (a server still running is left alone), so a host that reboots for updates brings the game back by itself. A crash-loop guard stops after 5 failed starts in a row (a launch that fails, or a server that exits within 60 s) and says why in the log and the Launch panel. **The game server no longer sees Pyrodeck's environment**: it gets a short list of variables it needs (`PATH`, `HOME`, the locale, `XDG_*`, `SDL_*` and the like) and never a `PYRODECK_*` one, so the admin password and session secret stay with Pyrodeck. Releases carry a **`SHA256SUMS.txt`**; see [Releases](#releases).
@@ -134,11 +136,11 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Autostart: one profile launched whenever Pyrodeck starts, after re-attach, with a crash-loop guard (see Operations)
 - Import a profile from the `.bat`/`.sh` that launched an old server (see Operations)
 
-### Responsive Layout
-- Three breakpoints: phone (<768px), tablet (768-1024px), desktop (1024px+)
-- Mobile: hamburger menu opens left sheet, server icon opens right sheet, full-screen tab content
-- Tablet: compact top bar, left panel via sheet, right sidebar inline
-- Desktop: full three-column layout
+### Phone layout
+- Below 768 px the panel is a phone app: one screen at a time, a tab bar (Server, Console, Players, Bots, More), screens in the URL hash so the phone's back button works, bottom sheets for pickers and actions, 44 px targets, and a console with a real command field, command chips and a sheet of every command. See [Pyrodeck on a phone](docs/phone.md).
+- Add it to the home screen (Safari: Share → Add to Home Screen; Chrome: Install app) and it opens full screen with its own icon.
+- Tablet (768-1023 px): compact top bar, left panel via sheet, right sidebar inline. Desktop (1024 px+): the full three-column layout.
+- Both layouts share one session: switching between them keeps the console connection and the console text. Settings has a switch to use the desktop layout on a phone.
 
 ## Requirements
 
@@ -311,6 +313,7 @@ packages/
               config editor, shadcn/ui components
 docs/
   d3-dedicated-server-reference.md   Complete D3 server command & config reference
+  phone.md                           The phone layout and the home-screen install
 ```
 
 ## Documentation
@@ -320,6 +323,7 @@ docs/
 - `docs/D3SERVER3_AUDIT.md` — feature audit of D3Server3 3.0.83 (2010) against Pyrodeck 0.4.20, with a ranked list of what Pyrodeck lacks
 - `docs/running-as-a-service.md` — running Pyrodeck unattended (NSSM, schtasks, systemd)
 - [`docs/behind-a-reverse-proxy.md`](docs/behind-a-reverse-proxy.md) — a public server: nginx with HTTPS in front, the environment, the firewall, the order of steps
+- [`docs/phone.md`](docs/phone.md) — the phone layout: the tabs, the console, adding the panel to the home screen
 
 ## Releases
 

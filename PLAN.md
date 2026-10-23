@@ -349,8 +349,7 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       retried once and paused)
 - [x] Matcen contract sync (Matcen registry REL8, v0.4.20): parsers, tests and spec v2.8 match
       `PYRODECK_CONTRACT.md` §4; `$servercaps` keeps unknown feature flags (`teams`,
-      `squad_orders`, `population`); Bots tab team choice gated on `teams`. A population panel waits
-      for the fork's POP1 controls.
+      `squad_orders`, `population`); Bots tab team choice gated on `teams`. The population card (phone Bots screen) and the roster editor's population settings landed in v0.5.5 (Phase 6).
 - [x] Mission download link refresh (Matcen registry REL7, v0.4.20): rewrite the `URL` lines
       inside a `.mn3`, backup once, restore; spec Addendum B
 - [x] Mission host (v0.5.0): Pyrodeck serves the missions on its own port and points the link at
@@ -371,6 +370,9 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 - [x] Node.js security rebuild (v0.5.4, 2026-10-21): the binary on Node.js 24.22.1 (four high-rated fixes; root
       store NSS 3.131.1 without the compromised eMudhra/emSign roots, which the OS trust store cannot fix for a
       Node SEA); `.nvmrc` pins the exact version so the release workflow and the packaging script agree
+- [x] Phone layout and the roster fix (v0.5.5, 2026-10-22): the phone shell below 768 px (Phase 6 row), the roster
+      editor's population settings and in-place saves, config backups, `$botpopulation` parsed; the desktop layout
+      unchanged (pixel diff against a baseline capture, `scripts/ui-shots.mjs`).
 - [ ] Windows rotation E2E: live Windows + Matcen round-trip to confirm the rotation loop closes
       (profile-path fix is code-complete but unverified on Windows)
 - [x] Go-public audit (2026-07-16, all clean): full-history scan across all 77 commits — no
@@ -412,7 +414,12 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
 
 **Goal:** Refined UX and power-user features.
 
-- [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels)
+- [x] Responsive layout for mobile (v0.4.0 — phone/tablet/desktop breakpoints, sheet panels); replaced below 768 px by
+      the phone shell (v0.5.5: tab bar, hash routes, bottom sheets, a console input, home-screen install; `docs/phone.md`,
+      spec Addendum G). Tablet and desktop unchanged until the reveal brings feedback.
+- [x] Population controls (v0.5.5): `BotTargetPlayers`, `BotReservedSlots` and "bots at start" in the roster editor, the
+      live `$botpopulation` card on the phone's Bots screen; the desktop Bots tab can take the same card (one line) when
+      the desktop layout opens for changes. The roster save edits the file in place and every config write keeps a backup.
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [x] IP access control UI: hosts.deny editor + `$rehash` (Bans tab, v0.5.0); hosts.allow not edited
 - [ ] Repeat one level of a multi-level mission (D3Server3 "Loop"). Not expressible in `dedicated.cfg`: `SetLevel` only
