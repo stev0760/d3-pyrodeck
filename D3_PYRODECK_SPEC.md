@@ -1826,7 +1826,8 @@ the sample (optionally under a new `filename`, creating the `BotConfig=` line), 
 `parser/parsers/botpopulation.ts` parses the Tier 1 `Population:` line into a `botpopulation` message
 (`{manager, target, reserve, humans, bots, seatsUsed, seats, botLimit, note?}`); the client polls `$botpopulation`
 every 5 s while the `population` feature is advertised and re-queries 300 ms after `on`, `off`, `target n`,
-`reserve n`.
+`reserve n`. The card sits on the desktop Bots tab (above the bot table, the operator's one approved desktop
+addition) and on the phone's Bots screen; a server without the feature shows neither.
 
 ### G.7 Verification
 

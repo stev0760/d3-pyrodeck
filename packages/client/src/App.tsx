@@ -70,6 +70,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     onBots,
     onBotStats,
     onBotMode,
+    onBotPopulation,
     hasFeature,
   } = connection;
   const { toasts, addToast, dismissToast } = toast;
@@ -371,6 +372,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
                 hasShips={hasFeature("ships")}
                 hasDifficulty={hasFeature("difficulty")}
                 hasTeams={hasFeature("teams")}
+                hasPopulation={hasFeature("population")}
+                onBotPopulation={onBotPopulation}
               />
             )}
           </TabsContent>

@@ -418,8 +418,8 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       the phone shell (v0.5.5: tab bar, hash routes, bottom sheets, a console input, home-screen install; `docs/phone.md`,
       spec Addendum G). Tablet and desktop unchanged until the reveal brings feedback.
 - [x] Population controls (v0.5.5): `BotTargetPlayers`, `BotReservedSlots` and "bots at start" in the roster editor, the
-      live `$botpopulation` card on the phone's Bots screen; the desktop Bots tab can take the same card (one line) when
-      the desktop layout opens for changes. The roster save edits the file in place and every config write keeps a backup.
+      live `$botpopulation` card on the Bots tab (desktop and phone, servers with the `population` feature). The roster
+      save edits the file in place and every config write keeps a backup.
 - [ ] Game tracker config UI (GameSpy port, tracker server list, PXO credentials)
 - [x] IP access control UI: hosts.deny editor + `$rehash` (Bans tab, v0.5.0); hosts.allow not edited
 - [ ] Repeat one level of a multi-level mission (D3Server3 "Loop"). Not expressible in `dedicated.cfg`: `SetLevel` only

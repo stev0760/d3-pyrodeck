@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useBots, cleanBotName, SHIPS, DIFFICULTIES, BOT_NAME_MAX, type BotEntry, type BotStatus } from "@/hooks/useBots";
+import { usePopulation } from "@/hooks/usePopulation";
+import { PopulationCard } from "@/components/compact/PopulationCard";
 
 interface BotPanelProps {
   sendCommand: (command: string) => void;
@@ -13,6 +15,9 @@ interface BotPanelProps {
   hasDifficulty: boolean;
   /** Server advertises `teams`: $addbot takes a 4th, 1-based team argument. */
   hasTeams: boolean;
+  /** Server advertises `population`: $botpopulation exists (Matcen 0.10.0+). */
+  hasPopulation?: boolean;
+  onBotPopulation?: (callback: (data: unknown) => void) => () => void;
 }
 
 function shieldsColor(shields: number): string {
@@ -30,6 +35,8 @@ export function BotPanel({
   hasShips,
   hasDifficulty,
   hasTeams,
+  hasPopulation = false,
+  onBotPopulation,
 }: BotPanelProps) {
   const { bots, botStats, teamCount, showTeam, refresh, addBot: sendAddBot, removeBot, removeAll, setDifficulty } = useBots({
     sendCommand,
@@ -39,6 +46,11 @@ export function BotPanel({
     hasShips,
     hasDifficulty,
     hasTeams,
+  });
+  const population = usePopulation({
+    sendCommand,
+    onBotPopulation: onBotPopulation ?? (() => () => {}),
+    enabled: hasPopulation && !!onBotPopulation,
   });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [newName, setNewName] = useState("");
@@ -134,6 +146,17 @@ export function BotPanel({
           </Button>
         </div>
       </div>
+
+      {/* Population manager (Matcen servers with the population feature) */}
+      {hasPopulation && onBotPopulation && (
+        <PopulationCard
+          density="desktop"
+          population={population.population}
+          onManager={population.setManager}
+          onTarget={population.setTarget}
+          onReserve={population.setReserve}
+        />
+      )}
 
       {/* Bot List */}
       <div className="flex items-center justify-between mb-2">

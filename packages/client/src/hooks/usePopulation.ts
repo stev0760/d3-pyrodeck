@@ -50,8 +50,12 @@ export function usePopulation({ sendCommand, onBotPopulation, enabled }: UsePopu
     return () => clearInterval(interval);
   }, [enabled, refresh]);
 
+  // Apply the change locally first, so a second tap on a stepper counts from
+  // the new value instead of the one the server has not confirmed yet; the
+  // status query 300 ms later (and the poll) brings the server's truth back.
   const mutate = useCallback(
-    (args: string) => {
+    (args: string, optimistic: Partial<BotPopulation>) => {
+      setPopulation((prev) => (prev ? { ...prev, ...optimistic } : prev));
       sendCommand(`$botpopulation ${args}`);
       setTimeout(refresh, 300);
     },
@@ -61,8 +65,14 @@ export function usePopulation({ sendCommand, onBotPopulation, enabled }: UsePopu
   return {
     population,
     refresh,
-    setManager: (on: boolean) => mutate(on ? "on" : "off"),
-    setTarget: (n: number) => mutate(`target ${Math.max(0, Math.trunc(n))}`),
-    setReserve: (n: number) => mutate(`reserve ${Math.max(1, Math.trunc(n))}`),
+    setManager: (on: boolean) => mutate(on ? "on" : "off", { manager: on }),
+    setTarget: (n: number) => {
+      const target = Math.max(0, Math.trunc(n));
+      mutate(`target ${target}`, { target });
+    },
+    setReserve: (n: number) => {
+      const reserve = Math.max(1, Math.trunc(n));
+      mutate(`reserve ${reserve}`, { reserve });
+    },
   };
 }
