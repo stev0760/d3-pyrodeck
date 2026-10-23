@@ -1,20 +1,26 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { createManagedTerminal } from "@/lib/xtermRenderer";
+import type { Line } from "@/lib/lineBuffer";
 import "@xterm/xterm/css/xterm.css";
 
 interface ConsoleProps {
   onCommand: (command: string) => void;
   onOutput: (callback: (data: string) => void) => () => void;
   disabled?: boolean;
+  /** Lines from before this terminal existed, written once under the banner. */
+  replay?: readonly Line[];
 }
 
-export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
+export function Console({ onCommand, onOutput, disabled, replay }: ConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const inputBufferRef = useRef("");
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+  // Read at mount only: a changing buffer must not rebuild the terminal.
+  const replayRef = useRef(replay);
+  replayRef.current = replay;
 
   const writePrompt = useCallback(() => {
     terminalRef.current?.write("\r\n\x1b[33m>\x1b[0m ");
@@ -40,6 +46,10 @@ export function Console({ onCommand, onOutput, disabled }: ConsoleProps) {
 
     terminal.writeln("\x1b[1;33mD3 Pyrodeck Console\x1b[0m");
     terminal.writeln("\x1b[90mType commands to send to the D3 server\x1b[0m");
+    for (const line of replayRef.current ?? []) {
+      if (line.kind === "cmd") terminal.write(`\r\n\x1b[33m>\x1b[0m ${line.text}\r\n`);
+      else if (line.kind === "out") terminal.write(`${line.text}\r\n`);
+    }
     writePrompt();
 
     // Handle keyboard input

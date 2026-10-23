@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "./hooks/useAuth.ts";
-import { useServerConnection } from "./hooks/useServerConnection.ts";
-import { useToast } from "./hooks/useToast.ts";
-import { useLauncher } from "./hooks/useLauncher.ts";
-import { useServerInfo } from "./hooks/useServerInfo.ts";
+import { useMediaQuery } from "./hooks/useMediaQuery.ts";
+import { useIsMobile } from "./hooks/useIsMobile.ts";
+import { SessionProvider, useSession } from "./session/SessionProvider.tsx";
+import { MobileApp, type ShellProps } from "./components/mobile/MobileApp.tsx";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { SetupPage } from "./components/SetupPage.tsx";
 import { ConnectionForm } from "./components/ConnectionForm.tsx";
@@ -24,7 +24,6 @@ import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
 import { LogsPanel } from "./components/LogsPanel.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
-import { usePlaylist } from "./hooks/usePlaylist.ts";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -43,6 +42,20 @@ type Tab = "console" | "players" | "bots" | "config" | "server-output" | "playli
 
 function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout: boolean }) {
   const {
+    connection,
+    launcher,
+    toast,
+    playlist: playlistHook,
+    serverInfo: serverInfoHook,
+    mode,
+    setMode,
+    isConnected,
+    processState,
+    hasProcess,
+    consoleBuffer,
+    processBuffer,
+  } = useSession();
+  const {
     connectionState,
     capabilities,
     error,
@@ -57,43 +70,23 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     onBots,
     onBotStats,
     onBotMode,
-    onServerInfo,
-    onLevelChanged,
-    onPlaylistEvent,
     hasFeature,
-  } = useServerConnection();
+  } = connection;
+  const { toasts, addToast, dismissToast } = toast;
 
-  const launcher = useLauncher();
-  const { toasts, addToast, dismissToast } = useToast();
-  const playlistHook = usePlaylist({ onPlaylistEvent, notify: addToast });
-  const serverInfoHook = useServerInfo({
-    sendCommand,
-    onServerInfo,
-    onLevelChanged,
-    connected: connectionState === "ready",
-  });
-  const prevErrorRef = useRef<string | null>(null);
+  // A command typed at the console goes into the shared buffer too, so it is
+  // there when the console is opened again (or on a phone).
+  const typedCommand = (command: string) => {
+    consoleBuffer.line(command, "cmd");
+    sendCommand(command);
+  };
 
-  // Surface server errors as toasts
-  useEffect(() => {
-    if (error && error !== prevErrorRef.current) {
-      addToast(error);
-    }
-    prevErrorRef.current = error;
-  }, [error, addToast]);
+  // The left panel is inline from lg up and the server sidebar from md up;
+  // below that each lives in a Sheet. Render each in one place only, or the
+  // hidden copy keeps polling beside the visible one.
+  const isLg = useMediaQuery("(min-width: 1024px)");
+  const isMd = useMediaQuery("(min-width: 768px)");
 
-  // Surface launcher errors as toasts
-  const prevLauncherErrorRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (launcher.error && launcher.error !== prevLauncherErrorRef.current) {
-      addToast(launcher.error);
-    }
-    prevLauncherErrorRef.current = launcher.error;
-  }, [launcher.error, addToast]);
-
-  const [mode, setMode] = useState<AppMode>(() => {
-    return (localStorage.getItem("pyrodeck-mode") as AppMode) ?? "connect";
-  });
   const [activeTab, setActiveTab] = useState<Tab>(() =>
     mode === "launch" ? "server-output" : "console"
   );
@@ -104,12 +97,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
   const handleModeChange = (newMode: AppMode) => {
     setMode(newMode);
-    localStorage.setItem("pyrodeck-mode", newMode);
     setActiveTab(newMode === "launch" ? "server-output" : "console");
   };
-
-  const isConnected = connectionState === "ready" && wsConnected;
-  const processState = launcher.processStatus?.state;
 
   // Auto-close the left panel sheet only when transitioning INTO an active state,
   // not on every change while already connected (which would close it when the
@@ -125,10 +114,6 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     prevConnectionStateRef.current = connectionState;
     prevProcessStateRef.current = processState;
   }, [connectionState, processState]);
-  const hasProcess = mode === "launch" && (
-    processState === "starting" || processState === "running" ||
-    processState === "stopping" || processState === "crashed"
-  );
 
   // "primary" tabs stay inline; "more" tabs (Launch-only management screens)
   // collapse into a dropdown so the bar stays short and responsive.
@@ -203,7 +188,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
   );
 
   return (
-    <div className="h-screen bg-background text-foreground flex flex-col">
+    <div className="h-dvh bg-background text-foreground flex flex-col">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
@@ -290,7 +275,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
       <div className="flex flex-1 min-h-0">
         {/* Left sidebar — desktop only (lg+) */}
         <aside className="hidden lg:flex w-72 shrink-0 border-r border-border bg-sidebar p-3 overflow-y-auto flex-col">
-          {leftSidebarContent}
+          {isLg && leftSidebarContent}
         </aside>
 
         {/* Center content */}
@@ -340,7 +325,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
           <TabsContent value="server-output" className="p-3 min-h-0">
             {hasProcess ? (
-              <ServerConsole onProcessOutput={onProcessOutput} />
+              <ServerConsole onProcessOutput={onProcessOutput} replay={processBuffer.lines()} />
             ) : (
               <div className="h-full flex items-center justify-center">
                 <p className="text-muted-foreground text-lg font-score tracking-wide">
@@ -354,7 +339,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             {isConnected ? (
               <div className="h-full flex flex-col">
                 <div className="flex-1 min-h-0">
-                  <Console onCommand={sendCommand} onOutput={onOutput} />
+                  <Console onCommand={typedCommand} onOutput={onOutput} replay={consoleBuffer.lines()} />
                 </div>
                 <CommandReference
                   sendCommand={sendCommand}
@@ -431,7 +416,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
         </Tabs>
 
         {/* Right sidebar — tablet+ inline (md and lg+) */}
-        {isConnected && (
+        {isConnected && isMd && (
           <ServerSidebar
             {...serverSidebarProps}
             className="hidden md:flex flex-col md:w-48 lg:w-64 shrink-0 border-l border-border bg-sidebar overflow-y-auto"
@@ -444,13 +429,13 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
         <SheetContent side="left" className="w-72 p-0 bg-sidebar">
           <SheetTitle className="sr-only">Navigation Panel</SheetTitle>
           <div className="flex flex-col h-full overflow-y-auto p-3">
-            {leftSidebarContent}
+            {!isLg && leftSidebarContent}
           </div>
         </SheetContent>
       </Sheet>
 
       {/* Server sidebar Sheet — phone only (<md) */}
-      {isConnected && (
+      {isConnected && !isMd && (
         <Sheet open={serverSheetOpen} onOpenChange={setServerSheetOpen}>
           <SheetContent side="right" className="w-80 p-0 bg-sidebar overflow-y-auto">
             <SheetTitle className="sr-only">Server Controls</SheetTitle>
@@ -465,6 +450,12 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
+}
+
+/** The phone shell below 768 px (unless the operator chose otherwise), the full layout above. */
+function Shell(props: ShellProps) {
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileApp {...props} /> : <Dashboard {...props} />;
 }
 
 function App() {
@@ -488,7 +479,9 @@ function App() {
 
   return (
     <TooltipProvider>
-      <Dashboard onLogout={logout} showLogout={authRequired} />
+      <SessionProvider>
+        <Shell onLogout={logout} showLogout={authRequired} />
+      </SessionProvider>
     </TooltipProvider>
   );
 }

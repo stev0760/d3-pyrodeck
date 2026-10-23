@@ -91,7 +91,8 @@ async function run() {
         }
       };
       try {
-        await legacyFlow(page, name, vp, shot, step);
+        if (vp.width < 768 && !args["legacy-phone"]) await mobileFlow(page, name, shot, step);
+        else await legacyFlow(page, name, vp, shot, step);
       } finally {
         await ctx.close();
       }
@@ -196,6 +197,91 @@ async function legacyFlow(page, name, vp, shot, step) {
         }
         await shot("stopped-panel");
         await closePanel();
+      });
+    }
+  }
+}
+
+/** The phone shell (0.5.5+): hash routes, a tab bar, one screen at a time. */
+async function mobileFlow(page, name, shot, step) {
+  const go = async (hash) => {
+    await page.evaluate((h) => { window.location.hash = h; }, hash);
+    await page.waitForTimeout(700);
+  };
+  await page.goto(base, { waitUntil: "networkidle" });
+  await page.waitForTimeout(600);
+  const onShell = async () => (await page.locator("nav[aria-label='Sections']").count()) > 0;
+  if (!(await onShell())) {
+    await shot("login");
+    const pw = page.locator('input[type="password"]:visible').first();
+    if (!(await pw.count()) || !password) throw new Error("login page shown and no password given");
+    await pw.fill(password);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(1200);
+    if (!(await onShell())) throw new Error("login failed or the phone shell did not render");
+  }
+  const setMode = async (mode) => {
+    await go("#/server");
+    await page.getByRole("radio", { name: mode, exact: true }).click();
+    await page.waitForTimeout(500);
+  };
+
+  await setMode("Connect");
+  await shot("connect-server");
+  await setMode("Launch");
+  await shot("launch-server");
+  await shot("launch-server-full", { fullPage: true });
+  await step("profile picker", async () => {
+    const row = page.locator("button", { hasText: /Choose a profile|No profile selected|\.cfg|Descent3/ }).first();
+    await row.click();
+    await page.waitForTimeout(500);
+    await shot("launch-profile-sheet");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+  });
+  for (const r of ["console", "console/output", "players", "bots", "more", "more/profiles", "more/config", "more/playlists", "more/logs", "more/bans", "more/rules", "more/settings"]) {
+    await step(`route ${r}`, async () => {
+      await go(`#/${r}`);
+      await shot(`idle-${r.replace(/\//g, "-")}`);
+      await shot(`idle-${r.replace(/\//g, "-")}-full`, { fullPage: true });
+    });
+  }
+
+  if (connected) {
+    await step("launch server", async () => {
+      await go("#/server");
+      await page.getByRole("button", { name: /launch server/i }).first().click();
+      let ok = false;
+      for (let i = 0; i < 60; i++) {
+        await page.waitForTimeout(1000);
+        if ((await page.getByText(/^running$/i).count()) > 0 && (await page.getByText("Connected", { exact: true }).count()) + (await page.getByText("Running", { exact: true }).count()) > 0) { ok = true; break; }
+      }
+      if (!ok) throw new Error("server did not come up");
+      await page.waitForTimeout(2500);
+      await shot("live-server");
+      await shot("live-server-full", { fullPage: true });
+    });
+    try {
+      for (const r of ["console", "console/output", "players", "bots"]) {
+        await step(`live route ${r}`, async () => {
+          await go(`#/${r}`);
+          await page.waitForTimeout(1200);
+          await shot(`live-${r.replace(/\//g, "-")}`);
+          await shot(`live-${r.replace(/\//g, "-")}-full`, { fullPage: true });
+        });
+      }
+    } finally {
+      await step("stop server", async () => {
+        await go("#/server");
+        await page.getByRole("button", { name: /^stop server$/i }).first().click();
+        await page.waitForTimeout(400);
+        await shot("live-stop-dialog");
+        await page.getByRole("button", { name: "Stop", exact: true }).click();
+        for (let i = 0; i < 40; i++) {
+          await page.waitForTimeout(1000);
+          if ((await page.getByRole("button", { name: /launch server/i }).count()) > 0) break;
+        }
+        await shot("stopped-server");
       });
     }
   }

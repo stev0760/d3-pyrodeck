@@ -1,15 +1,21 @@
 import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { createManagedTerminal } from "@/lib/xtermRenderer";
+import type { Line } from "@/lib/lineBuffer";
 import "@xterm/xterm/css/xterm.css";
 
 interface ServerConsoleProps {
   onProcessOutput: (callback: (data: string, stream: string) => void) => () => void;
+  /** Output from before this terminal existed, written once under the banner. */
+  replay?: readonly Line[];
 }
 
-export function ServerConsole({ onProcessOutput }: ServerConsoleProps) {
+export function ServerConsole({ onProcessOutput, replay }: ServerConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  // Read at mount only: a changing buffer must not rebuild the terminal.
+  const replayRef = useRef(replay);
+  replayRef.current = replay;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -32,6 +38,10 @@ export function ServerConsole({ onProcessOutput }: ServerConsoleProps) {
 
     terminal.writeln("\x1b[90m--- D3 Server Output ---\x1b[0m");
     terminal.writeln("\x1b[90mWaiting for server process...\x1b[0m");
+    for (const line of replayRef.current ?? []) {
+      if (line.kind === "err") terminal.write(`\x1b[31m${line.text}\x1b[0m\r\n`);
+      else terminal.write(`${line.text}\r\n`);
+    }
 
     return dispose;
   }, []);

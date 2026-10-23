@@ -13,6 +13,7 @@ import {
   type UpdateStatus,
 } from "@/lib/ops";
 import { notifySessionEnded, type SessionsState } from "@/lib/session";
+import { setLayoutOverride, useIsNarrow, useLayoutOverride } from "@/hooks/useIsMobile";
 
 const INPUT_CLASS =
   "w-full bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
@@ -378,11 +379,40 @@ function Sessions({ notify }: { notify: Notify }) {
   );
 }
 
+/**
+ * The way back to the phone shell for a phone that chose the desktop layout.
+ * Renders nothing at desktop widths, where there is no choice to make, and
+ * nothing inside the phone shell, which has its own switch.
+ */
+function LayoutSetting() {
+  const narrow = useIsNarrow();
+  const override = useLayoutOverride();
+  if (!narrow || override !== "desktop") return null;
+  return (
+    <section className={SECTION_CLASS}>
+      <h3 className="text-sm font-score tracking-wide text-muted-foreground">Layout</h3>
+      <label className="flex items-center gap-2 text-xs text-foreground/90">
+        <input
+          type="checkbox"
+          checked={override === "desktop"}
+          onChange={(e) => setLayoutOverride(e.target.checked ? "desktop" : "auto")}
+          className="accent-primary"
+        />
+        Use the desktop layout on this phone
+      </label>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Off, the panel shows its phone layout on screens this narrow.
+      </p>
+    </section>
+  );
+}
+
 /** Settings tab: email alerts, process priority, update notice, login sessions. */
 export function SettingsPanel({ notify, showSessions = true }: { notify: Notify; showSessions?: boolean }) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-xl space-y-3">
+        <LayoutSetting />
         <section className={SECTION_CLASS}>
           <h3 className="text-sm font-score tracking-wide text-muted-foreground">Email Alerts</h3>
           <EmailAlerts notify={notify} />

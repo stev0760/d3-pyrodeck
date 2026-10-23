@@ -24,7 +24,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
+    <div className="min-h-dvh bg-background flex items-center justify-center px-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
