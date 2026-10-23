@@ -9,7 +9,7 @@ import { ShellStatus } from "../ShellStatus.tsx";
 import { SectionCard } from "@/components/compact/SectionCard";
 import { ListRow } from "@/components/compact/ListRow";
 import { LaunchPanel } from "@/components/LaunchPanel";
-import { ConfigEditor } from "@/components/ConfigEditor";
+import { ConfigScreen } from "./ConfigScreen.tsx";
 import { PlaylistEditor } from "@/components/PlaylistEditor";
 import { LogsPanel } from "@/components/LogsPanel";
 import { BansPanel } from "@/components/BansPanel";
@@ -39,17 +39,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
         </Screen>
       );
     case "config":
-      return (
-        <Screen title="Config" onBack={back}>
-          <div className="p-3 min-h-full flex flex-col">
-            <ConfigEditor
-              profiles={launcher.profiles}
-              selectedProfileId={launcher.selectedProfileId}
-              onRefreshProfiles={launcher.fetchProfiles}
-            />
-          </div>
-        </Screen>
-      );
+      return <ConfigScreen router={router} />;
     case "playlists":
       return (
         <Screen title="Playlists" onBack={back}>

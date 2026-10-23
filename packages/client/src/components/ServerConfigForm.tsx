@@ -190,7 +190,7 @@ function Field({
 }
 
 function Row({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-2 gap-3">{children}</div>;
+  return <div className="grid @md:grid-cols-2 gap-3">{children}</div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
   const teamMode = isTeamMode(data.scriptName);
 
   return (
-    <div className="h-full flex flex-col min-h-0">
+    <div className="@container h-full flex flex-col min-h-0">
       {/* Sticky toolbar */}
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-2">
@@ -828,7 +828,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                     Warning: Pyro-GL is the default ship. Banning it may cause issues for connecting players.
                   </p>
                 )}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid @md:grid-cols-2 gap-2">
                   {ALL_SHIPS.map((ship) => {
                     const banned = data.bannedShips.includes(ship);
                     const wouldLeaveNone = !banned && allowedCount === 1;
@@ -925,7 +925,7 @@ export function ServerConfigForm({ profileId, onSaved }: ServerConfigFormProps) 
                             Disallow all
                           </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                        <div className="grid @md:grid-cols-2 gap-x-4 gap-y-1">
                           {cat.powerups.map((p) => {
                             const allowed = !isPowerupDisallowed(disallowed, p);
                             const heavy = BANDWIDTH_HEAVY.has(p);

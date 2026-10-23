@@ -335,7 +335,7 @@ function PlaylistDetail({
         )}
 
         {/* Name + mode */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid @md:grid-cols-2 gap-3">
           <div>
             <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-1">
               Name
@@ -469,7 +469,7 @@ function PlaylistDetail({
           </div>
 
           {voting.enabled && (
-            <div className="grid grid-cols-3 gap-2 p-2 bg-muted/20 border border-border/40 rounded">
+            <div className="grid @md:grid-cols-3 gap-2 p-2 bg-muted/20 border border-border/40 rounded">
               <div>
                 <label className="text-[10px] text-muted-foreground block mb-1">
                   Announce before end (sec)
@@ -604,7 +604,7 @@ export function PlaylistEditor({
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="@container flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
         <h2 className="text-sm font-semibold text-foreground">Playlists</h2>

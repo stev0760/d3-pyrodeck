@@ -73,7 +73,7 @@ export function BansPanel({ notify }: { notify: (message: string, type?: "error"
   const ignored = deny.lines.filter((l) => l.error);
 
   return (
-    <div className="h-full overflow-auto space-y-5 pr-1">
+    <div className="@container h-full overflow-auto space-y-5 pr-1">
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-score tracking-wide">Address bans (hosts.deny)</h2>
@@ -114,7 +114,7 @@ export function BansPanel({ notify }: { notify: (message: string, type?: "error"
             value={entry}
             onChange={(e) => setEntry(e.target.value)}
             placeholder="203.0.113.9, 203.0.113.* or 203.0.113.0/24"
-            className={`${inputClass} font-mono w-64`}
+            className={`${inputClass} font-mono w-full @sm:w-64`}
           />
           <input
             value={entryReason}
@@ -191,7 +191,7 @@ export function BansPanel({ notify }: { notify: (message: string, type?: "error"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             placeholder="Callsign or Prefix*"
-            className={`${inputClass} w-48`}
+            className={`${inputClass} w-full @sm:w-48`}
           />
           <input
             value={patternReason}
@@ -249,7 +249,7 @@ export function BansPanel({ notify }: { notify: (message: string, type?: "error"
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
             placeholder={state.detectedLocalDir ? `${state.detectedLocalDir}/netgames/hosts.deny` : "Default location"}
-            className={`${inputClass} font-mono flex-1 min-w-64`}
+            className={`${inputClass} font-mono flex-1 min-w-0 @sm:min-w-64`}
           />
           <Button
             variant="secondary"

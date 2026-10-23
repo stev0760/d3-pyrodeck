@@ -239,7 +239,7 @@ async function mobileFlow(page, name, shot, step) {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
   });
-  for (const r of ["console", "console/output", "players", "bots", "more", "more/profiles", "more/config", "more/playlists", "more/logs", "more/bans", "more/rules", "more/settings"]) {
+  for (const r of ["console", "console/output", "players", "players/history", "bots", "more", "more/profiles", "more/config", "more/config/server", "more/config/roster", "more/config/files", "more/playlists", "more/logs", "more/bans", "more/rules", "more/settings"]) {
     await step(`route ${r}`, async () => {
       await go(`#/${r}`);
       await shot(`idle-${r.replace(/\//g, "-")}`);

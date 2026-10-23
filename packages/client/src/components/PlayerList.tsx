@@ -1,18 +1,7 @@
-import { Fragment, useState, useEffect, useCallback } from "react";
+import { Fragment, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { getJson, sendJson, type PresentPlayer } from "@/lib/players";
-
-interface PlayerScore {
-  name: string;
-  points: number;
-  kills: number;
-  deaths: number;
-  suicides: number;
-  ping: number | null;
-  isBot: boolean;
-  isObserver: boolean;
-}
+import { usePlayers } from "@/hooks/usePlayers";
 
 interface PlayerListProps {
   sendCommand: (command: string) => void;
@@ -30,20 +19,9 @@ interface PendingAction {
 }
 
 export function PlayerList({ sendCommand, onPlayers, notify }: PlayerListProps) {
-  const [players, setPlayers] = useState<PlayerScore[]>([]);
-  const [present, setPresent] = useState<PresentPlayer[]>([]);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const { players, addressOf, refresh, autoRefresh, setAutoRefresh, kick, ban } = usePlayers({ sendCommand, onPlayers });
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(() => {
-    sendCommand("$scores");
-    getJson<{ players: PresentPlayer[] }>("/api/players/present")
-      .then((d) => setPresent(d.players))
-      .catch(() => {});
-  }, [sendCommand]);
-
-  const addressOf = (name: string) => present.find((p) => p.name === name)?.ip;
 
   // $kick/$ban take a slot; the server looks it up by name with $players
   // ($scores is sorted by score, so its row order is not the slot).
@@ -51,11 +29,10 @@ export function PlayerList({ sendCommand, onPlayers, notify }: PlayerListProps) 
     if (!pending) return;
     setBusy(true);
     try {
-      const body =
+      const result =
         pending.kind === "kick"
-          ? { name: pending.name, reason: pending.reason }
-          : { name: pending.name, reason: pending.reason, hostsDeny: pending.hostsDeny, nameBan: pending.nameBan };
-      const result = await sendJson<{ message: string }>("POST", `/api/players/${pending.kind}`, body);
+          ? await kick(pending.name, pending.reason)
+          : await ban(pending.name, { reason: pending.reason, hostsDeny: pending.hostsDeny, nameBan: pending.nameBan });
       notify(result.message, "info");
       setPending(null);
       refresh();
@@ -65,23 +42,6 @@ export function PlayerList({ sendCommand, onPlayers, notify }: PlayerListProps) 
       setBusy(false);
     }
   };
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-    refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, refresh]);
-
-  useEffect(() => {
-    const unsubscribe = onPlayers((data: unknown) => {
-      const payload = data as { players: PlayerScore[] };
-      if (payload.players) {
-        setPlayers(payload.players);
-      }
-    });
-    return unsubscribe;
-  }, [onPlayers]);
 
   return (
     <div className="h-full flex flex-col">

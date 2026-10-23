@@ -303,7 +303,7 @@ export function LogsPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="h-full overflow-y-auto space-y-4">
       {/* Log directory control */}
       <div>
         <label className="text-sm font-score tracking-wide text-muted-foreground block mb-1">

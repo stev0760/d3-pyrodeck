@@ -1,28 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight } from "lucide-react";
-
-interface BotEntry {
-  index: number;
-  callsign: string;
-  slot: number;
-  ship: string;
-  difficulty: string;
-  alive: boolean;
-}
-
-interface BotStatus {
-  index: number;
-  callsign: string;
-  slot: number;
-  state: string;
-  role: string;
-  lean: string;
-  speed: number;
-  shields: number;
-  target: string | null;
-}
+import { useBots, cleanBotName, SHIPS, DIFFICULTIES, BOT_NAME_MAX, type BotEntry, type BotStatus } from "@/hooks/useBots";
 
 interface BotPanelProps {
   sendCommand: (command: string) => void;
@@ -33,17 +13,6 @@ interface BotPanelProps {
   hasDifficulty: boolean;
   /** Server advertises `teams`: $addbot takes a 4th, 1-based team argument. */
   hasTeams: boolean;
-}
-
-const SHIPS = ["pyro", "phoenix", "magnum", "blackpyro"];
-const DIFFICULTIES = ["trainee", "rookie", "hotshot", "ace", "insane"];
-// The server cuts the base name to 14 characters (19-char callsign minus
-// "[BOT]") and splits $addbot arguments on whitespace.
-const BOT_NAME_MAX = 14;
-
-/** A bot base name as the server will use it: one token, at most 14 characters. */
-function cleanBotName(raw: string): string {
-  return raw.replace(/\s+/g, "").slice(0, BOT_NAME_MAX);
 }
 
 function shieldsColor(shields: number): string {
@@ -62,77 +31,21 @@ export function BotPanel({
   hasDifficulty,
   hasTeams,
 }: BotPanelProps) {
-  const [bots, setBots] = useState<BotEntry[]>([]);
-  const [botStats, setBotStats] = useState<Map<number, BotStatus>>(new Map());
+  const { bots, botStats, teamCount, showTeam, refresh, addBot: sendAddBot, removeBot, removeAll, setDifficulty } = useBots({
+    sendCommand,
+    onBots,
+    onBotStats,
+    onBotMode,
+    hasShips,
+    hasDifficulty,
+    hasTeams,
+  });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [newName, setNewName] = useState("");
   const [newShip, setNewShip] = useState("pyro");
   const [newDifficulty, setNewDifficulty] = useState("hotshot");
   const [newTeam, setNewTeam] = useState("");
-  const [teamCount, setTeamCount] = useState(0);
   const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
-
-  // The team argument is positional after ship and difficulty, and only
-  // means something in a team game ($botmode reports the team count).
-  const showTeam = hasTeams && hasShips && hasDifficulty && teamCount >= 2;
-
-  const refresh = useCallback(() => {
-    sendCommand("$botlist");
-  }, [sendCommand]);
-
-  useEffect(() => {
-    if (hasTeams) sendCommand("$botmode");
-  }, [hasTeams, sendCommand]);
-
-  useEffect(() => {
-    const unsubscribe = onBotMode((data: unknown) => {
-      const payload = data as { teams?: number };
-      if (typeof payload.teams === "number") setTeamCount(payload.teams);
-    });
-    return unsubscribe;
-  }, [onBotMode]);
-
-  const refreshStats = useCallback(() => {
-    sendCommand("$botstat all");
-  }, [sendCommand]);
-
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
-  }, [refresh]);
-
-  // Poll $botstat all every 2.5s when bots exist
-  useEffect(() => {
-    if (bots.length === 0) return;
-    refreshStats();
-    const interval = setInterval(refreshStats, 2500);
-    return () => clearInterval(interval);
-  }, [bots.length, refreshStats]);
-
-  useEffect(() => {
-    const unsubscribe = onBots((data: unknown) => {
-      const payload = data as { bots: BotEntry[] };
-      if (payload.bots) {
-        setBots(payload.bots);
-      }
-    });
-    return unsubscribe;
-  }, [onBots]);
-
-  useEffect(() => {
-    const unsubscribe = onBotStats((data: unknown) => {
-      const payload = data as { bots: BotStatus[] };
-      if (payload.bots) {
-        const map = new Map<number, BotStatus>();
-        for (const b of payload.bots) {
-          map.set(b.index, b);
-        }
-        setBotStats(map);
-      }
-    });
-    return unsubscribe;
-  }, [onBotStats]);
 
   const toggleExpand = (index: number) => {
     setExpanded((prev) => {
@@ -144,21 +57,7 @@ export function BotPanel({
   };
 
   const addBot = () => {
-    const name = cleanBotName(newName);
-    if (!name) return;
-    // Arguments are positional: difficulty is read only after a ship, team
-    // only after a difficulty.
-    let cmd = `$addbot ${name}`;
-    if (hasShips) {
-      cmd += ` ${newShip}`;
-      if (hasDifficulty) {
-        cmd += ` ${newDifficulty}`;
-        if (showTeam && newTeam) cmd += ` ${newTeam}`;
-      }
-    }
-    sendCommand(cmd);
-    setNewName("");
-    setTimeout(refresh, 500);
+    if (sendAddBot({ name: newName, ship: newShip, difficulty: newDifficulty, team: newTeam })) setNewName("");
   };
 
   return (
@@ -253,9 +152,8 @@ export function BotPanel({
                   variant="destructive"
                   size="xs"
                   onClick={() => {
-                    sendCommand("$removebots");
+                    removeAll();
                     setConfirmRemoveAll(false);
-                    setTimeout(refresh, 500);
                   }}
                   className="font-score tracking-wide"
                 >
@@ -314,8 +212,8 @@ export function BotPanel({
                     isExpanded={isExpanded}
                     onToggle={() => toggleExpand(bot.index)}
                     hasDifficulty={hasDifficulty}
-                    sendCommand={sendCommand}
-                    refresh={refresh}
+                    onSetDifficulty={(d) => setDifficulty(bot.index, d)}
+                    onRemove={() => removeBot(bot.index)}
                   />
                 );
               })}
@@ -333,16 +231,16 @@ function BotRow({
   isExpanded,
   onToggle,
   hasDifficulty,
-  sendCommand,
-  refresh,
+  onSetDifficulty,
+  onRemove,
 }: {
   bot: BotEntry;
   stats: BotStatus | undefined;
   isExpanded: boolean;
   onToggle: () => void;
   hasDifficulty: boolean;
-  sendCommand: (cmd: string) => void;
-  refresh: () => void;
+  onSetDifficulty: (difficulty: string) => void;
+  onRemove: () => void;
 }) {
   return (
     <>
@@ -394,9 +292,7 @@ function BotRow({
           {hasDifficulty ? (
             <select
               value={bot.difficulty.toLowerCase()}
-              onChange={(e) =>
-                sendCommand(`$botdifficulty ${bot.index} ${e.target.value}`)
-              }
+              onChange={(e) => onSetDifficulty(e.target.value)}
               className="px-1 py-0.5 bg-input border border-border rounded-md text-xs text-foreground"
             >
               {DIFFICULTIES.map((d) => (
@@ -413,10 +309,7 @@ function BotRow({
           <Button
             variant="secondary"
             size="xs"
-            onClick={() => {
-              sendCommand(`$removebot ${bot.index}`);
-              setTimeout(refresh, 500);
-            }}
+            onClick={onRemove}
             className="h-8 px-2 font-score tracking-wide hover:bg-destructive hover:text-white"
           >
             Remove
