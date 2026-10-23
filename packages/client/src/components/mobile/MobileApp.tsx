@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useSession } from "@/session/SessionProvider";
 import { useHashRoute } from "@/hooks/useHashRoute";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { UpdateBanner } from "../UpdateBanner.tsx";
 import { ToastContainer } from "../ToastContainer.tsx";
 import { TabBar } from "./TabBar.tsx";
@@ -23,6 +24,7 @@ export interface ShellProps {
 export function MobileApp({ onLogout, showLogout }: ShellProps) {
   const session = useSession();
   const router = useHashRoute();
+  const keyboard = useKeyboardInset();
 
   // Lets global styles (the sheet scrim, say) know a phone shell is up; the
   // sheets render outside this tree.
@@ -54,7 +56,7 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
   const botsEnabled = session.isConnected && session.connection.hasFeature("bots");
 
   return (
-    <div className="pd-mobile h-dvh flex flex-col bg-background text-foreground">
+    <div className="pd-mobile h-dvh flex flex-col bg-background text-foreground" style={keyboard ? { paddingBottom: keyboard } : undefined}>
       <UpdateBanner />
       {session.connection.wsReconnecting && (
         <div className="px-4 py-2 bg-primary/10 border-b border-primary/30 text-primary text-sm text-center shrink-0">
@@ -62,11 +64,13 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
         </div>
       )}
       <main className="flex-1 min-h-0 flex flex-col">{screen}</main>
-      <TabBar
-        tab={router.tab}
-        botsEnabled={botsEnabled}
-        onSelect={(tab) => router.navigate([tab], undefined, { replace: true })}
-      />
+      {keyboard === 0 && (
+        <TabBar
+          tab={router.tab}
+          botsEnabled={botsEnabled}
+          onSelect={(tab) => router.navigate([tab], undefined, { replace: true })}
+        />
+      )}
       <ToastContainer
         toasts={session.toast.toasts}
         onDismiss={session.toast.dismissToast}

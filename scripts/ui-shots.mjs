@@ -270,6 +270,27 @@ async function mobileFlow(page, name, shot, step) {
           await shot(`live-${r.replace(/\//g, "-")}-full`, { fullPage: true });
         });
       }
+      await step("live console: type a command and open the command sheet", async () => {
+        await go("#/console");
+        const input = page.getByRole("textbox", { name: "Console command" });
+        if (!(await input.count())) throw new Error("no console input (old console?)");
+        await input.fill("$botlist");
+        await page.waitForTimeout(300);
+        await shot("live-console-typing");
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(1500);
+        await shot("live-console-after-command");
+        await page.getByRole("button", { name: "Commands", exact: true }).first().click();
+        await page.waitForTimeout(600);
+        await shot("live-console-command-sheet");
+        await page.getByRole("tab", { name: "Bots", exact: true }).click();
+        await page.waitForTimeout(300);
+        await page.getByRole("button", { name: /Add Bot/ }).click();
+        await page.waitForTimeout(400);
+        await shot("live-console-command-sheet-addbot");
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(300);
+      });
     } finally {
       await step("stop server", async () => {
         await go("#/server");
