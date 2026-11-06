@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.5.6** — A hold before every mission change. When a playlist's mission ends, the players are held in place with a countdown in chat (DMFC's `$wait`) so they see the scores and can quit before the restart; then Pyrodeck quits the server through its console, which tells every player still on that the server has gone, instead of killing it and leaving their clients to hang until they time out. The hold is per playlist (default 30 s, 0 off) and skipped when no human is on; a manual Stop quits the same way. Works with any Descent 3 dedicated server.
+
 **v0.5.5** — A phone layout. Below 768 px the panel is a phone app: a tab bar (Server, Console, Players, Bots, More), one screen at a time, bottom sheets for pickers and actions, a console with a real command field and a sheet of every command, and a home-screen install; tablet and desktop are unchanged, and both layouts share one session ([docs/phone.md](docs/phone.md)). The bot roster editor gains the population settings (`BotTargetPlayers`, `BotReservedSlots`, bots at start) and no longer erases what it does not show: saves edit the file in place, every config write keeps a `.bak` with a restore, and the Matcen sample roster is one confirmation away. `$botpopulation` is parsed and shown as a live card on the Bots tab, desktop and phone, on Matcen servers.
 
 **v0.5.4** — Rebuilt on Node.js 24.22.1, the Node.js security release of 2026-10-21: fixes for four high-rated Node.js vulnerabilities, and a root certificate store without the compromised eMudhra (emSign) roots. Pyrodeck's own TLS connections (the update check, email alerts) trust the store inside the binary, so this fix arrives only with a rebuilt binary; hosts on 0.5.3 or earlier should upgrade. `.nvmrc` now pins the exact Node.js version a release is built on.
@@ -87,11 +89,12 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Three rotation modes: Sequential (in order, looping), Shuffle (Fisher-Yates, reshuffles on loop), Weighted (random draw by weight)
 - Activate/deactivate from the Playlists tab or the Server sidebar widget
 - On mission completion (`"Mission over."` in stdout), server automatically stops, swaps `MissionName=` in the active profile config, and restarts. Mid-mission level transitions (`"Ending level."` followed by `"Opening level"`) do not rotate
+- The hold before the restart: once the server has loaded the mission's first level again, Pyrodeck sends `$wait on` (everyone frozen, the clock paused) and counts down in chat, then quits the server through its console (`quit` with a half-close), so a player still on is told the server has gone. Per playlist, **Hold before the restart** (default 30 s, 0 restarts at once); skipped when no human is on
 - Timer anchoring: queries `$netgameinfo` once on activation and once per mission rotation (never on a timer — it leaks the engine text buffer and crashes dedicated servers). Mid-mission level changes re-anchor from the cached time limit; the countdown ticks down locally and is visible in the sidebar
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
 - Game-mode validation: activation is rejected (with per-entry reasons) when a playlist entry's mission doesn't support the profile's game type; rotation re-checks each entry and skips incompatible ones instead of restarting into a broken game; the editor flags offending entries with ⚠ inline
-- Restart health check: each restarted server must accept the console login and answer `$servercaps` within 120 s. A crash or timeout retries once; a second failure pauses the playlist with the reason in the sidebar and a Resume button. Rotation is still best-effort: players must reconnect after each mission change
+- Restart health check: each restarted server must accept the console login and answer `$servercaps` within 120 s. A crash or timeout retries once; a second failure pauses the playlist with the reason in the sidebar and a Resume button. Rotation is still best-effort: players must reconnect after each mission change, which the hold gives them time to do
 
 ### Config Editor (Launch mode)
 - Server profile system — named configurations pointing at config files in the D3 game directory

@@ -2,6 +2,21 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.6] - 2026-11-05
+
+A mission change no longer strands the players: they are held with a countdown, and the server quits cleanly.
+
+### Added
+- **A hold before every mission change.** A new mission needs a server restart. When a playlist's mission ends, Pyrodeck lets the server load the mission's first level again (the clients follow it into a live level, after the score screen), sends `$wait on` (DMFC's own command: every ship stops, weapons stop, the clock pauses and the game shows "Waiting for server"), and counts down in chat: "Mission over. The server restarts in 30 seconds for <next>.", "To play on, quit now (Esc) and join again in a minute.", then at 20, 10 and 5 seconds. Then the server restarts into the next mission. The length is per playlist, **Hold before the restart** under Mission Change in the playlist editor (default 30 s, 0 to 120, 0 restarts at once); the hold is skipped when no human is on. Calling a rotation off (an incompatible entry), deactivating or pausing the playlist, or starting or stopping the server by hand during a hold lets the players go (`$wait off`). The sidebar shows the hold and its countdown. `GET /api/playlists/status` and `playlist_status` carry status `holding` with `holdEntry` and `holdEndsAt`; a playlist carries `holdSeconds`.
+
+### Changed
+- **Rotations and a manual Stop quit the server through its console.** Pyrodeck sends `quit` and half-closes the connection: the server tells every client it has gone, so a player still on drops to the main menu at once, and since Pyrodeck closes its side first the console port is free for the next launch. A rotation used to kill the server instead, and a manual Stop's `quit` could leave the port busy for a minute. If the server does not exit, Pyrodeck still signals it.
+
+### Fixed
+- **A playlist rotation no longer hangs the players' clients.** Pyrodeck stopped the server one second after the mission ended, while the clients were on the score screen about to load the next level, and without telling them; each client then waited for a server that had gone until it timed out (up to about 80 seconds, measured on a live server), and the only way out was to force-quit the game.
+
+All of it uses the stock console (`$wait`, `say`, `quit`) and works with any Descent 3 dedicated server. Bots on a Matcen server freeze with the players during the hold from Matcen 0.10.15; on older Matcen builds they keep moving.
+
 ## [0.5.5] - 2026-10-22
 
 A phone layout, and the bot roster editor made safe: population settings, in-place saves, backups and the sample roster.

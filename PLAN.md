@@ -283,8 +283,9 @@ messaging, not a guaranteed-uptime mechanism. Remaining mitigations, in priority
       one item that turns a bad rotation from "dead server nobody notices" into "visible failure."
       (v0.4.20: 120 s deadline, crash or failed spawn fails at once, paused status with reason +
       Resume; spec "Rotation Sequence" step 8.)
-- [ ] Pre-rotation `say` countdown with explicit "server restarting — reconnect in ~30s" messaging
-      so the disconnect is expected, not alarming.
+- [x] Pre-rotation `say` countdown with explicit "server restarting — reconnect in ~30s" messaging
+      so the disconnect is expected, not alarming. (v0.5.6: the hold, with `$wait on` and a countdown after
+      the loop-back level loads, then a console `quit` with a half-close so players still on are told.)
 - [ ] "Playlist health" line in PlaylistPanel showing entries skipped by the compat guard.
 - Smooth in-place mission transitions are **out of scope**: they would require engine changes
   (project rule: the D3 server is a black box; unknown client compatibility fallout).

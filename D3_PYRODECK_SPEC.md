@@ -622,10 +622,22 @@ Each entry specifies a display label, the `.mn3` mission filename, and an option
 D3 dedicated server prints `"Ending level."` to stdout at the end of every level. Pyrodeck buffers stdout in 4KB chunks and splits on newlines before matching, so the signal is never missed due to chunk boundaries. `"Mission over. Looping back to first level..."` is also detected (full `.mn3` cycle).
 
 #### Rotation Sequence
-1. `"Ending level."` fires → rotation triggered
+1. `"Mission over."` fires (after `"Ending level."`) → rotation triggered
 2. If a vote is in progress, immediately tally votes and use winner; otherwise advance the playlist index per mode
+2a. **The hold (v0.5.6)**, when the playlist's `holdSeconds` (default 30, 0-120) is above 0 and a human may be
+   on (the supervisor's roster: one or more humans, or not known yet): status `holding`. The server loads the
+   mission's first level again; at its `"Opening level"` line plus 3 s (or 20 s after the mission end if the line
+   never comes) Pyrodeck sends `$wait on` (DMFC: every client's ship and weapons frozen, the real game time paused,
+   "Waiting for server" on screen; a client joining then is frozen too) and the countdown in chat, then the restart
+   at `holdSeconds`. During the hold the loop-back level gets no timer anchor, announces or vote. A rotation the
+   launcher calls off (an incompatible entry, a missing path), a deactivation or pause, or a manual start or stop
+   sends `$wait off`. `playlist_status` carries `holdEntry` and `holdEndsAt` (null until the countdown starts).
 3. Announce next mission in-game: `say Changing mission to <label>` (filtered: printable ASCII, no `%`, no colon)
-4. `processManager.stop()` — graceful quit → SIGTERM → SIGKILL fallback
+4. `processManager.stop()` — graceful quit → SIGTERM → SIGKILL fallback. The quit is `quit` sent with a half-close
+   (`TelnetConnection.quit`, v0.5.6): the server sends every client its quit message, and our FIN goes first, so the
+   TIME_WAIT is ours and the console port is free for the relaunch. Never a full close before the server's: the
+   console echoes each byte it reads, and an echo into a closed socket ends a server that does not ignore SIGPIPE
+   (every build before Matcen 0.10.16) before the quit runs. The session is dropped after the server has closed it
 5. `ensureConfigReference("MissionName", missionName)` patches the active profile's `.cfg` file in place
 6. `processManager.start()` — new D3 process with updated config
 7. Pyrodeck auto-reconnects via telnet (same `registerAutoConnect()` flow as normal launch)
