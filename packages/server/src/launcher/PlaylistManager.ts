@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
+import { sayToAll } from "../players/playerActions.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,9 +37,18 @@ export interface Playlist {
   mode: PlaylistMode;
   entries: PlaylistEntry[];
   voting: PlaylistVoting;
+  /**
+   * Seconds everyone is held in place (DMFC's `$wait on`, frozen with a countdown in chat) between a mission's end
+   * and the restart into the next one, so players see the scores and can quit before the server goes. 0 turns it
+   * off. Absent in playlists saved before 0.5.6: DEFAULT_HOLD_SECONDS. Skipped when no human is on.
+   */
+  holdSeconds?: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export const DEFAULT_HOLD_SECONDS = 30;
+export const MAX_HOLD_SECONDS = 120;
 
 export interface PlaylistState {
   activePlaylistId: string | null;
@@ -64,7 +74,8 @@ interface VoteEntry {
 // ---------------------------------------------------------------------------
 
 // paused: rotation suspended after a failed restart; the operator resumes it.
-type PlaylistStatus = "inactive" | "active" | "voting" | "restarting" | "paused";
+// holding: the mission is over and everyone is held before the restart (holdSeconds).
+type PlaylistStatus = "inactive" | "active" | "voting" | "holding" | "restarting" | "paused";
 
 const PLAYLISTS_FILE = "playlists.json";
 const STATE_FILE = "playlist-state.json";
@@ -78,6 +89,14 @@ const LEVEL_END_WINDOW_MS = 5_000;
 // How long after "Opening level" to wait before re-querying $netgameinfo.
 // Level loads take ~1s on the dedicated server; 5s gives slow hosts headroom.
 const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
+
+// The hold. After "Mission over." the server loads the mission's first level again; the clients follow it into a
+// live level, and the hold starts once that level is up: its "Opening level" line plus HOLD_LEVEL_SETTLE_MS. If the
+// line never comes, the hold starts HOLD_LEVEL_WAIT_MS after the mission end anyway.
+const HOLD_LEVEL_SETTLE_MS = 3_000;
+const HOLD_LEVEL_WAIT_MS = 20_000;
+// Countdown lines in chat during the hold, in seconds before the restart (the first line opens the hold).
+const HOLD_ANNOUNCE_S = [20, 10, 5];
 
 // ---------------------------------------------------------------------------
 // PlaylistManager
@@ -95,7 +114,8 @@ const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
  *   levelChanged(level: string | null)      — a new level is loading (fires regardless of playlist state)
  *   serverInfoRaw(raw: string)              — raw $netgameinfo output from a server-side query (for client broadcast)
- *   statusChanged()                         — paused or resumed (for a playlist_status broadcast)
+ *   statusChanged()                         — paused, resumed, or a hold began or ended (for a playlist_status
+ *                                             broadcast)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -147,6 +167,22 @@ export class PlaylistManager extends EventEmitter {
    * Cleared on rotate, activate/deactivate, and when a new vote opens.
    */
   private pendingWinner: PlaylistEntry | null = null;
+
+  // The hold (see Playlist.holdSeconds). holdEntry is the mission the hold ends in; holdEndsAt is set once the
+  // countdown runs (null while waiting for the loop-back level). waitSent: `$wait on` went to this server, so a hold
+  // or a rotation that is called off owes it a `$wait off`.
+  private holdEntry: PlaylistEntry | null = null;
+  private holdSecondsLeft = 0;
+  private holdEndsAt: number | null = null;
+  private holdAwaitingLevel = false;
+  private holdTimers: ReturnType<typeof setTimeout>[] = [];
+  private waitSent = false;
+
+  /**
+   * Humans on the server: a count, or null when not known. Set by the launcher (the supervisor's roster). With no
+   * function set, nobody is assumed on and no hold runs.
+   */
+  humansFn: (() => number | null) | null = null;
 
   /** How often to re-announce the vote options in chat while voting is open. */
   private static readonly VOTE_REMINDER_INTERVAL_MS = 10_000;
@@ -223,6 +259,7 @@ export class PlaylistManager extends EventEmitter {
         voteOpenSeconds: 60,
         optionCount: 3,
       },
+      holdSeconds: DEFAULT_HOLD_SECONDS,
       createdAt: now,
       updatedAt: now,
     };
@@ -308,6 +345,7 @@ export class PlaylistManager extends EventEmitter {
   }
 
   deactivate(): void {
+    this.endHold(true);
     this.activePlaylist = null;
     this.status = "inactive";
     this.needsInitialSync = false;
@@ -330,6 +368,7 @@ export class PlaylistManager extends EventEmitter {
    * so the next "Ending level." signal isn't dropped.
    */
   markRotationComplete(): void {
+    this.waitSent = false;
     if (this.status === "restarting") {
       this.status = "active";
       this.emitTimerUpdate();
@@ -344,6 +383,7 @@ export class PlaylistManager extends EventEmitter {
    */
   pause(reason: string): void {
     if (!this.activePlaylist) return;
+    this.endHold(true);
     this.status = "paused";
     this.pausedReason = reason;
     this.pausedAt = Date.now();
@@ -377,6 +417,8 @@ export class PlaylistManager extends EventEmitter {
     voteDeadline: number | null;
     pausedReason: string | null;
     pausedAt: number | null;
+    holdEntry: PlaylistEntry | null;
+    holdEndsAt: number | null;
   } {
     return {
       status: this.status,
@@ -389,6 +431,8 @@ export class PlaylistManager extends EventEmitter {
       voteDeadline: this.voteDeadline,
       pausedReason: this.pausedReason,
       pausedAt: this.pausedAt,
+      holdEntry: this.holdEntry,
+      holdEndsAt: this.holdEndsAt,
     };
   }
 
@@ -639,6 +683,12 @@ export class PlaylistManager extends EventEmitter {
       this.gameEndAt = null;
       this.emitTimerUpdate();
     }
+    // The loop-back level of a held mission: no timer, announces or vote for a level the restart throws away, and
+    // the re-query stays owed to the next mission's first level.
+    if (this.status === "holding") {
+      this.onHoldLevelLoading();
+      return;
+    }
     // No timer to maintain without an active playlist — clients derive their
     // own countdown locally, so we don't query $netgameinfo here.
     if (!this.activePlaylist) return;
@@ -669,7 +719,8 @@ export class PlaylistManager extends EventEmitter {
    */
   private onLevelEnd(): void {
     this.clearAnnounceTimers();
-    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused" || this.status === "holding")
+      return;
 
     this.pendingWinner = null;
     this.clearVoteTimers();
@@ -681,7 +732,8 @@ export class PlaylistManager extends EventEmitter {
    */
   private onMissionEnd(): void {
     this.clearAnnounceTimers();
-    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused" || this.status === "holding")
+      return;
 
     // Voting still open when the mission ended: tally and rotate together.
     if (this.status === "voting" && this.voteOptions.length > 0) {
@@ -701,13 +753,11 @@ export class PlaylistManager extends EventEmitter {
   }
 
   private triggerRotate(entry?: PlaylistEntry): void {
-    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused") return;
+    if (!this.activePlaylist || this.status === "restarting" || this.status === "paused" || this.status === "holding")
+      return;
 
     this.status = "restarting";
     this.clearTimers();
-    // The next mission may change time limit/goal — refresh the cache once when
-    // its first level opens.
-    this.requeryOnNextLevel = true;
 
     let next: PlaylistEntry;
     if (entry) {
@@ -720,7 +770,139 @@ export class PlaylistManager extends EventEmitter {
       next = this.advanceAndGetEntry();
     }
     this.needsInitialSync = false;
+
+    const hold = this.holdSecondsOf(this.activePlaylist);
+    if (hold > 0 && this.humansOn()) {
+      this.startHold(next, hold);
+      return;
+    }
+    this.rotateTo(next);
+  }
+
+  /** Hand the rotation to the launcher (stop, swap the mission, restart). */
+  private rotateTo(next: PlaylistEntry): void {
+    this.status = "restarting";
+    // The next mission may change time limit/goal — refresh the cache once when
+    // its first level opens.
+    this.requeryOnNextLevel = true;
     this.emit("rotate", next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // The hold between a mission's end and the restart
+  // ---------------------------------------------------------------------------
+
+  private holdSecondsOf(playlist: Playlist): number {
+    const raw = playlist.holdSeconds;
+    const s = typeof raw === "number" && Number.isFinite(raw) ? raw : DEFAULT_HOLD_SECONDS;
+    return Math.max(0, Math.min(MAX_HOLD_SECONDS, Math.round(s)));
+  }
+
+  /** A human may be on: counted, or not known (a hold is the safe side then). */
+  private humansOn(): boolean {
+    if (!this.humansFn) return false;
+    const n = this.humansFn();
+    return n === null || n > 0;
+  }
+
+  /**
+   * The mission is over (all rotations come from a mission end): wait for the server's loop-back level, then hold.
+   * The clients follow the server into that level, so when the restart comes they are in a live game, where a
+   * player can quit from the menu and where the server's `quit` reaches them, instead of loading a level from a
+   * server that has gone.
+   */
+  private startHold(entry: PlaylistEntry, seconds: number): void {
+    this.status = "holding";
+    this.holdEntry = entry;
+    this.holdSecondsLeft = seconds;
+    this.holdEndsAt = null;
+    this.holdAwaitingLevel = true;
+    this.holdTimers.push(setTimeout(() => this.beginHoldCountdown(), HOLD_LEVEL_WAIT_MS));
+    console.log(`[Playlist] Mission over: holding ${seconds}s before the restart into "${entry.label}"`);
+    this.emit("statusChanged");
+  }
+
+  /** The loop-back level is loading: start the countdown once it is up. */
+  private onHoldLevelLoading(): void {
+    if (!this.holdAwaitingLevel) return;
+    this.holdAwaitingLevel = false;
+    this.clearHoldTimers();
+    this.holdTimers.push(setTimeout(() => this.beginHoldCountdown(), HOLD_LEVEL_SETTLE_MS));
+  }
+
+  private beginHoldCountdown(): void {
+    if (this.status !== "holding" || !this.holdEntry || this.holdEndsAt !== null) return;
+    this.clearHoldTimers();
+    this.holdAwaitingLevel = false;
+    const entry = this.holdEntry;
+    const seconds = this.holdSecondsLeft;
+    this.holdEndsAt = Date.now() + seconds * 1000;
+
+    const send = (cmd: string) => {
+      this.sendCommandFn?.(cmd).catch(() => {});
+    };
+    send("$wait on");
+    this.waitSent = true;
+    send(sayToAll(`Mission over. The server restarts in ${seconds} seconds for ${entry.label}.`));
+    send(sayToAll("To play on, quit now (Esc) and join again in a minute."));
+    for (const s of HOLD_ANNOUNCE_S) {
+      if (s >= seconds) continue;
+      this.holdTimers.push(
+        setTimeout(() => send(sayToAll(`Restarting into ${entry.label} in ${s} seconds.`)), (seconds - s) * 1000),
+      );
+    }
+    this.holdTimers.push(setTimeout(() => this.finishHold(), seconds * 1000));
+    this.emit("statusChanged");
+  }
+
+  private finishHold(): void {
+    if (this.status !== "holding" || !this.holdEntry) return;
+    const entry = this.holdEntry;
+    this.endHold(false); // the server quits held; a rotation the launcher calls off releases it (rotationSkipped)
+    this.rotateTo(entry);
+    this.emit("statusChanged");
+  }
+
+  /** Clear the hold's timers and state; with `release`, let the players go again (`$wait off`). */
+  private endHold(release: boolean): void {
+    this.clearHoldTimers();
+    this.holdEntry = null;
+    this.holdEndsAt = null;
+    this.holdAwaitingLevel = false;
+    this.holdSecondsLeft = 0;
+    if (release) this.releaseWait();
+  }
+
+  private releaseWait(): void {
+    if (!this.waitSent) return;
+    this.waitSent = false;
+    this.sendCommandFn?.("$wait off").catch(() => {});
+  }
+
+  private clearHoldTimers(): void {
+    for (const t of this.holdTimers) clearTimeout(t);
+    this.holdTimers = [];
+  }
+
+  /**
+   * The operator took over (a manual stop or start) during a hold: call it off and let the players go. The playlist
+   * stays active; the next mission end rotates again.
+   */
+  cancelHold(): void {
+    if (this.status !== "holding") return;
+    console.log(`[Playlist] Hold before "${this.holdEntry?.label}" called off`);
+    this.endHold(true);
+    this.status = "active";
+    this.emit("statusChanged");
+  }
+
+  /**
+   * The launcher called a rotation off before stopping the server (an incompatible entry, a missing path): the
+   * current mission keeps running, so let the held players go.
+   */
+  rotationSkipped(): void {
+    this.releaseWait();
+    this.markRotationComplete();
   }
 
   /**
@@ -964,6 +1146,7 @@ export class PlaylistManager extends EventEmitter {
   }
 
   private clearTimers(): void {
+    this.clearHoldTimers();
     this.clearVoteTimers();
     this.clearAnnounceTimers();
     this.cancelLevelEndWindow();

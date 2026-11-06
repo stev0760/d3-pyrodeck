@@ -23,6 +23,7 @@ function StatusDot({ status }: { status: PlaylistStatus["status"] }) {
     inactive: "bg-muted-foreground",
     active: "bg-green-500",
     voting: "bg-amber-400",
+    holding: "bg-amber-400",
     restarting: "bg-primary",
     paused: "bg-destructive",
   };
@@ -41,12 +42,13 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate, onR
   const check = status.rotationCheck;
   const checkDeadline = check?.state === "waiting" ? check.deadline : null;
 
-  // Update countdowns every second while a vote or a restart check is open
+  // Update countdowns every second while a vote, a hold or a restart check is open
+  const holdEndsAt = status.status === "holding" ? (status.holdEndsAt ?? null) : null;
   useEffect(() => {
-    if (!status.voteDeadline && !checkDeadline) return;
+    if (!status.voteDeadline && !checkDeadline && !holdEndsAt) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [status.voteDeadline, checkDeadline]);
+  }, [status.voteDeadline, checkDeadline, holdEndsAt]);
 
   const activePlaylist = playlists.find((p) => p.id === status.activePlaylistId);
 
@@ -133,6 +135,15 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate, onR
                     : "restarting the server"}
                 </>
               )}
+            </p>
+          )}
+          {status.status === "holding" && (
+            <p className="text-[10px] text-amber-400">
+              Mission over. Holding the players
+              {status.holdEntry ? <> before <span className="font-medium">{status.holdEntry.label}</span></> : null}
+              {status.holdEndsAt
+                ? `: restart in ${formatCountdown(status.holdEndsAt - now)}`
+                : ", waiting for the level to reload"}
             </p>
           )}
           {status.status === "paused" && (

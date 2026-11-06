@@ -127,3 +127,42 @@ describe("TelnetConnection login refusals", () => {
     );
   });
 });
+
+describe("TelnetConnection quit", () => {
+  it("sends quit, half-closes, and resolves once the server has echoed and closed", async () => {
+    let gotQuit = false;
+    let quitBeforeFin = false;
+    let echoError: Error | null = null;
+    // A D3 console keeps its side open after the client's FIN: it echoes what it read, then closes as it exits.
+    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+      socket.write("Enter server password: ");
+      let buf = "";
+      socket.on("data", (d) => {
+        buf += d.toString();
+        if (buf.includes("quit\r\n")) gotQuit = true;
+      });
+      socket.on("end", () => {
+        quitBeforeFin = gotQuit;
+        socket.write("quit\r\n", (err) => {
+          echoError = err ?? null;
+          socket.end();
+        });
+      });
+      socket.on("error", (err) => {
+        echoError = err;
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const conn = new TelnetConnection();
+      await conn.connect("127.0.0.1", (server.address() as AddressInfo).port, "pw");
+      await conn.quit(2000);
+      expect(gotQuit).toBe(true);
+      expect(quitBeforeFin).toBe(true); // the line arrives before our FIN
+      expect(echoError).toBeNull(); // the server's echo after our FIN is accepted, no reset
+      await expect(conn.send("$scores")).rejects.toThrow();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

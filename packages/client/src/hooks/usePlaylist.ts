@@ -22,12 +22,18 @@ export interface PlaylistVoting {
 
 export type PlaylistMode = "sequential" | "shuffle" | "weighted";
 
+/** The hold before a restart into the next mission (server PlaylistManager): default and cap, in seconds. */
+export const DEFAULT_HOLD_SECONDS = 30;
+export const MAX_HOLD_SECONDS = 120;
+
 export interface Playlist {
   id: string;
   name: string;
   mode: PlaylistMode;
   entries: PlaylistEntry[];
   voting: PlaylistVoting;
+  /** Seconds the players are held with a countdown before a restart into the next mission; 0 = off; absent = 30. */
+  holdSeconds?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,7 +47,7 @@ export interface RotationCheck {
 }
 
 export interface PlaylistStatus {
-  status: "inactive" | "active" | "voting" | "restarting" | "paused";
+  status: "inactive" | "active" | "voting" | "holding" | "restarting" | "paused";
   activePlaylistId: string | null;
   currentIndex: number;
   currentEntry: PlaylistEntry | null;
@@ -51,6 +57,9 @@ export interface PlaylistStatus {
   /** Why rotation is paused (a restart that never came healthy). */
   pausedReason?: string | null;
   pausedAt?: number | null;
+  /** While holding: the mission the restart goes to, and when (epoch ms; null until the loop-back level is up). */
+  holdEntry?: PlaylistEntry | null;
+  holdEndsAt?: number | null;
   rotationCheck?: RotationCheck;
 }
 

@@ -340,9 +340,10 @@ async function connectConsole(
     sessionManager.updateState(session.id, "ready");
     wireSessionToClients();
 
-    // Wire up graceful quit
+    // Wire up graceful quit: `quit` with a half-close (TelnetConnection.quit), so the server tells its clients it
+    // has gone and the console port is left free for the next launch.
     processManager.sendQuitFn = async () => {
-      try { await connection.send("quit"); } catch { /* connection may be dead */ }
+      try { await connection.quit(); } catch { /* connection may be dead */ }
     };
 
     // Wire playlist manager's command sender
@@ -447,6 +448,7 @@ function pauseAfterFailedRotation(reason: string, label = currentRotationLaunch?
  * server the operator just stopped) and let the playlist carry on.
  */
 function takeOverFromRotation(): void {
+  playlistManager.cancelHold();
   if (!rotationHealth.isPending()) return;
   rotationHealth.cancel();
   currentRotationLaunch = null;
@@ -519,7 +521,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
     const profiles = await metadataManager.list();
     if (profiles.length === 0) {
       console.warn("[Playlist] No profiles found; cannot rotate");
-      playlistManager.markRotationComplete();
+      playlistManager.rotationSkipped();
       return;
     }
 
@@ -541,7 +543,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
         message:
           "Playlist rotation failed: game path or executable not configured for the active profile",
       });
-      playlistManager.markRotationComplete();
+      playlistManager.rotationSkipped();
       return;
     }
 
@@ -562,7 +564,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
       wsBroadcast("error", {
         message: `Playlist skipped "${entry.label}" (${entry.missionName}): ${reason} for ${scriptName}. Current mission keeps running.`,
       });
-      playlistManager.markRotationComplete();
+      playlistManager.rotationSkipped();
       return;
     }
 
@@ -574,26 +576,23 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
       } catch { /* ignore */ }
     }
 
-    // Close our telnet session cleanly before killing D3 — this sends a FIN
-    // from our side so the TCP 4-tuple closes through FIN_WAIT rather than
-    // lingering in TIME_WAIT with D3's local port as the sockname, which can
-    // interfere with the next D3 binding the same port.
-    //
-    // Rotation deliberately SKIPS the graceful `quit` path (unlike /stop):
-    // `quit` makes D3 close the connection from its side, parking the 4-tuple
-    // in TIME_WAIT on D3's port and forcing waitForPortFree() to delay the
-    // relaunch by up to a minute between missions.
-    const existingSession = sessionManager.getActive();
-    if (existingSession) {
-      sessionManager.remove(existingSession.id);
-    }
-    processManager.sendQuitFn = null;
+    // Stop through the console's `quit` (ProcessManager.stop runs sendQuitFn, then signals if the server stays up).
+    // A `quit` makes the server tell every client it has gone, so a player still on drops to the menu at once
+    // instead of hanging until the client times out. TelnetConnection.quit sends it with a half-close: our FIN goes
+    // first, so the TIME_WAIT is on our side and the relaunch binds the console port at once, on any server
+    // version. The session is dropped only after the server has closed it: a full close while the console still
+    // echoes the line would end a server that does not ignore SIGPIPE before the quit runs.
     playlistManager.sendCommandFn = null;
 
     const launchStatus = processManager.getStatus();
     if (launchStatus.state === "running" || launchStatus.state === "starting") {
       await processManager.stop("playlist");
     }
+    const existingSession = sessionManager.getActive();
+    if (existingSession) {
+      sessionManager.remove(existingSession.id);
+    }
+    processManager.sendQuitFn = null;
     // From here on the server is down: a failure pauses the playlist instead
     // of leaving it "restarting" behind a dead server.
     serverStopped = true;
@@ -681,7 +680,7 @@ playlistManager.on("rotate", async (entry: PlaylistEntry) => {
       pauseAfterFailedRotation(`rotation error (${message})`, entry.label);
     } else {
       wsBroadcast("error", { message: `Playlist rotation error: ${message}` });
-      playlistManager.markRotationComplete();
+      playlistManager.rotationSkipped();
     }
   }
 });
@@ -700,9 +699,10 @@ export type LaunchResult = { ok: true; status: ProcessStatus } | { ok: false; co
  * behind POST /api/launcher/stop, also taken by the supervisor and the weekly
  * schedule.
  *
- * `quit` over the console is sent only for a manual stop. Otherwise the
- * session is closed first and the process is signalled, as a playlist
- * rotation does: closing from our side keeps the console port out of
+ * A manual stop sends `quit` over the console (with a half-close, so the
+ * server tells its clients it has gone and the port is left free), as a
+ * playlist rotation does. Otherwise the session is closed first and the
+ * process is signalled: closing from our side keeps the console port out of
  * TIME_WAIT, so a relaunch need not wait for the port (waitForPortFree).
  */
 export async function stopServer(reason: StopReason, options: { kill?: boolean } = {}): Promise<LaunchResult> {
@@ -713,9 +713,7 @@ export async function stopServer(reason: StopReason, options: { kill?: boolean }
   playlistManager.sendCommandFn = null;
   if (reason !== "manual") dropConsoleSession();
   // A manual stop keeps the session wired so ProcessManager can try a
-  // graceful `quit` first (via sendQuitFn) before escalating to SIGTERM. If
-  // D3's exit leaves the telnet 4-tuple in TIME_WAIT, waitForPortFree()
-  // absorbs that on the next launch.
+  // graceful `quit` first (via sendQuitFn) before escalating to SIGTERM.
   await processManager.stop(reason, options);
   dropConsoleSession();
   wsBroadcast("connection_state", { state: "disconnected" });
@@ -790,6 +788,9 @@ export const supervisor = new Supervisor({
     }
   },
 });
+
+// A playlist holds the players before a restart only when one may be on (PlaylistManager.startHold).
+playlistManager.humansFn = () => supervisor.humansOnline();
 
 // ---------------------------------------------------------------------------
 // Autostart: launch a profile when Pyrodeck starts (PYRODECK_AUTOSTART_PROFILE,

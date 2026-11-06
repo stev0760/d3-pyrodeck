@@ -18,6 +18,7 @@ function fakeConnection(replies: string[]): ServerConnection & { sent: number } 
     onData: () => {},
     onDisconnect: () => {},
     disconnect: async () => {},
+    quit: async () => {},
     isConnected: () => true,
   };
   return conn;

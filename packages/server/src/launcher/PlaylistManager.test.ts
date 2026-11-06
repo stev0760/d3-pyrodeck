@@ -661,3 +661,166 @@ describe("PlaylistManager — voting", () => {
     expect(mgr.getStatus().status).toBe("restarting");
   });
 });
+
+describe("PlaylistManager — the hold before a restart", () => {
+  const missionOver = "Mission over.  Looping back to first level in mission file.\n";
+  let mgr: PlaylistManager;
+  let sent: string[];
+  let rotated: PlaylistEntry[];
+
+  beforeEach(async () => {
+    mgr = await makeManager();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** An active playlist past its initial sync, a console that records each line, `humans` on the server. */
+  async function activeWith(humans: number | null, holdSeconds?: number): Promise<void> {
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    if (holdSeconds !== undefined) await mgr.update(pl.id, { holdSeconds });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync();
+    mgr.humansFn = () => humans;
+    sent = [];
+    mgr.sendCommandFn = async (cmd: string) => {
+      sent.push(cmd);
+      return "";
+    };
+    rotated = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+  }
+
+  it("holds after the loop-back level opens, counts down, then rotates", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    expect(mgr.getStatus().status).toBe("holding");
+    expect(mgr.getStatus().holdEntry?.missionName).toBe("b.mn3");
+    expect(mgr.getStatus().holdEndsAt).toBeNull(); // waiting for the loop-back level
+    expect(rotated).toHaveLength(0);
+
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent[0]).toBe("$wait on");
+    expect(sent.some((c) => c.startsWith("say ") && c.includes("Mission B") && c.includes("30 seconds"))).toBe(true);
+    expect(mgr.getStatus().holdEndsAt).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(rotated).toHaveLength(0);
+    expect(sent.filter((c) => c.includes("Restarting into Mission B"))).toHaveLength(3); // 20, 10, 5
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3"]);
+    expect(mgr.getStatus().status).toBe("restarting");
+    expect(sent).not.toContain("$wait off"); // the server quits held
+    expect(sent).not.toContain("$netgameinfo"); // no timer for the level the restart throws away
+  });
+
+  it("starts the countdown anyway when the loop-back level never opens", async () => {
+    await activeWith(2);
+    mgr.onStdoutChunk(missionOver);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent[0]).toBe("$wait on");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(rotated).toHaveLength(1);
+  });
+
+  it("holds when who is on is not known yet", async () => {
+    await activeWith(null);
+    mgr.onStdoutChunk(missionOver);
+    expect(mgr.getStatus().status).toBe("holding");
+  });
+
+  it("rotates at once with nobody on", async () => {
+    await activeWith(0);
+    mgr.onStdoutChunk(missionOver);
+    expect(rotated).toHaveLength(1);
+    expect(mgr.getStatus().status).toBe("restarting");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("rotates at once when the playlist's hold is 0", async () => {
+    await activeWith(3, 0);
+    mgr.onStdoutChunk(missionOver);
+    expect(rotated).toHaveLength(1);
+  });
+
+  it("uses the playlist's own hold length", async () => {
+    await activeWith(1, 12);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(sent.some((c) => c.includes("12 seconds"))).toBe(true);
+    expect(sent.filter((c) => c.includes("Restarting into"))).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(sent.filter((c) => c.includes("Restarting into"))).toHaveLength(2); // 10, 5
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(rotated).toHaveLength(1);
+  });
+
+  it("lets the players go and does not rotate when the playlist is deactivated mid-hold", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.deactivate();
+    expect(sent).toContain("$wait off");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rotated).toHaveLength(0);
+  });
+
+  it("cancelHold (the operator took over) lets the players go and stays active", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.cancelHold();
+    expect(sent).toContain("$wait off");
+    expect(mgr.getStatus().status).toBe("active");
+    expect(mgr.getStatus().holdEntry).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rotated).toHaveLength(0);
+  });
+
+  it("a cancel before the countdown sends no $wait off (nothing was held)", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.cancelHold();
+    expect(sent).toHaveLength(0);
+  });
+
+  it("rotationSkipped after a hold releases the held server", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(33_000);
+    expect(rotated).toHaveLength(1);
+    mgr.rotationSkipped();
+    expect(sent).toContain("$wait off");
+    expect(mgr.getStatus().status).toBe("active");
+  });
+
+  it("a healthy restart forgets the wait: a later skip sends no $wait off", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(33_000);
+    mgr.markRotationComplete();
+    mgr.rotationSkipped();
+    expect(sent).not.toContain("$wait off");
+  });
+
+  it("ignores a second 'Mission over.' during the hold", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(33_000);
+    expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3"]);
+  });
+});

@@ -363,6 +363,11 @@ export class Supervisor {
     return this.humans ? this.humans.size : null;
   }
 
+  /** Humans on the server (bots do not count), or null when not known yet (re-attached, roster not read). */
+  humansOnline(): number | null {
+    return this.humanCount();
+  }
+
   private setRoster(names: string[]): void {
     this.humans = new Set(names);
     if (names.length > 0) this.emptySince = null;

@@ -7,6 +7,7 @@ import type {
   PlaylistStatus,
   PlaylistVoting,
 } from "../hooks/usePlaylist.ts";
+import { DEFAULT_HOLD_SECONDS, MAX_HOLD_SECONDS } from "../hooks/usePlaylist.ts";
 import {
   missionSupports,
   scriptModeLabel,
@@ -174,6 +175,7 @@ function PlaylistDetail({
   const [mode, setMode] = useState<PlaylistMode>(playlist.mode);
   const [entries, setEntries] = useState<PlaylistEntry[]>(playlist.entries);
   const [voting, setVoting] = useState<PlaylistVoting>(playlist.voting);
+  const [holdSeconds, setHoldSeconds] = useState<number>(playlist.holdSeconds ?? DEFAULT_HOLD_SECONDS);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -277,7 +279,7 @@ function PlaylistDetail({
 
   const save = async () => {
     setSaving(true);
-    await onSave({ name, mode, entries, voting });
+    await onSave({ name, mode, entries, voting, holdSeconds });
     setSaving(false);
     setDirty(false);
     setSaved(true);
@@ -449,6 +451,36 @@ function PlaylistDetail({
               Add
             </Button>
           </div>
+        </div>
+
+        {/* The hold before a restart into the next mission */}
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold block mb-2">
+            Mission Change
+          </label>
+          <div className="flex items-center gap-2 p-2 bg-muted/20 border border-border/40 rounded">
+            <label htmlFor={`playlist-hold-${playlist.id}`} className="text-[10px] text-muted-foreground">
+              Hold before the restart (sec)
+            </label>
+            <input
+              id={`playlist-hold-${playlist.id}`}
+              type="number"
+              value={holdSeconds}
+              min={0}
+              max={MAX_HOLD_SECONDS}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                setHoldSeconds(Number.isFinite(n) ? Math.min(MAX_HOLD_SECONDS, Math.max(0, n)) : 0);
+                mark();
+              }}
+              className="w-20 px-2 py-1 bg-background border border-border rounded text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            A new mission needs a server restart. When a mission ends, the players are held in place with a countdown
+            in chat, so they see the scores and can quit before the server goes; anyone still on is told the server
+            has quit. 0 restarts at once. Skipped when no human is on.
+          </p>
         </div>
 
         {/* Voting settings */}

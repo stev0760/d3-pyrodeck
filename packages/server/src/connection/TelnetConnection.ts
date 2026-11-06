@@ -15,6 +15,8 @@ const RESPONSE_TIMEOUT_MS = 200;
 const FIRST_RESPONSE_TIMEOUT_MS = 5000;
 const CONNECT_TIMEOUT_MS = 5000;
 const AUTH_TIMEOUT_MS = 5000;
+// How long quit() waits for the server to close the console after `quit` (it closes as it exits, ~2 s).
+const QUIT_CLOSE_TIMEOUT_MS = 5000;
 
 interface QueuedCommand {
   command: string;
@@ -37,6 +39,9 @@ export class TelnetConnection implements ServerConnection {
 
   private commandQueue: QueuedCommand[] = [];
   private processing = false;
+  private idleWaiters: Array<() => void> = [];
+  // Set by quit(): the console takes no more commands.
+  private quitting = false;
 
   isConnected(): boolean {
     return this.connected;
@@ -201,6 +206,9 @@ export class TelnetConnection implements ServerConnection {
     if (!this.connected || !this.socket) {
       throw new Error("Not connected");
     }
+    if (this.quitting) {
+      throw new Error("Console is closing (quit sent)");
+    }
 
     return new Promise((resolve, reject) => {
       this.commandQueue.push({ command, resolve, reject });
@@ -223,6 +231,44 @@ export class TelnetConnection implements ServerConnection {
     }
 
     this.processing = false;
+    for (const wake of this.idleWaiters.splice(0)) wake();
+  }
+
+  /** Resolves when no command is queued or running. */
+  private idle(): Promise<void> {
+    if (!this.processing && this.commandQueue.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  /**
+   * Send `quit` and half-close: our FIN goes right after the line, and the socket stays readable until the server
+   * closes it as it exits. A `quit` makes the server tell every client it has gone (players drop to the menu instead
+   * of hanging until their client times out), and since our side closes first the TIME_WAIT is ours, so a relaunch
+   * can bind the console port at once, on any server version.
+   *
+   * Never a full close before the server's: the console echoes each byte it reads, and an echo into a closed socket
+   * ends a server that does not ignore SIGPIPE (every build before Matcen 0.10.16) before the `quit` runs.
+   *
+   * Runs after the command in flight; anything queued after it is refused. Resolves when the server closes the
+   * connection, or after `timeoutMs` (the caller then signals the process).
+   */
+  async quit(timeoutMs: number = QUIT_CLOSE_TIMEOUT_MS): Promise<void> {
+    if (!this.connected || !this.socket || this.quitting) return;
+    this.quitting = true;
+    await this.idle();
+    for (const item of this.commandQueue.splice(0)) item.reject(new Error("Console is closing (quit sent)"));
+    const socket = this.socket;
+    if (!socket || socket.destroyed) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      socket.once("close", done);
+      socket.write("quit\r\n");
+      socket.end();
+    });
   }
 
   /**
@@ -366,5 +412,6 @@ export class TelnetConnection implements ServerConnection {
     this.disconnectCallbacks = [];
     this.commandQueue = [];
     this.processing = false;
+    for (const wake of this.idleWaiters.splice(0)) wake();
   }
 }

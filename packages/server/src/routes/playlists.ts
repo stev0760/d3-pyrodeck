@@ -7,6 +7,7 @@ import type {
   PlaylistMode,
   PlaylistVoting,
 } from "../launcher/PlaylistManager.js";
+import { MAX_HOLD_SECONDS } from "../launcher/PlaylistManager.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
@@ -88,8 +89,8 @@ function toVoting(raw: unknown): PlaylistVoting | undefined {
  */
 function sanitizePlaylistUpdate(
   body: Record<string, unknown>,
-): Partial<Pick<Playlist, "name" | "mode" | "entries" | "voting">> {
-  const updates: Partial<Pick<Playlist, "name" | "mode" | "entries" | "voting">> = {};
+): Partial<Pick<Playlist, "name" | "mode" | "entries" | "voting" | "holdSeconds">> {
+  const updates: Partial<Pick<Playlist, "name" | "mode" | "entries" | "voting" | "holdSeconds">> = {};
   if (typeof body.name === "string" && body.name.trim()) {
     updates.name = body.name.trim();
   }
@@ -102,6 +103,9 @@ function sanitizePlaylistUpdate(
   }
   const voting = toVoting(body.voting);
   if (voting) updates.voting = voting;
+  if (typeof body.holdSeconds === "number" && Number.isFinite(body.holdSeconds)) {
+    updates.holdSeconds = clamp(Math.round(body.holdSeconds), 0, MAX_HOLD_SECONDS);
+  }
   return updates;
 }
 

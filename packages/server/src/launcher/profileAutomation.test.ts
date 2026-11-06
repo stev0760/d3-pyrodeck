@@ -16,6 +16,7 @@ function fakeConnection(sent: string[], connected = { value: true }): ServerConn
     },
     onData: () => {},
     onDisconnect: () => {},
+    quit: async () => {},
     disconnect: async () => {
       connected.value = false;
     },
