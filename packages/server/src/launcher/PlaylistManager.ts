@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import { sayToAll } from "../players/playerActions.js";
+import { isBotName, parseConsoleLine } from "../events/consoleLines.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,11 +91,16 @@ const LEVEL_END_WINDOW_MS = 5_000;
 // Level loads take ~1s on the dedicated server; 5s gives slow hosts headroom.
 const LEVEL_LOAD_REANCHOR_DELAY_MS = 5_000;
 
-// The hold. After "Mission over." the server loads the mission's first level again; the clients follow it into a
-// live level, and the hold starts once that level is up: its "Opening level" line plus HOLD_LEVEL_SETTLE_MS. If the
-// line never comes, the hold starts HOLD_LEVEL_WAIT_MS after the mission end anyway.
+// The hold. After "Mission over." the server loads the mission's first level again and the clients follow it into a
+// live level. The server is held (`$wait on`) once that level is up: its "Opening level" line plus
+// HOLD_LEVEL_SETTLE_MS, or HOLD_LEVEL_WAIT_MS after the mission end if the line never comes. A client is on the score
+// screen and then loading for some time after that (25 s in the first flight), so the countdown and its chat lines
+// start when the first human is back in the level, or HOLD_PLAYERS_WAIT_MS after the server was held.
 const HOLD_LEVEL_SETTLE_MS = 3_000;
 const HOLD_LEVEL_WAIT_MS = 20_000;
+const HOLD_PLAYERS_WAIT_MS = 45_000;
+// A player who arrives with less than this left gets no repeat of the opening lines: the countdown line is enough.
+const HOLD_REPEAT_MIN_S = 8;
 // Countdown lines in chat during the hold, in seconds before the restart (the first line opens the hold).
 const HOLD_ANNOUNCE_S = [20, 10, 5];
 
@@ -169,12 +175,14 @@ export class PlaylistManager extends EventEmitter {
   private pendingWinner: PlaylistEntry | null = null;
 
   // The hold (see Playlist.holdSeconds). holdEntry is the mission the hold ends in; holdEndsAt is set once the
-  // countdown runs (null while waiting for the loop-back level). waitSent: `$wait on` went to this server, so a hold
-  // or a rotation that is called off owes it a `$wait off`.
+  // countdown runs (null while waiting for the loop-back level, then for a human to be back in it:
+  // holdAwaitingPlayers). waitSent: `$wait on` went to this server, so a hold or a rotation that is called off owes
+  // it a `$wait off`.
   private holdEntry: PlaylistEntry | null = null;
   private holdSecondsLeft = 0;
   private holdEndsAt: number | null = null;
   private holdAwaitingLevel = false;
+  private holdAwaitingPlayers = false;
   private holdTimers: ReturnType<typeof setTimeout>[] = [];
   private waitSent = false;
 
@@ -466,6 +474,8 @@ export class PlaylistManager extends EventEmitter {
 
   private onStdoutLine(line: string): void {
     const trimmed = line.trim();
+
+    if (this.status === "holding") this.watchForHumanJoin(trimmed);
 
     // Chat lines start with "*Name says:" — handle them first so player chat
     // can never trigger the level-control markers below (e.g. someone typing
@@ -817,23 +827,69 @@ export class PlaylistManager extends EventEmitter {
     this.holdSecondsLeft = seconds;
     this.holdEndsAt = null;
     this.holdAwaitingLevel = true;
-    this.holdTimers.push(setTimeout(() => this.beginHoldCountdown(), HOLD_LEVEL_WAIT_MS));
+    this.holdTimers.push(setTimeout(() => this.beginHoldFreeze(), HOLD_LEVEL_WAIT_MS));
     console.log(`[Playlist] Mission over: holding ${seconds}s before the restart into "${entry.label}"`);
     this.emit("statusChanged");
   }
 
-  /** The loop-back level is loading: start the countdown once it is up. */
+  /** The loop-back level is loading: hold the server once it is up. */
   private onHoldLevelLoading(): void {
     if (!this.holdAwaitingLevel) return;
     this.holdAwaitingLevel = false;
     this.clearHoldTimers();
-    this.holdTimers.push(setTimeout(() => this.beginHoldCountdown(), HOLD_LEVEL_SETTLE_MS));
+    this.holdTimers.push(setTimeout(() => this.beginHoldFreeze(), HOLD_LEVEL_SETTLE_MS));
+  }
+
+  /** The level is up: hold everyone in it, and wait for a human to be back before counting down. */
+  private beginHoldFreeze(): void {
+    if (this.status !== "holding" || !this.holdEntry || this.holdAwaitingPlayers || this.holdEndsAt !== null) return;
+    this.clearHoldTimers();
+    this.holdAwaitingLevel = false;
+    this.holdAwaitingPlayers = true;
+    this.sendCommandFn?.("$wait on").catch(() => {});
+    this.waitSent = true;
+    this.holdTimers.push(setTimeout(() => this.onHoldPlayersTimeout(), HOLD_PLAYERS_WAIT_MS));
+  }
+
+  /** A console line during a hold: a human's join line means a client has finished loading the loop-back level. */
+  private watchForHumanJoin(trimmed: string): void {
+    const star = trimmed.indexOf("*"); // a join line can follow load progress on the same line
+    if (star < 0) return;
+    const parsed = parseConsoleLine(trimmed.slice(star));
+    if (parsed?.kind !== "join" || isBotName(parsed.name)) return;
+
+    if (this.holdAwaitingPlayers) {
+      this.beginHoldCountdown();
+    } else if (this.holdEndsAt !== null && this.holdEntry) {
+      // The countdown is running and this player missed its opening lines.
+      const left = Math.round((this.holdEndsAt - Date.now()) / 1000);
+      if (left >= HOLD_REPEAT_MIN_S) this.sayHoldOpening(left, this.holdEntry);
+    }
+  }
+
+  /** Nobody came back in time: count down for clients still loading, or restart at once if the server is empty. */
+  private onHoldPlayersTimeout(): void {
+    if (!this.holdAwaitingPlayers) return;
+    if (this.humansFn && this.humansFn() === 0) {
+      console.log("[Playlist] Hold: nobody came back into the level; restarting now");
+      this.finishHold();
+      return;
+    }
+    this.beginHoldCountdown();
+  }
+
+  private sayHoldOpening(seconds: number, entry: PlaylistEntry): void {
+    const send = (cmd: string) => {
+      this.sendCommandFn?.(cmd).catch(() => {});
+    };
+    send(sayToAll(`Mission over. The server restarts in ${seconds} seconds for ${entry.label}.`));
+    send(sayToAll("To play on, quit now (Esc) and join again in a minute."));
   }
 
   private beginHoldCountdown(): void {
     if (this.status !== "holding" || !this.holdEntry || this.holdEndsAt !== null) return;
     this.clearHoldTimers();
-    this.holdAwaitingLevel = false;
+    this.holdAwaitingPlayers = false;
     const entry = this.holdEntry;
     const seconds = this.holdSecondsLeft;
     this.holdEndsAt = Date.now() + seconds * 1000;
@@ -841,10 +897,7 @@ export class PlaylistManager extends EventEmitter {
     const send = (cmd: string) => {
       this.sendCommandFn?.(cmd).catch(() => {});
     };
-    send("$wait on");
-    this.waitSent = true;
-    send(sayToAll(`Mission over. The server restarts in ${seconds} seconds for ${entry.label}.`));
-    send(sayToAll("To play on, quit now (Esc) and join again in a minute."));
+    this.sayHoldOpening(seconds, entry);
     for (const s of HOLD_ANNOUNCE_S) {
       if (s >= seconds) continue;
       this.holdTimers.push(
@@ -869,6 +922,7 @@ export class PlaylistManager extends EventEmitter {
     this.holdEntry = null;
     this.holdEndsAt = null;
     this.holdAwaitingLevel = false;
+    this.holdAwaitingPlayers = false;
     this.holdSecondsLeft = 0;
     if (release) this.releaseWait();
   }

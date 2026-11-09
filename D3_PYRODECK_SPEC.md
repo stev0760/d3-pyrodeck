@@ -628,8 +628,10 @@ D3 dedicated server prints `"Ending level."` to stdout at the end of every level
    on (the supervisor's roster: one or more humans, or not known yet): status `holding`. The server loads the
    mission's first level again; at its `"Opening level"` line plus 3 s (or 20 s after the mission end if the line
    never comes) Pyrodeck sends `$wait on` (DMFC: every client's ship and weapons frozen, the real game time paused,
-   "Waiting for server" on screen; a client joining then is frozen too) and the countdown in chat, then the restart
-   at `holdSeconds`. During the hold the loop-back level gets no timer anchor, announces or vote. A rotation the
+   "Waiting for server" on screen; a client joining then is frozen too). The countdown in chat starts at the first
+   human's join line after that (the client has left the score screen and loaded the level), or 45 s after
+   `$wait on`: then the restart at `holdSeconds`. If the roster is empty when the 45 s run out, the restart comes at
+   once. A human who joins during the countdown with 8 s or more left is told the time left. During the hold the loop-back level gets no timer anchor, announces or vote. A rotation the
    launcher calls off (an incompatible entry, a missing path), a deactivation or pause, or a manual start or stop
    sends `$wait off`. `playlist_status` carries `holdEntry` and `holdEndsAt` (null until the countdown starts).
 3. Announce next mission in-game: `say Changing mission to <label>` (filtered: printable ASCII, no `%`, no colon)

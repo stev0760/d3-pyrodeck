@@ -705,7 +705,13 @@ describe("PlaylistManager — the hold before a restart", () => {
     await vi.advanceTimersByTimeAsync(2_999);
     expect(sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
-    expect(sent[0]).toBe("$wait on");
+    expect(sent).toEqual(["$wait on"]); // held, and waiting for a human to be back in the level
+    expect(mgr.getStatus().holdEndsAt).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(20_000); // the client's score screen and level load
+    mgr.onStdoutChunk("*Reaper[BOT] has joined the Anarchy\n");
+    expect(sent).toEqual(["$wait on"]); // a bot is not a player coming back
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
     expect(sent.some((c) => c.startsWith("say ") && c.includes("Mission B") && c.includes("30 seconds"))).toBe(true);
     expect(mgr.getStatus().holdEndsAt).not.toBeNull();
 
@@ -726,8 +732,47 @@ describe("PlaylistManager — the hold before a restart", () => {
     expect(sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(sent[0]).toBe("$wait on");
+    await vi.advanceTimersByTimeAsync(45_000); // no join line either: the countdown starts at the cap
+    expect(sent.some((c) => c.includes("30 seconds"))).toBe(true);
+    expect(rotated).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(rotated).toHaveLength(1);
+  });
+
+  it("restarts at once when the server has emptied by the time the wait for players runs out", async () => {
+    let humans = 1;
+    await activeWith(1);
+    mgr.humansFn = () => humans;
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    humans = 0;
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(rotated).toHaveLength(1);
+    expect(sent.filter((c) => c.startsWith("say "))).toHaveLength(0);
+  });
+
+  it("repeats the opening lines, with the time left, for a player who arrives during the countdown", async () => {
+    await activeWith(2);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
+    await vi.advanceTimersByTimeAsync(12_000);
+    mgr.onStdoutChunk("Downloading mission data...100 Percent Complete*Ann has joined the Anarchy\n");
+    expect(sent.filter((c) => c.includes("Mission over.")).map((c) => /(\d+) seconds/.exec(c)?.[1])).toEqual(["30", "18"]);
+    await vi.advanceTimersByTimeAsync(14_000);
+    mgr.onStdoutChunk("*Cy has joined the Anarchy\n"); // 4 s left: the countdown line is enough
+    expect(sent.filter((c) => c.includes("Mission over."))).toHaveLength(2);
+  });
+
+  it("a chat line that quotes a join does not start the countdown", async () => {
+    await activeWith(1);
+    mgr.onStdoutChunk(missionOver);
+    mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob says: *Ann has joined the Anarchy\n");
+    expect(sent).toEqual(["$wait on"]);
   });
 
   it("holds when who is on is not known yet", async () => {
@@ -755,6 +800,7 @@ describe("PlaylistManager — the hold before a restart", () => {
     mgr.onStdoutChunk(missionOver);
     mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
     await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
     expect(sent.some((c) => c.includes("12 seconds"))).toBe(true);
     expect(sent.filter((c) => c.includes("Restarting into"))).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(7_000);
@@ -798,7 +844,9 @@ describe("PlaylistManager — the hold before a restart", () => {
     await activeWith(1);
     mgr.onStdoutChunk(missionOver);
     mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
-    await vi.advanceTimersByTimeAsync(33_000);
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(rotated).toHaveLength(1);
     mgr.rotationSkipped();
     expect(sent).toContain("$wait off");
@@ -809,7 +857,9 @@ describe("PlaylistManager — the hold before a restart", () => {
     await activeWith(1);
     mgr.onStdoutChunk(missionOver);
     mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
-    await vi.advanceTimersByTimeAsync(33_000);
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
+    await vi.advanceTimersByTimeAsync(30_000);
     mgr.markRotationComplete();
     mgr.rotationSkipped();
     expect(sent).not.toContain("$wait off");
@@ -820,7 +870,9 @@ describe("PlaylistManager — the hold before a restart", () => {
     mgr.onStdoutChunk(missionOver);
     mgr.onStdoutChunk(missionOver);
     mgr.onStdoutChunk("Opening level 'a.d3l'...\n");
-    await vi.advanceTimersByTimeAsync(33_000);
+    await vi.advanceTimersByTimeAsync(3_000);
+    mgr.onStdoutChunk("*Bob has joined the Anarchy\n");
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3"]);
   });
 });
