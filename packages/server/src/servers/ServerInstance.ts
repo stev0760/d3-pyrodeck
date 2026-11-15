@@ -1,3 +1,4 @@
+import type { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -47,7 +48,10 @@ import {
   type RunRecord,
 } from "../launcher/runRecord.js";
 
-/** What a server instance uses of its game process: ProcessManager, or a stand-in in tests. */
+/**
+ * What a server instance uses of its game process: ProcessManager, or a
+ * stand-in in tests. The events are ProcessManager's.
+ */
 export type GameProcess = Pick<
   ProcessManager,
   | "sendQuitFn"
@@ -60,10 +64,8 @@ export type GameProcess = Pick<
   | "isRunning"
   | "consoleHost"
   | "noteConsoleQuit"
-  | "on"
-  | "once"
-  | "removeAllListeners"
->;
+> &
+  Pick<EventEmitter, "on" | "once" | "removeAllListeners">;
 
 /** The Pyrodeck settings a server reads (pyrodeck.json). */
 export type InstanceSettings = Pick<PyrodeckConfig, "gamePath" | "executablePath" | "logDir" | "autostart">;
