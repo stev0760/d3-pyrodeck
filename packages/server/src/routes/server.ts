@@ -1,10 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { TelnetConnection } from "../connection/TelnetConnection.js";
 import { ResponseParser } from "../parser/ResponseParser.js";
-import {
-  parseServercaps,
-  type ServerCapabilities,
-} from "../parser/parsers/servercaps.js";
+import { parseServercaps, serializeCaps } from "../parser/parsers/servercaps.js";
 import { SessionManager } from "../session/SessionManager.js";
 import { probeCapabilities } from "../session/probeCapabilities.js";
 import { wsBroadcast, wireSessionToClients } from "./command.js";
@@ -31,15 +28,7 @@ responseParser.register("$addbot", parseAddbot);
 responseParser.register("$botmode", parseBotmode);
 responseParser.register("$botpopulation", parseBotpopulation);
 
-/** Serialize capabilities for JSON (Set -> array). */
-export function serializeCaps(caps: ServerCapabilities) {
-  return {
-    version: caps.version,
-    fork: caps.fork,
-    forkVersion: caps.forkVersion,
-    features: [...caps.features],
-  };
-}
+export { serializeCaps };
 
 export async function serverRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/server/connect", async (request, reply) => {

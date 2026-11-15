@@ -48,6 +48,16 @@ export const VANILLA_CAPS: ServerCapabilities = {
   features: new Set(),
 };
 
+/** Serialize capabilities for JSON (Set -> array). */
+export function serializeCaps(caps: ServerCapabilities) {
+  return {
+    version: caps.version,
+    fork: caps.fork,
+    forkVersion: caps.forkVersion,
+    features: [...caps.features],
+  };
+}
+
 /** Parse one SERVERCAPS line into its key=value fields, or null if it isn't one. */
 function parseCapsLine(line: string): ServerCapabilities | null {
   const tokens = line.trim().split(/\s+/);

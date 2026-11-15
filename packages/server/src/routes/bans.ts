@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import path from "node:path";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
-import { processManager } from "./launcher.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
 import { playerTracker } from "./players.js";
 import { BanStore } from "../bans/BanStore.js";
 import { BanService } from "../bans/BanService.js";
@@ -27,11 +27,12 @@ export const banService = new BanService({
  * server reads.
  */
 function watchLaunchedServerLocalDir(): void {
+  const launchedProcess = serverRegistry.getDefault().process;
   let splitter = new LineSplitter();
-  processManager.on("stateChange", (state: string) => {
+  launchedProcess.on("stateChange", (state: string) => {
     if (state === "starting") splitter = new LineSplitter();
   });
-  processManager.on("stdout", (chunk: string) => {
+  launchedProcess.on("stdout", (chunk: string) => {
     for (const line of splitter.push(chunk)) {
       const m = /\bLocal dir: (.+?)\s*$/.exec(line);
       if (m && path.isAbsolute(m[1])) void banService.store.setDetectedLocalDir(m[1]).catch(() => {});

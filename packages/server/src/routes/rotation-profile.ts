@@ -6,7 +6,7 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 /**
  * Resolve the profile a playlist would rotate against: an explicit profileId
  * if given, else the most recently launched (mirrors the rotate handler in
- * launcher.ts). Returns null when nothing is resolvable — callers then skip
+ * servers/ServerInstance.ts). Returns null when nothing is resolvable — callers then skip
  * what needs it rather than block.
  */
 export async function resolveRotationProfile(

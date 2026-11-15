@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { pyrodeckConfig } from "./pyrodeck-config.js";
-import { processManager } from "./launcher.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
 import { wsBroadcast } from "./command.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { applyPriority, isPriorityClass, type PriorityResult } from "../ops/processPriority.js";
@@ -47,8 +47,9 @@ export async function processPriorityRoutes(app: FastifyInstance): Promise<void>
       return reply.status(400).send({ error: "priorityClass must be below-normal, normal, above-normal or high." });
     }
     await pyrodeckConfig.save({ processPriority: priorityClass });
-    const pid = processManager.getStatus().pid;
-    const applied = pid !== null && processManager.isRunning() ? await applyConfiguredPriority(pid, false) : null;
+    const launchedProcess = serverRegistry.getDefault().process;
+    const pid = launchedProcess.getStatus().pid;
+    const applied = pid !== null && launchedProcess.isRunning() ? await applyConfiguredPriority(pid, false) : null;
     return { priorityClass, platform: process.platform, last: applied ?? lastPriority };
   });
 }

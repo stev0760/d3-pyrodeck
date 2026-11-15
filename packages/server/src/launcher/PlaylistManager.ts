@@ -127,7 +127,7 @@ const HOLD_ANNOUNCE_S = [20, 10, 5];
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
 
-  /** Called to send a D3 console command (set by launcher.ts on telnet ready) */
+  /** Called to send a D3 console command (set by the server instance on telnet ready) */
   sendCommandFn: ((cmd: string) => Promise<string>) | null = null;
 
   private status: PlaylistStatus = "inactive";

@@ -1,8 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { processManager, startServer, stopServer } from "./launcher.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
 import { sessionManager } from "./server.js";
 import { wsBroadcast } from "./command.js";
-import { playlistManager, rotationHealth } from "../launcher/playlistInstance.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import { countHumanPlayers } from "../parser/parsers/players.js";
@@ -20,20 +19,23 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 const listProfiles = () => new ServerProfileManager(CONFIG_DIR, "").list();
 
+/** The server the schedule starts and stops: the only one. */
+const server = () => serverRegistry.getDefault();
+
 export const scheduler = new Scheduler({
   now: () => new Date(),
   listProfiles,
   getProcess: () => ({
-    running: processManager.isRunning(),
-    profileId: processManager.getStatus().activeProfileId,
+    running: server().process.isRunning(),
+    profileId: server().process.getStatus().activeProfileId,
   }),
-  isBusy: () => playlistManager.getStatus().status === "restarting" || rotationHealth.isPending(),
+  isBusy: () => server().playlist.getStatus().status === "restarting" || server().rotationPending(),
   start: async (profileId) => {
-    const result = await startServer({ profileId, reason: "schedule" });
+    const result = await server().start({ profileId, reason: "schedule" });
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   },
   stop: async () => {
-    await stopServer("schedule");
+    await server().stop("schedule");
   },
   countHumans: async () => {
     const session = sessionManager.getActive();

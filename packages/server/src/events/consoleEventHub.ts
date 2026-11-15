@@ -1,5 +1,5 @@
 import { sessionManager } from "../routes/server.js";
-import { processManager } from "../routes/launcher.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
 import { ConsoleEventSource } from "./ConsoleEventSource.js";
 import { NO_PROFILE_ID } from "./ServerEvents.js";
 import type { ServerSession } from "../session/SessionManager.js";
@@ -9,7 +9,9 @@ import type { ServerSession } from "../session/SessionManager.js";
  * server Pyrodeck launched with -useip has its console on.
  */
 export function isThisMachine(host: string): boolean {
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === processManager.consoleHost();
+  return (
+    host === "localhost" || host === "127.0.0.1" || host === "::1" || host === serverRegistry.getDefault().process.consoleHost()
+  );
 }
 
 /**
@@ -19,9 +21,10 @@ export function isThisMachine(host: string): boolean {
  * NO_PROFILE_ID.
  */
 export function consoleProfileId(host: string, port: number): string {
-  const status = processManager.getStatus();
+  const launchedProcess = serverRegistry.getDefault().process;
+  const status = launchedProcess.getStatus();
   const launched = status.state === "running" || status.state === "starting";
-  if (launched && isThisMachine(host) && port === processManager.getLaunchConfig()?.telnetPort) {
+  if (launched && isThisMachine(host) && port === launchedProcess.getLaunchConfig()?.telnetPort) {
     return status.activeProfileId ?? NO_PROFILE_ID;
   }
   return `connect:${host}:${port}`;

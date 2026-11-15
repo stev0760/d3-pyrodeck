@@ -9,10 +9,11 @@ import type { AutostartChoice, AutostartSource } from "./autostartSettings.js";
  * back after a reboot without anyone pressing Launch. Which profile is
  * autostartSettings.ts's business; with none set this does nothing.
  *
- * Order at startup (routes/launcher.ts): Pyrodeck first tries to re-attach to
- * a server that kept running across its restart. If one runs, re-attached or
- * not, autostart leaves it alone. Otherwise it launches the profile through
- * the Launch button's own path (startServer), active playlist included.
+ * Order at startup (servers/ServerInstance.ts): Pyrodeck first tries to
+ * re-attach to a server that kept running across its restart. If one runs,
+ * re-attached or not, autostart leaves it alone. Otherwise it launches the
+ * profile through the Launch button's own path (ServerInstance.start), active
+ * playlist included.
  *
  * Crash-loop guard. A launch that fails, or a server that goes down within
  * `quickExitMs` of starting, is a failure; `maxFailures` in a row and
