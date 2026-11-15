@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.5.7** — Playlists host their missions. With the mission host on, activating a playlist points the download link of every mission in it at the host, with no click per mission; so do saving the active playlist with new missions and turning the host on while a playlist is active. Missions that ship with the game are never hosted or rewritten, and a link you typed for a mission yourself is kept. One mission that cannot be rewritten never stops the activation: the playlist shows a summary line ("Downloads: 9 hosted, 3 ship with the game, 1 failed") and the reason for each failure. The new links take effect the next time the server loads each mission.
+
 **v0.5.6** — A hold before every mission change. When a playlist's mission ends, the players are held in place with a countdown in chat (DMFC's `$wait`) so they see the scores and can quit before the restart; then Pyrodeck quits the server through its console, which tells every player still on that the server has gone, instead of killing it and leaving their clients to hang until they time out. The hold is per playlist (default 30 s, 0 off) and skipped when no human is on; a manual Stop quits the same way. Works with any Descent 3 dedicated server.
 
 **v0.5.5** — A phone layout. Below 768 px the panel is a phone app: a tab bar (Server, Console, Players, Bots, More), one screen at a time, bottom sheets for pickers and actions, a console with a real command field and a sheet of every command, and a home-screen install; tablet and desktop are unchanged, and both layouts share one session ([docs/phone.md](docs/phone.md)). The bot roster editor gains the population settings (`BotTargetPlayers`, `BotReservedSlots`, bots at start) and no longer erases what it does not show: saves edit the file in place, every config write keeps a `.bak` with a restore, and the Matcen sample roster is one confirmation away. `$botpopulation` is parsed and shown as a live card on the Bots tab, desktop and phone, on Matcen servers.
@@ -93,6 +95,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Timer anchoring: queries `$netgameinfo` once on activation and once per mission rotation (never on a timer — it leaks the engine text buffer and crashes dedicated servers). Mid-mission level changes re-anchor from the cached time limit; the countdown ticks down locally and is visible in the sidebar
 - Mission voting (requires time-limited game with no kill goal): announces options via `say`, players vote by typing a single digit in chat
 - Voting language uses "mission" terminology throughout
+- Mission downloads: with the mission host on, activating a playlist points every entry's download link at it (see [Hosting mission downloads](#hosting-mission-downloads)); the sidebar and the editor show the result as one line, with the reason for any mission that failed
 - Game-mode validation: activation is rejected (with per-entry reasons) when a playlist entry's mission doesn't support the profile's game type; rotation re-checks each entry and skips incompatible ones instead of restarting into a broken game; the editor flags offending entries with ⚠ inline
 - Restart health check: each restarted server must accept the console login and answer `$servercaps` within 120 s. A crash or timeout retries once; a second failure pauses the playlist with the reason in the sidebar and a Resume button. Rotation is still best-effort: players must reconnect after each mission change, which the hold gives them time to do
 
@@ -102,7 +105,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - **Structured form UI** (no .cfg editing required): server identity, network settings, rules, ship bans, powerup toggles, bot roster
 - Starting level (SetLevel) exposed in the identity section
 - **Mission mode-compatibility**: mission picker shows per-mission details (name, level count, mode badges with team capacity) parsed from each `.mn3`, disables missions that don't support the selected game type, and warns on incompatible pairings
-- **Mission download link**: set the link a server offers players who join without the mission (rewrites the `URL` lines inside the server's copy of the `.mn3`; the original is kept as `<name>.mn3.pyrodeck-orig` and one click restores it; takes effect the next time the server loads the mission)
+- **Mission download link**: set the link a server offers players who join without the mission (rewrites the `URL` lines inside the server's copy of the `.mn3`; the original is kept as `<name>.mn3.pyrodeck-orig` and one click restores it; takes effect the next time the server loads the mission). Missions that ship with the game take no link
 - **Mission hosting**: Pyrodeck can serve the missions itself, so the link points at this machine; see [Hosting mission downloads](#hosting-mission-downloads)
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
@@ -249,7 +252,10 @@ A player who joins a server without its mission is offered the mission's downloa
 1. In the Launch panel, open **Mission Downloads**, tick **Serve missions to players who join without them**, and set:
    - **Port**: the TCP port the download listener uses (default `3002`). Forward it on your router to this machine.
    - **Public URL**: the address players reach that port at, such as `http://example.org:3002`. A dynamic-DNS name works. Pyrodeck adds `/missions/<file>`.
-2. In the Config tab, pick a mission and click **Host this mission**. Pyrodeck points the mission's link at `<public URL>/missions/<file>` (the same rewrite as a typed link, so the original file is kept and **Restore original** puts it back). The server offers the new link the next time it loads the mission.
+2. Activate a playlist: Pyrodeck points the link of every mission in it at `<public URL>/missions/<file>`. For a single mission, pick it in the Config tab and click **Host this mission**. Either way it is the same rewrite as a typed link, so the original file is kept and **Restore original** puts it back. The server offers the new link the next time it loads the mission.
+
+   A playlist leaves alone the missions that ship with the game, entries whose file is missing, links that already point at the host, and a link you typed for a mission yourself (to host that one too, click **Host this mission**). Saving the active playlist with new missions hosts them, and so does turning the host on, or changing its public URL, while a playlist is active. A mission that cannot be rewritten (on Windows, the one the server has loaded) is reported and the rest go ahead: the playlist shows a line such as "Downloads: 9 hosted, 3 ship with the game, 1 failed", with the reason for each failure, and Pyrodeck's log lists every mission.
+
 3. **Test** downloads the mission through the public URL from the Pyrodeck machine and compares it with the file on disk. That proves the listener works, not that players outside your network can reach it: check that from outside the LAN (a phone off Wi-Fi will do). Some routers cannot reach their own public address from inside, so a failed test from inside the LAN is not proof either.
 
 The listener is separate from the admin panel: it answers only `GET`/`HEAD /missions/<file>.mn3` for missions in the game path's `missions/` directory, and every other path, the admin API included, gets a 404. It needs no login. It starts, stops and moves port as soon as you save, and the Launch panel shows whether it is listening. It serves the global game path; a profile with its own game path cannot host its missions.
@@ -259,7 +265,7 @@ Limits that come from the game client:
 - **http only.** The game's HTTP client is built without TLS: current builds crash on an `https://` link and 1999-era ones refuse it.
 - **86 characters at most** for the whole link (the download screen copies it into a 100-character buffer). A long host name plus a long mission file name can exceed it; Pyrodeck refuses with the length.
 - **No resume.** An interrupted download starts over.
-- **Retail missions are never offered** (`d3.mn3`, `d3_2.mn3`, `training.mn3`, `merc.mn3`); the server never advertises links for them.
+- **Missions that ship with the game are never hosted** and take no link: every player has them. They are `bedlam`, `bluedev`, `bside`, `bsidectf`, `chaos`, `d3`, `d3_2`, `dementia`, `frenzy`, `fury`, `havoc`, `kata12`, `mayhem`, `merc`, `poe`, `stonecutter`, `training` and `tri-pod` (`.mn3`, any case). The server itself never advertises links for `d3.mn3`, `d3_2.mn3`, `training.mn3` and `merc.mn3`. A link Pyrodeck set on one of them before 0.5.7 can still be restored.
 - **1999-era clients** (retail-derived builds) accept no port in a link. To reach them as well, forward public port 80 to the listener's port and leave the port out of the public URL (`http://example.org`).
 - The game window does not redraw while a download runs; it resumes when the download finishes. Pyrodeck holds each download for one second before sending, to keep clear of a divide-by-zero in the client's progress display.
 
@@ -360,7 +366,7 @@ With no admin password set, the server serves localhost only: requests from non-
 
 The game server Pyrodeck launches does not inherit Pyrodeck's environment. It gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TMP`/`TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*`, `SDL_*`, `D3_*` and `LD_LIBRARY_PATH` (on Windows also the system variables such as `SystemRoot` and `APPDATA`), plus `SDL_VIDEODRIVER=dummy` unless set, and never a `PYRODECK_*` variable: the admin password, the session secret and anything else in the service's environment stay with Pyrodeck.
 
-The mission download listener (off by default) is public by design and needs no login, but serves nothing except the missions in the game path's `missions/` directory, never the retail ones; it runs on its own port, not through the admin panel.
+The mission download listener (off by default) is public by design and needs no login, but serves nothing except the missions in the game path's `missions/` directory, never the ones that ship with the game; it runs on its own port, not through the admin panel.
 
 For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Caddy) with HTTPS, leave it on `127.0.0.1` (the default since 0.5.2), and set `PYRODECK_TRUST_PROXY=1` so rate-limiting, the `Secure` cookie and logging see the real client from `X-Forwarded-For` and `X-Forwarded-Proto`. It trusts those headers only from a proxy on the same machine; the client's address is the last one the proxy added, so a client cannot spoof it. Set the admin password before the proxy goes live. [docs/behind-a-reverse-proxy.md](docs/behind-a-reverse-proxy.md) has the nginx server block, certbot, the firewall and the checks. Keep the game's remote console off the network too: `AllowRemoteConsole=0` (see Launch Mode).
 

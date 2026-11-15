@@ -759,11 +759,11 @@ REST endpoint for a raw command.
 | `GET` | `/api/playlists` | List all playlists |
 | `POST` | `/api/playlists` | Create playlist (`name`, `mode`, `entries[]`) |
 | `GET` | `/api/playlists/:id` | Get playlist by ID |
-| `PUT` | `/api/playlists/:id` | Update playlist |
+| `PUT` | `/api/playlists/:id` | Update playlist (the active one with other missions: hosts them, Addendum C.4) |
 | `DELETE` | `/api/playlists/:id` | Delete playlist |
-| `POST` | `/api/playlists/:id/activate` | Activate playlist (starts rotation on next level end) |
+| `POST` | `/api/playlists/:id/activate` | Activate playlist (starts rotation on next level end); returns `{ ok, status, downloads }` (C.4) |
 | `POST` | `/api/playlists/deactivate` | Deactivate current playlist |
-| `GET` | `/api/playlists/status` | Current PlaylistManager status |
+| `GET` | `/api/playlists/status` | Current PlaylistManager status, `downloads` included (C.4) |
 
 `PlaylistEntry: { id, label, missionName, startingLevel?, weight? }`
 `PlaylistVoting: { enabled, preAnnounceSeconds, voteOpenSeconds, optionCount }`
@@ -778,11 +778,12 @@ REST endpoint for a raw command.
 | `POST` | `/api/game-files/missions/:file/download-url/restore` | Body `{ profileId? }`: put the original `.mn3` back and delete the backup |
 | `POST` | `/api/game-files/missions/:file/download-url/host` | Body `{ profileId? }`: set the link to `<publicBaseUrl>/missions/<file>` (Addendum C) |
 | `GET` | `/api/mission-host` | `{ settings: { enabled, port, publicBaseUrl }, status: { enabled, port, bound, error, publicBaseUrl, missionsDir } }` |
-| `PUT` | `/api/mission-host` | Body `{ enabled, port, publicBaseUrl }`: validate, save, start/stop/move the listener; returns `{ settings, status, warnings }` |
+| `PUT` | `/api/mission-host` | Body `{ enabled, port, publicBaseUrl }`: validate, save, start/stop/move the listener; returns `{ settings, status, warnings, downloads }` (`downloads`: C.4, null unless the active playlist was hosted) |
 | `POST` | `/api/mission-host/test` | Body `{ file }`: fetch the mission through the public base URL from the Pyrodeck machine; `{ ok, url, status, contentLength, bytes, matches, elapsedMs, error }` |
 
-With the host on, `details=1` entries also carry `hostUrl` (the link the host serves the mission at) or
-`hostError` (why it cannot: retail, too long, another game path). `GET /api/launcher/status` carries
+`details=1` entries carry `linkError` for a mission that takes no new link (retail or stock, C.4). With the host on,
+they also carry `hostUrl` (the link the host serves the mission at) or `hostError` (why it cannot: retail, stock,
+too long, another game path). `GET /api/launcher/status` carries
 `missionHost` (the status object above).
 
 ### 8.5 Config Files (Phase 1)
@@ -1379,7 +1380,8 @@ the server's copy of the `.mn3`). Matcen registry item REL7.
 
 ### B.2 Rewrite (`packages/server/src/gamefiles/Mn3UrlRewriter.ts`)
 
-1. Validate the file: a plain `*.mn3` name listed in `gamePath/missions/`, not retail; HOG2 magic,
+1. Validate the file: a plain `*.mn3` name listed in `gamePath/missions/`, not retail (from v0.5.7
+   not stock either, C.4; restore still accepts a stock mission); HOG2 magic,
    a plausible entry count, a data offset after the entry table, payloads that end inside the
    file, and a `.msn` entry.
 2. Validate the link: `http(s)`, printable ASCII without spaces, at most 95 characters, a host, a
@@ -1453,7 +1455,7 @@ the Matcen contract (`PYRODECK_CONTRACT.md`) is untouched.
   normalized to `http://<lower-case host>[:port]`; https, paths, queries and credentials are
   refused; a LAN or loopback host draws a warning.
 - A plain `node:http` server, not the admin Fastify app: `GET`/`HEAD /missions/<name>` where the
-  decoded name is a bare basename ending in `.mn3`, not retail, and listed case-exact by a `readdir`
+  decoded name is a bare basename ending in `.mn3`, not retail or stock (C.4), and listed case-exact by a `readdir`
   of `<global gamePath>/missions` at request time. Everything else is 404 (405 for other methods on a
   mission path). No directory listing, no ranges (`Accept-Ranges: none`).
 - Response: 200, `Content-Type: application/octet-stream`, `Content-Length` from the open
@@ -1484,6 +1486,51 @@ ephemeral port: byte-identical body with Content-Length, 404 for retail, travers
 unknown, wrong-case and `/api/...`, the bare-LF request, the hold, bind failure). Manual run on
 127.0.0.1:3001/3002: `curl -sI` and a SHA-256 match on a 5.4 MB mission, refusals, port move and
 disable without a restart. **Not verified:** a real game client downloading from the listener.
+
+### C.4 Playlists and stock missions (v0.5.7, branch `feature/playlist-hosting`)
+
+**Stock missions.** `STOCK_MISSIONS` (`Mn3UrlRewriter.ts`) lists the 18 missions that ship with the retail game,
+compared lower-cased: `bedlam`, `bluedev`, `bside`, `bsidectf`, `chaos`, `d3`, `d3_2`, `dementia`, `frenzy`, `fury`,
+`havoc`, `kata12`, `mayhem`, `merc`, `poe`, `stonecutter`, `training`, `tri-pod` (`.mn3`). `RETAIL_MISSIONS` stays the
+four the engine refuses to advertise (B.1). A stock mission is never served (`isServableMission`), never given a hosted
+link (`buildHostedMissionUrl`) and never given a typed one (`checkLinkableMission`, used by `setMissionUrl` and the
+`download-url` PUT): "`<file>` ships with Descent 3; every player already has it." (the retail message stays for the
+four). Restore takes `checkMissionFilename` only, so a stock mission rewritten by an earlier version can be restored.
+The Config tab shows neither **Set link** nor the host block for a mission with `linkError`.
+
+**Hosting one mission** (`gamefiles/missionHosting.ts`, `hostMission`), shared by the host route and playlists:
+
+1. A stock mission is `stock`; a file not listed in the directory is `missing`.
+2. Build the hosted link (C.3); a refusal (too long) throws.
+3. Read the current links. One of them is the hosted link: `already` (no rewrite, no backup).
+4. A `.pyrodeck-orig` backup exists and a current link is neither the hosted one nor the host's link under a former
+   public URL: the operator typed it, so a playlist leaves it (`custom`). The host route replaces it.
+5. Otherwise rewrite through `setMissionUrl` (B.2): `hosted`, with `backupCreated` on the first rewrite.
+
+**A playlist** (`routes/mission-host.ts`, `hostPlaylistDownloads`) runs only while the host is on with a public base URL
+and serves the missions directory of the playlist's server (the activation's `profileId`, else the most recently
+launched profile, as for rotation); otherwise it records a `notice` and rewrites nothing. Each mission file is handled
+once, in entry order, one at a time; a thrown error becomes that entry's `error` result, never a failed request. It
+runs where an entry or the hosted link can change:
+
+- `POST /api/playlists/:id/activate`, after the compatibility check and the activation;
+- `PUT /api/playlists/:id` on the active playlist when the set of mission names changed (not on a re-order or a new
+  label);
+- `PUT /api/mission-host` when the host is turned on, or its public URL changes, while a playlist is active; links at
+  the previous URL count as the host's own and move.
+
+Not at rotation or at Pyrodeck start: the rewrites are on disk and stay. A rewrite takes effect the next time the server
+loads the mission; nothing is restarted. On Windows the mission the running server has loaded cannot be replaced (B.2),
+so it is an `error` entry.
+
+The report, `{ playlistId, at, summary, notice?, results: [{ entryId, label, file, outcome, url?, urls?, backupCreated?,
+urlBackup?, message? }] }` with `outcome` one of `hosted`, `already`, `custom`, `stock`, `missing`, `error`, goes to
+the log (a summary line and a line per hosted, failed, missing or custom mission), to the response, and to
+`PlaylistManager.setDownloads`: `GET /api/playlists/status` and `playlist_status` carry it as `downloads` until the next
+activation, a deactivation or the host being turned off. It is not saved. `summary` counts mission files, hosted and
+already together: "9 hosted, 3 ship with the game, 1 has its own link, 1 missing, 1 failed" (zeros left out). The
+sidebar shows "Downloads: <summary>" with the problem entries in its tooltip; the playlist editor lists them under the
+line; the Mission Downloads panel shows the result of its own save.
 
 
 ## Addendum D — Operations (2026-10-07, branch `parity/ops`)

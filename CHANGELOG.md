@@ -2,6 +2,17 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.5.7] - 2026-11-15
+
+A playlist's missions download from the mission host without a click per mission.
+
+### Added
+- **Playlists host their missions.** With the mission host on, activating a playlist points the download link of every mission in it at `<public URL>/missions/<file>`, through the same rewrite as **Host this mission** (the original is kept once as `<name>.mn3.pyrodeck-orig`). It happens again when the active playlist is saved with other missions, and when the mission host is turned on, or its public URL changed, while a playlist is active; links the host set under its former URL move to the new one. Skipped: missions that ship with the game, entries whose file is missing, links that already point at the host (no rewrite and no new backup), and a link the operator typed for a mission (Pyrodeck holds a backup and the link is not the hosted one), which is reported as its own link and kept. Nothing happens when the host serves another missions directory than the playlist's server; the playlist says so. A mission that cannot be rewritten is reported with the reason and never stops the activation. The sidebar and the playlist editor show one line, such as "Downloads: 9 hosted, 3 ship with the game, 1 failed", the editor with a line per mission that failed, is missing or keeps its own link; Pyrodeck's log lists each mission. The links take effect the next time the server loads each mission; nothing is restarted. `POST /api/playlists/:id/activate` and `PUT /api/mission-host` return the result as `downloads`, and `GET /api/playlists/status` and `playlist_status` carry the latest one.
+
+### Changed
+- **Missions that ship with the game are never hosted or rewritten**: `bedlam`, `bluedev`, `bside`, `bsidectf`, `chaos`, `d3`, `d3_2`, `dementia`, `frenzy`, `fury`, `havoc`, `kata12`, `mayhem`, `merc`, `poe`, `stonecutter`, `training` and `tri-pod` (`.mn3`, any case). Every player already has them. The mission host answers 404 for them, **Host this mission** and a typed link are refused ("ships with Descent 3; every player already has it"), and the Config tab offers neither for them. Until now only the four the server never advertises (`d3`, `d3_2`, `training`, `merc`) were left out. A link set on one of them by an earlier version can still be restored.
+- **Host this mission** on a mission whose link already points at the host no longer writes a backup of it.
+
 ## [0.5.6] - 2026-11-05
 
 A mission change no longer strands the players: they are held with a countdown, and the server quits cleanly.

@@ -355,6 +355,9 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       inside a `.mn3`, backup once, restore; spec Addendum B
 - [x] Mission host (v0.5.0): Pyrodeck serves the missions on its own port and points the link at
       itself; spec Addendum C. Open: a real game client downloading from it, and Windows
+- [x] Playlists host their missions (v0.5.7): activating a playlist, saving the active one with other
+      missions and turning the host on point every entry's link at the mission host, with a per-entry
+      report and a summary line; the 18 stock missions are never hosted or rewritten; spec Addendum C.4
 - [x] Server log path hardening (Matcen registry REL9, v0.4.20): absolute Log Directory validated on
       save, directory and file created before every launch, log re-checked while the server runs
 - [x] Reverse-proxy hardening (v0.5.1): trust only the proxy hop, proxied requests never local,
