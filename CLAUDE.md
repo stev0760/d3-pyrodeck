@@ -26,6 +26,7 @@ pnpm monorepo:
   - **DMFC layer** (game commands): `$kick`, `$ban`, `$scores`, `$endlevel` — go through game DLL
 - `$kick` works on bots from Matcen 0.8.4 (`MultiDisconnectPlayer` hands a bot to `BotRemove`); `$removebot` is still the bot command. Never `$ban` a bot: DMFC would ban its address, which is the server's own (Pyrodeck refuses).
 - Web admin auth exists (scrypt hash + cookie session) but is skipped automatically on localhost when no password is set — dev workflow needs no login
+- The launched server's process, console login and watchers (supervisor, autostart, playlist rotation, run record) are one `ServerInstance` (`packages/server/src/servers/`); routes take it from `serverRegistry`. Spec §3.5 gives the order of effects on a process state change
 
 ## UI Testing Pipeline
 

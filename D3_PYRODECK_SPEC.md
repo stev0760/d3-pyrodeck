@@ -128,6 +128,26 @@ The parser starts as a pass-through (raw text displayed in console). Structured 
 ```
 The parser must strip this echo line before processing the response.
 
+### 3.5 Server instances
+
+The server Pyrodeck launches is one object, `servers/ServerInstance.ts`: its `ProcessManager`, the console login (the
+session, the 5 s reconnect, the `quit` a stop sends), the console quit watch, the supervisor, autostart and its
+crash-loop guard, the profile automation, the playlist rotation with its restart health check, the run record, and
+the batching of process output for the browsers. `servers/ServerRegistry.ts` holds the instances by id and builds the
+one Pyrodeck runs, the default, from the shared session manager, WebSocket broadcast, `pyrodeck.json` settings and
+playlist manager. The launcher, schedule, bans and process priority routes and the console event hub take that server
+from the registry. Its console session lives in the `SessionManager` it shares with Connect mode, which holds one open
+session.
+
+On a process state change the instance sends the buffered output first, then the state; forgets the loaded level;
+fails a playlist restart that died while its health check waited, having first read whether the check was pending, so
+the supervisor leaves that crash to the rotation; then stops the reconnect timer, removes the run record, and reports
+the exit to autostart's guard before the supervisor. The per-event lines in Pyrodeck's log (`events/serverEventLog.ts`)
+are subscribed to the bus before the instance, so they print first.
+
+The instance takes its process, console transport, process checks and timings as options; `ServerInstance.test.ts`
+runs it on a stand-in process and console.
+
 ---
 
 ## 4. Tech Stack
@@ -1562,10 +1582,10 @@ emails, service mode and priority class). No `$` command or console output chang
   the spring gap moves forward by the gap and an end in the autumn repeat ends at its first occurrence. Overlapping or
   touching windows merge into one run.
 - A 30 s tick (the first 10 s after Pyrodeck starts), edge-triggered on runs: at a run's start, the profile is
-  started through the Launch panel's own path (`startServer`; `server.started{reason:"schedule"}`) if nothing
+  started through the Launch panel's own path (`ServerInstance.start`; `server.started{reason:"schedule"}`) if nothing
   is running; another profile's server or a playlist restart in progress skips it (`schedule.skipped` event, error
   toast). At the run's end, if the profile's
-  server is running, it is stopped (`stopServer`: SIGTERM, no `quit`; `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
+  server is running, it is stopped (`ServerInstance.stop`: SIGTERM, no `quit`; `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
   human (slot 0 and `[BOT]` callsigns excluded), and at `end + stopWaitMinutes` regardless; without a console session the
   count is unknown and the stop waits for the deadline. One `say` when the wait begins.
 - Nothing is persisted but the settings. After a Pyrodeck restart: inside a run, the start is made; outside one, nothing
@@ -1652,7 +1672,7 @@ counted as players.
 
 ### E.2 Relaunch after a crash
 
-`launcher/Supervisor.ts`, wired in `routes/launcher.ts`. A process that exits in state `crashed`
+`launcher/Supervisor.ts`, wired in `servers/ServerInstance.ts`. A process that exits in state `crashed`
 (no `stop()` and no console `quit`, E.1) is relaunched with the same `LaunchConfig` (same profile,
 config file, executable and arguments; a new log file next to the last one) and
 `server.started{reason:"relaunch"}`. The wait is 5 s, doubling per failure to 2 min; failures older
@@ -1667,7 +1687,7 @@ That crash belongs to the rotation, which retries once and then pauses the playl
 reads `rotationHealth.isPending()` before the health check reacts to the crash, because the check is
 idle once it gives up.
 
-`stopServer(reason, {kill})` in `routes/launcher.ts` is the one stop path (Stop button, supervisor;
+`ServerInstance.stop(reason, {kill})` is the one stop path (Stop button, supervisor;
 the scheduler should use it with `"schedule"`). Only a manual stop sends `quit`; the others close
 Pyrodeck's console session first and signal the process, as a rotation does, so the console port
 is not left in TIME_WAIT on the server's side.
@@ -1778,14 +1798,14 @@ Neither set: no autostart.
 
 ### F.2 When, and how
 
-`launcher/Autostart.ts`, wired in `routes/launcher.ts`; `index.ts` calls it once after `listen`, and
+`launcher/Autostart.ts`, wired in `servers/ServerInstance.ts`; `index.ts` calls it once after `listen`, and
 `launcherRoutes` has re-attached by then. Once per Pyrodeck process:
 
 1. No profile set: state `off`, nothing logged. Unknown or ambiguous name, or the UI's profile deleted: state
    `error`, `console.error` naming the profiles that exist, nothing launched, no throw.
 2. A server is running (re-attached), or re-attach found one it could not adopt (its config lost
    `ConsolePassword`), or re-attach threw: state `skipped` with the reason, nothing launched.
-3. Otherwise, after the playlist state is restored, `startServer({ profileId, reason: "autostart" })`, the Launch
+3. Otherwise, after the playlist state is restored, `ServerInstance.start({ profileId, reason: "autostart" })`, the Launch
    button's path. Playlists are global: the restored playlist's `needsInitialSync` is false, so the server starts on
    the `MissionName` its last rotation wrote into the profile's config and rotation carries on; a paused playlist
    stays paused; rotations restart the most recently launched profile, which `markLaunched` makes this one.
@@ -1793,7 +1813,7 @@ Neither set: no autostart.
 
 ### F.3 Crash-loop guard
 
-A failure is a launch that `startServer` refuses or `ProcessManager.start` throws on, or a process that goes down
+A failure is a launch that `ServerInstance.start` refuses or `ProcessManager.start` throws on, or a process that goes down
 (`crashed`, or `stopped` with reason `hang`) within `AUTOSTART_QUICK_EXIT_MS` (60 s) of `server.started`.
 `AUTOSTART_MAX_FAILURES` (5) in a row: state `failed`, `console.error` and a toast with the last reason, and
 `Supervisor.giveUp(reason)`, which cancels a pending relaunch and sets the supervisor's `gaveUp`; a supervisor that
@@ -1805,7 +1825,7 @@ Who retries: a refused launch is retried by autostart after `backoffDelayMs(fail
 supervisor's (state `relaunching`): it relaunches after a crash when `relaunchOnCrash` is on and always after a hang;
 `server.started{reason:"relaunch"}` starts the next 60 s watch, and a relaunch whose spawn throws counts as a failure
 (the supervisor's `relaunch` action reports it). With `relaunchOnCrash` off the first early exit is state `failed`.
-`launcher.ts` calls `autostart.processDown` before `supervisor.processDown`, so a tripped guard is in place first.
+`ServerInstance` calls `autostart.processDown` before `supervisor.processDown`, so a tripped guard is in place first.
 
 The guard ends with state `started` once a process has run 60 s, or `cancelled` when someone else acts: a
 `server.started` with reason `manual`, `schedule` or `playlist`, a stop on request inside the window, or
