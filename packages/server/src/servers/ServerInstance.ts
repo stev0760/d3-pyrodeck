@@ -5,6 +5,7 @@ import {
   ProcessManager,
   type LaunchConfig,
   type ProcessStatus,
+  type StartReason,
   type StopReason,
 } from "../launcher/ProcessManager.js";
 import { resolveLogDir, buildLogFilename, prepareLogFile } from "../launcher/logPaths.js";
@@ -12,11 +13,12 @@ import { parseDedicatedCfg, extractTelnetConfig } from "../launcher/ConfigGenera
 import { TelnetConnection } from "../connection/TelnetConnection.js";
 import type { ServerConnection } from "../connection/ServerConnection.js";
 import { probeCapabilitiesDetailed } from "../session/probeCapabilities.js";
-import type { SessionManager } from "../session/SessionManager.js";
+import type { ServerSession, SessionManager } from "../session/SessionManager.js";
 import { parseNetgameinfo } from "../parser/parsers/netgameinfo.js";
 import { serializeCaps } from "../parser/parsers/servercaps.js";
 import type { PyrodeckConfig } from "../config/PyrodeckConfig.js";
-import { ServerProfileManager } from "../config/ServerProfile.js";
+import { ServerProfileManager, type ServerProfile } from "../config/ServerProfile.js";
+import type { ConsoleLink } from "../players/consoleLink.js";
 import type { PlaylistEntry, PlaylistManager } from "../launcher/PlaylistManager.js";
 import { RotationHealthMonitor } from "../launcher/RotationHealthMonitor.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
@@ -30,13 +32,14 @@ import {
 } from "../launcher/launchOptions.js";
 import { buildTeamSettingLines, sanitizeStoredTeamSettings } from "../launcher/teamSettings.js";
 import { ProfileAutomation } from "../launcher/profileAutomation.js";
-import { serverEvents, type ServerEvents } from "../events/ServerEvents.js";
+import { NO_PROFILE_ID, serverEvents, type ServerEvents } from "../events/ServerEvents.js";
 import { ConsoleQuitWatch } from "../launcher/consoleQuit.js";
 import { chatName, sayToAll } from "../players/playerActions.js";
 import { Supervisor, type ProcessDown, type SupervisorOptions } from "../launcher/Supervisor.js";
 import { Autostart, type AutostartOptions } from "../launcher/Autostart.js";
-import { chooseAutostartProfile } from "../launcher/autostartSettings.js";
+import { chooseAutostartProfile, type AutostartChoice } from "../launcher/autostartSettings.js";
 import {
+  RUN_RECORD_FILE,
   clearRunRecord,
   decideAdopt,
   readLinuxIdentity,
@@ -96,18 +99,60 @@ export const DEFAULT_TIMING: InstanceTiming = {
   rotationAnnounceMs: 1_000,
 };
 
+/** A launch the guard let through: the launch to spawn, with the ports and files held until release(). */
+export type LaunchPass = { ok: true; launch: LaunchConfig; release: () => void } | { ok: false; error: string };
+
+/**
+ * Checks every launch against the other servers Pyrodeck runs
+ * (servers/ServerRegistry.ts): refuses one that would share a port or a file
+ * with a running server, and adds Pyrodeck's per-server defaults (its own
+ * -tempdir, a free -gamespyport) where the profile sets none.
+ */
+export interface LaunchGuard {
+  reserve(serverId: string, launch: LaunchConfig): Promise<LaunchPass>;
+}
+
+/** A launch the guard refused; its message says why. */
+export class LaunchRefusedError extends Error {}
+
+/** The launch whose ports and files a server holds, for the other servers' launch checks. */
+export interface HeldLaunch {
+  launch: LaunchConfig;
+  pid: number | null;
+  /** Why it is held: "running", "restarting", or a server from before Pyrodeck's restart not re-attached. */
+  why: string;
+}
+
 export interface ServerInstanceOptions {
   id: string;
+  /**
+   * The profile this server runs, or null for the server launched without
+   * one (the global dedicated.cfg). Unset: it launches whichever profile
+   * start() names, as the single server of a Pyrodeck that ran one did.
+   */
+  profileId?: string | null;
   /** Where profiles.json, running-server.json and the playlist state are kept. */
   configDir: string;
   settings: () => InstanceSettings;
-  /** The console session store, shared with Connect mode. */
+  /** The console session store, shared with the other servers and Connect mode. */
   sessions: SessionManager;
   /** The playlist this server rotates through. */
   playlist: PlaylistManager;
   broadcast: Broadcast;
-  /** Stream a ready session's console output to the browsers (routes/command.ts). */
-  wireSessionToClients: () => void;
+  /** Stream a ready session's console output to the browsers. */
+  wireSessionToClients: (session: ServerSession) => void;
+  /** None: every launch goes ahead as asked (one server). */
+  launchGuard?: LaunchGuard;
+  /** The run record's file. Default: `<configDir>/running-server.json`. */
+  runRecordPath?: string;
+  /** Called after the run record was written (with it) or removed (null). */
+  onRunRecord?: (record: RunRecord | null) => void;
+  /**
+   * Which profile autostart launches, or null for none. Default: the one
+   * PYRODECK_AUTOSTART_PROFILE names, else the profile ticked "Start when
+   * Pyrodeck starts".
+   */
+  autostartChoice?: () => Promise<AutostartChoice | null>;
   /** PYRODECK_AUTOSTART_PROFILE, read once at startup. */
   autostartEnv?: string | null;
   /** Default: the process-wide bus. */
@@ -156,6 +201,20 @@ interface RotationLaunch {
   launch: LaunchConfig;
 }
 
+/** What a playlist rotation restarts (ServerInstance.rotationTarget). */
+interface RotationTarget {
+  /** Null for the server launched without a profile. */
+  profile: ServerProfile | null;
+  /** The log file's label. */
+  name: string;
+  configFile: string;
+  gamePath: string | null | undefined;
+  executablePath: string | null | undefined;
+  launchOptions: LaunchOptions | null;
+  autoexecBlock?: string[];
+  startupFile?: string;
+}
+
 /**
  * Build a single-line vote prompt sized for D3's 2-line chat window.
  * Example: "Vote next mission (type 1-3): 1=Abend2  2=Stadium  3=BBQ"
@@ -166,6 +225,15 @@ interface RotationLaunch {
 function buildVotePromptLine(options: PlaylistEntry[]): string {
   const parts = options.map((o, i) => `${i + 1}=${o.label}`).join("  ");
   return sayToAll(`Vote next mission (type 1-${options.length}) - ${parts}`);
+}
+
+/** Remove a log file Pyrodeck created for a launch that went to another file, if nothing was written to it. */
+async function removeIfEmpty(file: string): Promise<void> {
+  try {
+    if ((await fs.stat(file)).size === 0) await fs.rm(file, { force: true });
+  } catch {
+    // gone already
+  }
 }
 
 /**
@@ -195,9 +263,11 @@ function logConsoleWarnings(configFile: string, launch: Pick<LaunchConfig, "laun
  * health check, the profile's console automation, the run record that lets
  * the next Pyrodeck re-attach, the output sent to the browsers).
  *
- * The console session lives in the SessionManager shared with Connect mode,
- * which has room for one open session: logging in to this server replaces a
- * Connect-mode session, and the other way round.
+ * The console session lives in the SessionManager shared with the other
+ * servers and Connect mode; this server only ever uses, replaces or closes the
+ * session it opened (the session's owner is this server's id). With the
+ * registry's scoped bus as `events`, its watchers hear only this server's
+ * events.
  *
  * Order of effects when the process changes state (onStateChange): the
  * buffered output is sent first, then the new state; the loaded level is
@@ -228,15 +298,27 @@ export class ServerInstance {
   readonly autostart: Autostart;
   /** The profile PYRODECK_AUTOSTART_PROFILE names; read once, like the other PYRODECK_* settings. */
   readonly autostartEnv: string | null;
+  /** The profile this server runs (null: none, the global dedicated.cfg); undefined: any. */
+  readonly profileId: string | null | undefined;
 
   private readonly configDir: string;
   private readonly settings: () => InstanceSettings;
   private readonly sessions: SessionManager;
   private readonly broadcast: Broadcast;
-  private readonly wireSessionToClients: () => void;
+  private readonly wireSessionToClients: (session: ServerSession) => void;
   private readonly createConnection: () => ServerConnection;
   private readonly host: ProcessHost;
   private readonly timing: InstanceTiming;
+  private readonly launchGuard: LaunchGuard | null;
+  private readonly runRecordDir: string;
+  private readonly runRecordName: string;
+  private readonly onRunRecord: (record: RunRecord | null) => void;
+  /** The console session this server opened, by id. */
+  private sessionId: string | null = null;
+  /** A playlist rotation is between stopping the server and spawning the next mission's. */
+  private rotating = false;
+  /** A server from before Pyrodeck's restart that still runs but could not be re-attached to. */
+  private unattached: RunRecord | null = null;
 
   /**
    * A `quit` typed at a remote console, read from the launched process's
@@ -267,12 +349,18 @@ export class ServerInstance {
 
   constructor(options: ServerInstanceOptions) {
     this.id = options.id;
+    this.profileId = options.profileId;
     this.configDir = options.configDir;
     this.settings = options.settings;
     this.sessions = options.sessions;
     this.playlist = options.playlist;
     this.broadcast = options.broadcast;
     this.wireSessionToClients = options.wireSessionToClients;
+    this.launchGuard = options.launchGuard ?? null;
+    const runRecordPath = options.runRecordPath ?? path.join(options.configDir, RUN_RECORD_FILE);
+    this.runRecordDir = path.dirname(runRecordPath);
+    this.runRecordName = path.basename(runRecordPath);
+    this.onRunRecord = options.onRunRecord ?? (() => {});
     this.autostartEnv = options.autostartEnv ?? null;
     this.events = options.events ?? serverEvents;
     this.process = options.process ?? new ProcessManager({ events: this.events });
@@ -401,7 +489,7 @@ export class ServerInstance {
           await this.stop(reason, options);
         },
         command: async (cmd) => {
-          const session = this.sessions.getActive();
+          const session = this.consoleSession();
           if (!session || session.state !== "ready" || !session.connection.isConnected()) {
             throw new Error("no console");
           }
@@ -424,14 +512,12 @@ export class ServerInstance {
     // A playlist holds the players before a restart only when one may be on (PlaylistManager.startHold).
     this.playlist.humansFn = () => this.supervisor.humansOnline();
 
+    const autostartChoice =
+      options.autostartChoice ??
+      (async () => chooseAutostartProfile(this.autostartEnv, this.settings().autostart.profileId, await this.profileList().list()));
     this.autostart = new Autostart(
       {
-        choose: async () =>
-          chooseAutostartProfile(
-            this.autostartEnv,
-            this.settings().autostart.profileId,
-            await this.profileList().list(),
-          ),
+        choose: autostartChoice,
         blockedBy: () => {
           if (this.process.isRunning()) {
             const { pid, adopted } = this.process.getStatus();
@@ -490,6 +576,16 @@ export class ServerInstance {
     if (this.process.isRunning()) {
       return { ok: false, code: 409, error: "Server is already running" };
     }
+    const requested = opts.profileId ?? this.profileId ?? undefined;
+    if (this.profileId !== undefined && (requested ?? null) !== this.profileId) {
+      return {
+        ok: false,
+        code: 400,
+        error: this.profileId
+          ? `This server runs profile ${this.profileId}, not ${requested ?? "the global dedicated.cfg"}`
+          : "This server runs the global dedicated.cfg, not a profile",
+      };
+    }
     this.takeOverFromRotation();
 
     const config = this.settings();
@@ -505,12 +601,13 @@ export class ServerInstance {
     let launchOptions: LaunchOptions | null = null;
     // Only a profile launch owns the block in the Startup Commands file.
     let autoexecBlock: string[] | undefined;
+    let startupFile: string | undefined;
 
-    if (opts.profileId) {
+    if (requested) {
       // Use a base manager (gamePath unused for reading profiles.json from the config directory)
       const profileManager = new ServerProfileManager(this.configDir, gamePath ?? "");
       try {
-        const profile = await profileManager.read(opts.profileId);
+        const profile = await profileManager.read(requested);
         configFile = profile.configFile;
         logLabel = profile.name;
         // Per-profile path overrides take precedence over global config
@@ -518,9 +615,10 @@ export class ServerInstance {
         if (profile.executablePath) executablePath = profile.executablePath;
         launchOptions = sanitizeStoredLaunchOptions(profile.launchOptions);
         autoexecBlock = buildTeamSettingLines(sanitizeStoredTeamSettings(profile.teamSettings));
-        await profileManager.markLaunched(opts.profileId);
+        startupFile = profile.startupFile;
+        await profileManager.markLaunched(requested);
       } catch {
-        return { ok: false, code: 404, error: `Profile not found: ${opts.profileId}` };
+        return { ok: false, code: 404, error: `Profile not found: ${requested}` };
       }
     }
 
@@ -570,11 +668,8 @@ export class ServerInstance {
       };
     }
 
-    // Disconnect any existing session
-    const existing = this.sessions.getActive();
-    if (existing) {
-      this.sessions.remove(existing.id);
-    }
+    // Disconnect the session this server had open
+    this.removeConsoleSession();
 
     // Resolve executable path (if relative, join with gamePath)
     // executablePath is already set from profile override or global config above
@@ -583,78 +678,87 @@ export class ServerInstance {
     }
 
     // Log file: auto-named per launch in the configured log directory (default:
-    // next to the executable). Create the directory and the file itself BEFORE
-    // launch so a missing or unwritable target fails loudly instead of silently
-    // logging into the void for hours.
+    // next to the executable).
     const logDir = resolveLogDir(config.logDir, executablePath);
-    const logPath = path.join(logDir, buildLogFilename(logLabel));
-    const logError = await prepareLogFile(logPath);
-    if (logError) {
-      return {
-        ok: false,
-        code: 400,
-        error: `${logError} Set a valid Log Directory in the Logs panel.`,
-      };
-    }
+    const planned: LaunchConfig = {
+      executablePath,
+      gamePath,
+      configFile,
+      logPath: path.join(logDir, buildLogFilename(logLabel)),
+      telnetPort,
+      telnetPassword,
+      allowRemoteConsole,
+      profileId: requested,
+      launchOptions,
+      autoexecBlock,
+      ...(startupFile ? { startupFile } : {}),
+    };
 
-    // If a playlist is active and hasn't been synced to a server yet, override
-    // the profile's MissionName/SetLevel with the playlist's current entry
-    // BEFORE launch — otherwise the first level would be whatever the config
-    // has, and the playlist wouldn't kick in until the first "Ending level."
-    const initialEntry = this.playlist.consumeInitialSync();
-    if (initialEntry) {
-      const profileManager = new ServerProfileManager(this.configDir, gamePath);
-      try {
-        await profileManager.ensureConfigReference(
-          configFile,
-          "MissionName",
-          initialEntry.missionName,
-        );
-        if (initialEntry.startingLevel !== undefined) {
-          await profileManager.ensureConfigReference(
-            configFile,
-            "SetLevel",
-            String(initialEntry.startingLevel),
-          );
-        }
-        console.log(
-          `[Playlist] Pre-launch: wrote MissionName=${initialEntry.missionName} to ${configFile}`,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+    // A launch that would share a port or a file with another running server
+    // is refused here, before anything is written.
+    const pass = await this.passLaunchGuard(planned);
+    if (!pass.ok) return { ok: false, code: 409, error: pass.error };
+    const launch = pass.launch;
+    try {
+      // Create the log's directory and the file itself BEFORE launch so a
+      // missing or unwritable target fails loudly instead of silently logging
+      // into the void for hours.
+      const logError = await prepareLogFile(launch.logPath!);
+      if (logError) {
         return {
           ok: false,
-          code: 500,
-          error: `Failed to apply playlist mission to config: ${message}`,
+          code: 400,
+          error: `${logError} Set a valid Log Directory in the Logs panel.`,
         };
       }
-    }
 
-    logConsoleWarnings(configFile, { launchOptions, allowRemoteConsole, telnetPort });
+      // If a playlist is active and hasn't been synced to a server yet, override
+      // the profile's MissionName/SetLevel with the playlist's current entry
+      // BEFORE launch — otherwise the first level would be whatever the config
+      // has, and the playlist wouldn't kick in until the first "Ending level."
+      const initialEntry = this.playlist.consumeInitialSync();
+      if (initialEntry) {
+        const profileManager = new ServerProfileManager(this.configDir, gamePath);
+        try {
+          await profileManager.ensureConfigReference(
+            configFile,
+            "MissionName",
+            initialEntry.missionName,
+          );
+          if (initialEntry.startingLevel !== undefined) {
+            await profileManager.ensureConfigReference(
+              configFile,
+              "SetLevel",
+              String(initialEntry.startingLevel),
+            );
+          }
+          console.log(
+            `[Playlist] Pre-launch: wrote MissionName=${initialEntry.missionName} to ${configFile}`,
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            code: 500,
+            error: `Failed to apply playlist mission to config: ${message}`,
+          };
+        }
+      }
 
-    // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
-    this.registerAutoConnect(telnetPassword);
+      logConsoleWarnings(configFile, { launchOptions, allowRemoteConsole, telnetPort });
 
-    // Start the D3 process
-    try {
-      await this.process.start(
-        {
-          executablePath,
-          gamePath,
-          configFile,
-          logPath,
-          telnetPort,
-          telnetPassword,
-          allowRemoteConsole,
-          profileId: opts.profileId,
-          launchOptions,
-          autoexecBlock,
-        },
-        opts.reason,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, code: 500, error: message };
+      // Register auto-connect handler BEFORE calling start() so it's ready when telnet fires
+      this.registerAutoConnect(telnetPassword);
+
+      // Start the D3 process
+      try {
+        await this.process.start(launch, opts.reason);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, code: 500, error: message };
+      }
+    } finally {
+      pass.release();
     }
 
     return { ok: true, status: this.process.getStatus() };
@@ -691,9 +795,9 @@ export class ServerInstance {
    * runs. Call once at startup, before runAutostart(). Never throws: when it
    * is not known whether a server still runs, autostart is blocked.
    */
-  async reattach(): Promise<void> {
+  async reattach(others: RunRecord[] = []): Promise<void> {
     try {
-      this.reattachBlock = await this.reattachToRunningServer();
+      this.reattachBlock = await this.reattachToRunningServer(others);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`[Pyrodeck] Re-attach failed: ${message}`);
@@ -710,6 +814,71 @@ export class ServerInstance {
   /** A playlist restart is being health-checked. */
   rotationPending(): boolean {
     return this.rotationHealth.isPending();
+  }
+
+  /**
+   * The `profileId` this server's events carry: its profile, NO_PROFILE_ID
+   * for the server without one, or (a server not bound to a profile) the
+   * profile of the current launch.
+   */
+  eventScopeId(): string {
+    if (this.profileId !== undefined) return this.profileId ?? NO_PROFILE_ID;
+    return this.process.getStatus().activeProfileId ?? NO_PROFILE_ID;
+  }
+
+  /** The console session this server opened, while it is open. */
+  consoleSession(): ServerSession | undefined {
+    if (this.sessionId === null) return undefined;
+    const session = this.sessions.get(this.sessionId);
+    return session && session.state !== "disconnected" ? session : undefined;
+  }
+
+  /** This server's console once logged in, for the player, ban and rule services; else null. */
+  consoleLink(): ConsoleLink | null {
+    const session = this.consoleSession();
+    if (!session || session.state !== "ready") return null;
+    return {
+      profileId: session.profileId ?? this.eventScopeId(),
+      capabilities: session.capabilities,
+      send: (command) => session.connection.send(command),
+    };
+  }
+
+  /**
+   * The launch whose ports and files this server holds: while its process
+   * runs or stops, while a playlist rotation restarts it, and for a server
+   * from before Pyrodeck's restart that still runs but was not re-attached.
+   */
+  heldLaunch(): HeldLaunch | null {
+    const status = this.process.getStatus();
+    const config = this.process.getLaunchConfig();
+    if (config && (status.state === "starting" || status.state === "running" || status.state === "stopping")) {
+      return { launch: config, pid: status.pid, why: "running" };
+    }
+    if (config && (this.rotating || this.rotationHealth.isPending())) {
+      return { launch: config, pid: null, why: "restarting for its playlist" };
+    }
+    const record = this.unattached;
+    if (record) {
+      return {
+        launch: {
+          executablePath: record.executablePath,
+          gamePath: record.gamePath,
+          configFile: record.configFile,
+          logPath: record.logPath ?? undefined,
+          telnetPort: record.telnetPort,
+          telnetPassword: "",
+          allowRemoteConsole: record.allowRemoteConsole ?? true,
+          profileId: record.profileId ?? undefined,
+          launchOptions: sanitizeStoredLaunchOptions(record.launchOptions),
+          defaultOptions: sanitizeStoredLaunchOptions(record.defaultOptions),
+          ...(record.startupFile ? { startupFile: record.startupFile } : {}),
+        },
+        pid: record.pid,
+        why: "still running from before Pyrodeck restarted, not re-attached",
+      };
+    }
+    return null;
   }
 
   /** Playlist status as sent to clients: the manager's state plus the restart health check. */
@@ -729,11 +898,23 @@ export class ServerInstance {
 
   private queueRunRecord(task: () => Promise<void>): void {
     this.runRecordQueue = this.runRecordQueue.then(task).catch((err) => {
-      console.warn(`[Pyrodeck] Could not update ${this.configDir}/running-server.json: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `[Pyrodeck] Could not update ${path.join(this.runRecordDir, this.runRecordName)}: ${err instanceof Error ? err.message : err}`,
+      );
     });
   }
 
+  private writeOwnRunRecord(record: RunRecord): Promise<void> {
+    return writeRunRecord(this.runRecordDir, record, this.runRecordName).then(() => this.onRunRecord(record));
+  }
+
+  private clearOwnRunRecord(): Promise<void> {
+    return clearRunRecord(this.runRecordDir, this.runRecordName).then(() => this.onRunRecord(null));
+  }
+
   private recordRun(pid: number, args: string[]): void {
+    // A new process of this server: an older one Pyrodeck could not re-attach to holds nothing any more.
+    this.unattached = null;
     this.queueRunRecord(async () => {
       const config = this.process.getLaunchConfig();
       const status = this.process.getStatus();
@@ -741,6 +922,7 @@ export class ServerInstance {
       const linux = this.host.platform === "linux" ? await this.host.readLinuxIdentity(pid) : null;
       const record: RunRecord = {
         version: 1,
+        ...(this.profileId !== undefined ? { serverId: this.id } : {}),
         pid,
         profileId: config.profileId ?? null,
         executablePath: config.executablePath,
@@ -750,12 +932,14 @@ export class ServerInstance {
         logPath: config.logPath ?? null,
         telnetPort: config.telnetPort,
         launchOptions: config.launchOptions ?? null,
+        ...(config.defaultOptions ? { defaultOptions: config.defaultOptions } : {}),
+        ...(config.startupFile ? { startupFile: config.startupFile } : {}),
         allowRemoteConsole: config.allowRemoteConsole ?? true,
         startedAt: (status.startedAt ?? new Date()).toISOString(),
         ...(linux ? { linux: { startTicks: linux.startTicks, bootId: linux.bootId } } : {}),
       };
       if (this.process.getStatus().pid !== pid) return; // already gone
-      await writeRunRecord(this.configDir, record);
+      await this.writeOwnRunRecord(record);
     });
   }
 
@@ -822,19 +1006,15 @@ export class ServerInstance {
   ): Promise<void> {
     const { healthToken, again = false, anchorPlaylist = !again } = opts;
     try {
-      // Disconnect any stale session
-      const existing = this.sessions.getActive();
-      if (existing) {
-        this.sessions.remove(existing.id);
-      }
+      // Disconnect this server's stale session
+      this.removeConsoleSession();
 
       const connection = this.createConnection();
-      const session = this.sessions.create(
-        connection,
-        host,
-        port,
-        telnetPassword,
-      );
+      const session = this.sessions.create(connection, host, port, telnetPassword, {
+        owner: this.id,
+        profileId: this.eventScopeId(),
+      });
+      this.sessionId = session.id;
 
       this.sessions.updateState(session.id, "connecting");
       await connection.connect(host, port, telnetPassword);
@@ -843,14 +1023,14 @@ export class ServerInstance {
       this.sessions.updateState(session.id, "probing");
       const { caps: capabilities, answered } = await probeCapabilitiesDetailed(connection, (late) => {
         if (healthToken !== undefined) this.rotationHealth.healthy(healthToken);
-        if (this.sessions.getActive()?.id !== session.id) return;
+        if (this.consoleSession()?.id !== session.id) return;
         this.sessions.updateCapabilities(session.id, late);
         this.broadcast("capabilities", serializeCaps(late));
       });
 
       this.sessions.updateCapabilities(session.id, capabilities);
       this.sessions.updateState(session.id, "ready");
-      this.wireSessionToClients();
+      this.wireSessionToClients(session);
 
       // Wire up graceful quit: `quit` with a half-close (TelnetConnection.quit), so the server tells its clients it
       // has gone and the console port is left free for the next launch.
@@ -951,8 +1131,45 @@ export class ServerInstance {
 
   private dropConsoleSession(): void {
     this.process.sendQuitFn = null;
-    const session = this.sessions.getActive();
+    this.removeConsoleSession();
+  }
+
+  /** Close the console session this server opened, if one is open. Never another server's or Connect mode's. */
+  private removeConsoleSession(): void {
+    const session = this.consoleSession();
     if (session) this.sessions.remove(session.id);
+    this.sessionId = null;
+  }
+
+  /** Ask the launch guard (if any) to let `launch` through. */
+  private async passLaunchGuard(launch: LaunchConfig): Promise<LaunchPass> {
+    if (!this.launchGuard) return { ok: true, launch, release: () => {} };
+    return this.launchGuard.reserve(this.id, launch);
+  }
+
+  /**
+   * Spawn a launch Pyrodeck makes on its own (a rotation, a relaunch) once
+   * the launch guard lets it through. A log the guard renamed (another server
+   * writes one of that name) is created first; when it cannot be, the server
+   * starts without a log, as for any log that cannot be written.
+   */
+  private async spawnGuarded(launch: LaunchConfig, reason: StartReason): Promise<void> {
+    const pass = await this.passLaunchGuard(launch);
+    if (!pass.ok) throw new LaunchRefusedError(pass.error);
+    try {
+      let next = pass.launch;
+      if (next.logPath && next.logPath !== launch.logPath) {
+        const logError = await prepareLogFile(next.logPath);
+        if (logError) {
+          this.broadcast("error", { message: `${logError} The server restarts without a log.` });
+          next = { ...next, logPath: undefined };
+        }
+        if (launch.logPath) await removeIfEmpty(launch.logPath);
+      }
+      await this.process.start(next, reason);
+    } finally {
+      pass.release();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -966,7 +1183,7 @@ export class ServerInstance {
   /** Spawn the rotation's server and start the health deadline. Throws if the spawn fails. */
   private async launchForRotation(rl: RotationLaunch, token: number): Promise<void> {
     this.registerAutoConnect(rl.telnetPassword, token);
-    await this.process.start(rl.launch, "playlist");
+    await this.spawnGuarded(rl.launch, "playlist");
     this.rotationHealth.arm();
   }
 
@@ -1021,8 +1238,7 @@ export class ServerInstance {
 
     try {
       // Tear down whatever the failed attempt left behind.
-      const existing = this.sessions.getActive();
-      if (existing) this.sessions.remove(existing.id);
+      this.removeConsoleSession();
       this.process.sendQuitFn = null;
       this.playlist.sendCommandFn = null;
       if (this.process.isRunning()) await this.process.stop("playlist");
@@ -1036,39 +1252,72 @@ export class ServerInstance {
     }
   }
 
+  /**
+   * What a rotation restarts: this server's profile; for the server without
+   * one, its last launch; for a server not bound to a profile, the profile of
+   * its current launch, else the most recently launched profile.
+   */
+  private async rotationTarget(): Promise<RotationTarget | { skip: string }> {
+    const config = this.settings();
+    if (this.profileId === null) {
+      const last = this.process.getLaunchConfig();
+      const configFile = last?.configFile ?? "dedicated.cfg";
+      return {
+        profile: null,
+        name: path.basename(configFile, path.extname(configFile)),
+        configFile,
+        gamePath: last?.gamePath ?? config.gamePath,
+        executablePath: last?.executablePath ?? config.executablePath,
+        launchOptions: last?.launchOptions ?? null,
+      };
+    }
+    const profiles = await this.profileList().list();
+    const wanted = this.profileId ?? this.process.getLaunchConfig()?.profileId;
+    let profile: ServerProfile | undefined;
+    if (wanted) {
+      profile = profiles.find((p) => p.id === wanted);
+      if (!profile) return { skip: `Profile ${wanted} no longer exists; cannot rotate` };
+    } else {
+      if (profiles.length === 0) return { skip: "No profiles found; cannot rotate" };
+      profile =
+        profiles
+          .filter((p) => p.lastLaunchedAt)
+          .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""))[0] ?? profiles[0];
+    }
+    // Profile overrides take precedence over global config — profiles with a
+    // custom gamePath / executablePath (e.g. a PiccuEngine install) rely on
+    // these to resolve correctly across a mission rotation.
+    return {
+      profile,
+      name: profile.name,
+      configFile: profile.configFile,
+      gamePath: profile.gamePath ?? config.gamePath,
+      executablePath: profile.executablePath ?? config.executablePath,
+      launchOptions: sanitizeStoredLaunchOptions(profile.launchOptions),
+      autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(profile.teamSettings)),
+      ...(profile.startupFile ? { startupFile: profile.startupFile } : {}),
+    };
+  }
+
   private async rotate(entry: PlaylistEntry): Promise<void> {
     const config = this.settings();
-    const globalGamePath = config.gamePath;
 
     console.log(`[Playlist] Rotate triggered for entry: ${entry.label} (${entry.missionName})`);
 
-    // Resolve the active profile via profiles.json (profile records live in
-    // the config directory; we only need a valid gamePath for the
-    // ServerProfileManager's file ops AFTER we pick the profile, so pass an
-    // empty string initially). Done BEFORE stopping the server so a compat
-    // failure can skip the rotation and leave the current mission running.
-    const metadataManager = this.profileList();
+    // Resolve what to restart BEFORE stopping the server, so a compat failure
+    // can skip the rotation and leave the current mission running.
     let serverStopped = false;
+    this.rotating = true;
     try {
-      const profiles = await metadataManager.list();
-      if (profiles.length === 0) {
-        console.warn("[Playlist] No profiles found; cannot rotate");
+      const target = await this.rotationTarget();
+      if ("skip" in target) {
+        console.warn(`[Playlist] ${target.skip}`);
         this.playlist.rotationSkipped();
         return;
       }
-
-      // Pick the most recently launched profile (this is the one that was
-      // running when the rotation fired).
-      const sorted = profiles
-        .filter((p) => p.lastLaunchedAt)
-        .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""));
-      const activeProfile = sorted[0] ?? profiles[0];
-
-      // Profile overrides take precedence over global config — profiles with a
-      // custom gamePath / executablePath (e.g. a PiccuEngine install) rely on
-      // these to resolve correctly across a mission rotation.
-      const gamePath = activeProfile.gamePath ?? globalGamePath;
-      const executablePathRaw = activeProfile.executablePath ?? config.executablePath;
+      const activeProfile = target;
+      const gamePath = target.gamePath;
+      const executablePathRaw = target.executablePath;
 
       if (!gamePath || !executablePathRaw) {
         this.broadcast("error", {
@@ -1120,10 +1369,7 @@ export class ServerInstance {
       if (launchStatus.state === "running" || launchStatus.state === "starting") {
         await this.process.stop("playlist");
       }
-      const existingSession = this.sessions.getActive();
-      if (existingSession) {
-        this.sessions.remove(existingSession.id);
-      }
+      this.removeConsoleSession();
       this.process.sendQuitFn = null;
       // From here on the server is down: a failure pauses the playlist instead
       // of leaving it "restarting" behind a dead server.
@@ -1174,7 +1420,7 @@ export class ServerInstance {
         this.broadcast("error", { message: `Playlist rotation: ${logError} The server restarts without a log.` });
       }
 
-      await profileManager.markLaunched(activeProfile.id);
+      if (activeProfile.profile) await profileManager.markLaunched(activeProfile.profile.id);
       this.currentRotationLaunch = {
         label: entry.label,
         telnetPassword: telnetCfg.password,
@@ -1186,9 +1432,10 @@ export class ServerInstance {
           telnetPort: telnetCfg.port,
           telnetPassword: telnetCfg.password,
           allowRemoteConsole: telnetCfg.allowRemote,
-          profileId: activeProfile.id,
-          launchOptions: sanitizeStoredLaunchOptions(activeProfile.launchOptions),
-          autoexecBlock: buildTeamSettingLines(sanitizeStoredTeamSettings(activeProfile.teamSettings)),
+          profileId: activeProfile.profile?.id,
+          launchOptions: activeProfile.launchOptions,
+          autoexecBlock: activeProfile.autoexecBlock,
+          ...(activeProfile.startupFile ? { startupFile: activeProfile.startupFile } : {}),
         },
       };
       logConsoleWarnings(activeProfile.configFile, this.currentRotationLaunch.launch);
@@ -1214,6 +1461,8 @@ export class ServerInstance {
         this.broadcast("error", { message: `Playlist rotation error: ${message}` });
         this.playlist.rotationSkipped();
       }
+    } finally {
+      this.rotating = false;
     }
   }
 
@@ -1249,7 +1498,7 @@ export class ServerInstance {
 
     this.dropConsoleSession();
     this.registerAutoConnect(last.telnetPassword);
-    await this.process.start({ ...last, logPath }, "relaunch");
+    await this.spawnGuarded({ ...last, logPath }, "relaunch");
   }
 
   // ---------------------------------------------------------------------------
@@ -1282,7 +1531,7 @@ export class ServerInstance {
     }
     if (state === "stopped" || state === "crashed") {
       this.stopConsoleReconnect();
-      this.queueRunRecord(() => clearRunRecord(this.configDir));
+      this.queueRunRecord(() => this.clearOwnRunRecord());
       const { exitCode, exitSignal, stopReason } = this.process.getStatus();
       const down: ProcessDown = {
         crashed: state === "crashed",
@@ -1339,14 +1588,36 @@ export class ServerInstance {
    *
    * Returns why no new server may be launched although none was re-attached
    * (one still runs that Pyrodeck cannot log in to), or null.
+   *
+   * `others`: records from elsewhere that may describe this server (an older
+   * Pyrodeck's running-server.json). The newest live one is taken, and kept
+   * as this server's own record from then on.
    */
-  private async reattachToRunningServer(): Promise<string | null> {
-    const record = await readRunRecord(this.configDir);
-    if (!record) return null;
-    const forget = async (why: string): Promise<null> => {
+  private async reattachToRunningServer(others: RunRecord[]): Promise<string | null> {
+    const own = await readRunRecord(this.runRecordDir, this.runRecordName);
+    const seen = new Set<number>();
+    const candidates = [own, ...others]
+      .filter((r): r is RunRecord => r !== null && !seen.has(r.pid) && (seen.add(r.pid), true))
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    for (const record of candidates) {
+      const outcome = await this.reattachTo(record);
+      if (outcome === "forgotten") continue;
+      if (record !== own) {
+        await this.writeOwnRunRecord(this.profileId !== undefined ? { ...record, serverId: this.id } : record);
+      }
+      if (outcome === "adopted") return null;
+      this.unattached = record;
+      return outcome.blocked;
+    }
+    if (own) await this.clearOwnRunRecord();
+    return null;
+  }
+
+  /** Re-attach to the process in one record: adopted, forgotten (it is not that server any more), or why it blocks. */
+  private async reattachTo(record: RunRecord): Promise<"adopted" | "forgotten" | { blocked: string }> {
+    const forget = async (why: string): Promise<"forgotten"> => {
       console.log(`[Pyrodeck] Not re-attaching to server PID ${record.pid}: ${why}`);
-      await clearRunRecord(this.configDir);
-      return null;
+      return "forgotten";
     };
 
     const decision = decideAdopt(record, await this.host.readProcessFacts(record.pid), this.host.platform);
@@ -1362,7 +1633,9 @@ export class ServerInstance {
     if (!password) {
       // Leave the record: the server runs, Pyrodeck just cannot log in to it.
       console.warn(`[Pyrodeck] Server PID ${record.pid} is still running, but ${record.configFile} has no console password; not re-attaching.`);
-      return `the server Pyrodeck launched before it restarted is still running (PID ${record.pid}), but ${record.configFile} has no console password, so Pyrodeck could not re-attach to it`;
+      return {
+        blocked: `the server Pyrodeck launched before it restarted is still running (PID ${record.pid}), but ${record.configFile} has no console password, so Pyrodeck could not re-attach to it`,
+      };
     }
 
     // 127.0.0.1, or the -useip address of a console that takes remote connections.
@@ -1388,6 +1661,7 @@ export class ServerInstance {
       const facts = await this.host.readProcessFacts(record.pid);
       return facts.alive && (!linux || facts.linux?.startTicks === linux.startTicks);
     };
+    const defaultOptions = sanitizeStoredLaunchOptions(record.defaultOptions);
     const config: LaunchConfig = {
       executablePath: record.executablePath,
       gamePath: record.gamePath,
@@ -1398,6 +1672,8 @@ export class ServerInstance {
       allowRemoteConsole,
       profileId: record.profileId ?? undefined,
       launchOptions,
+      ...(defaultOptions ? { defaultOptions } : {}),
+      ...(record.startupFile ? { startupFile: record.startupFile } : {}),
     };
 
     this.process.removeAllListeners("telnetReady");
@@ -1411,6 +1687,6 @@ export class ServerInstance {
     });
     this.process.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
     console.log(`[Pyrodeck] Re-attached to the server Pyrodeck launched before it restarted (PID ${record.pid})`);
-    return null;
+    return "adopted";
   }
 }

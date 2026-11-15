@@ -15,6 +15,7 @@ import { configRoutes } from "./routes/config.js";
 import { pyrodeckConfigRoutes } from "./routes/pyrodeck-config.js";
 import { missionHostRoutes } from "./routes/mission-host.js";
 import { launcherRoutes, startAutostart } from "./routes/launcher.js";
+import { serversRoutes } from "./routes/servers.js";
 import { logsRoutes } from "./routes/logs.js";
 import { playlistRoutes } from "./routes/playlists.js";
 import { versionRoutes } from "./routes/version.js";
@@ -178,7 +179,9 @@ async function main() {
   await app.register(pyrodeckConfigRoutes);
   // Starts the mission download listener (its own port) when it is enabled.
   await app.register(missionHostRoutes);
+  // Creates the servers and re-attaches to the games still running.
   await app.register(launcherRoutes);
+  await app.register(serversRoutes);
   await app.register(logsRoutes);
   await app.register(playlistRoutes);
   // Starts the weekly schedule's 30 s tick.
@@ -193,7 +196,7 @@ async function main() {
 
   app.get("/api/health", async () => ({ status: "ok" }));
 
-  // Player and level events from whatever console session is open.
+  // Player and level events from every console session (each server's, Connect mode's).
   startConsoleEvents();
 
   if (staticDir) {

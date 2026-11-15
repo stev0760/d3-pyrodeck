@@ -94,13 +94,12 @@ async function gunzipTail(filePath: string): Promise<{ tail: Buffer; total: numb
   return { tail: joined.length > TAIL_BYTES ? joined.subarray(joined.length - TAIL_BYTES) : joined, total };
 }
 
-/** Directories log retention looks in: the Log Directory, and the folder of the last launch's log. */
+/** Directories log retention looks in: the Log Directory, and the folder of each server's last launch's log. */
 function retentionDirs(): string[] {
   const dirs: string[] = [];
   const viewer = viewerLogDir();
   if (viewer) dirs.push(viewer);
-  const last = processManager.getLaunchConfig()?.logPath;
-  if (last) dirs.push(path.dirname(last));
+  for (const last of processManager.getLastLogPaths()) dirs.push(path.dirname(last));
   return dirs;
 }
 
@@ -134,6 +133,8 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
   const retention = new LogRetentionService({
     dirs: retentionDirs,
     activeLogPath: () => processManager.getActiveLogPath(),
+    // Every running server's live log, so a quiet server's is never compressed away.
+    activeLogPaths: () => processManager.getActiveLogPaths(),
     settings: retentionSettings,
     log: { info: (m) => app.log.info(m), warn: (m) => app.log.warn(m) },
   });
@@ -257,7 +258,7 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(createReadStream(filePath));
   });
 
-  // Delete a log file. The log a running launch is writing is protected —
+  // Delete a log file. The log a running server is writing is protected —
   // deleting it would silently discard the rest of the run's output.
   app.delete("/api/logs/:name", async (request, reply) => {
     const { name } = request.params as { name: string };
@@ -265,8 +266,8 @@ export async function logsRoutes(app: FastifyInstance): Promise<void> {
     if ("error" in resolved) return reply.status(resolved.status).send({ error: resolved.error });
     const { filePath } = resolved;
 
-    const activeLog = processManager.getActiveLogPath();
-    if (activeLog && path.resolve(activeLog) === path.resolve(filePath)) {
+    const live = processManager.getActiveLogPaths().map((p) => path.resolve(p));
+    if (live.includes(path.resolve(filePath))) {
       return reply.status(409).send({
         error: "This log is being written by the running server — stop the server first",
       });

@@ -1,9 +1,11 @@
 /**
- * Singleton PlaylistManager instance, and the health monitor for the server
- * restarts that rotation performs; the default server
- * (servers/ServerRegistry.ts) rotates with both. Kept in a separate module so
- * that command.ts and the playlist routes reach them without importing the
- * server registry, which imports command.ts.
+ * The playlist kept in `<config>/playlist-state.json` and the health monitor
+ * of its restarts: those of the server that kept that file when Pyrodeck ran
+ * one server (the legacy owner, servers/serverStore.ts), so that an older
+ * Pyrodeck finds its playlist where it left it. Every other server has its own
+ * (servers/<id>/playlist-state.json). This manager also reads and writes the
+ * shared playlist library (playlists.json), which every server's manager
+ * reads, for routes that run before the servers exist.
  */
 import { PlaylistManager } from "./PlaylistManager.js";
 import { RotationHealthMonitor } from "./RotationHealthMonitor.js";
@@ -13,8 +15,3 @@ const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 export const playlistManager = new PlaylistManager(CONFIG_DIR);
 
 export const rotationHealth = new RotationHealthMonitor();
-
-/** Playlist status as sent to clients: the manager's state plus the restart health check. */
-export function playlistStatusPayload(): Record<string, unknown> {
-  return { ...playlistManager.getStatus(), rotationCheck: rotationHealth.snapshot() };
-}

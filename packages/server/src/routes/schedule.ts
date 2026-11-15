@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { serverRegistry } from "../servers/ServerRegistry.js";
-import { sessionManager } from "./server.js";
 import { wsBroadcast } from "./command.js";
 import { serverEvents } from "../events/ServerEvents.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
@@ -12,33 +11,39 @@ import { formatLocalWhen } from "../ops/schedule.js";
 /**
  * The weekly schedule: each profile's start/stop windows (stored on the
  * profile, set with PATCH /api/profiles/:id { schedule }), run every 30 s
- * through the same start and stop paths as the Launch panel.
+ * through the same start and stop paths as the Launch panel, each against
+ * the profile's own server.
  */
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
 const listProfiles = () => new ServerProfileManager(CONFIG_DIR, "").list();
 
-/** The server the schedule starts and stops: the only one. */
-const server = () => serverRegistry.getDefault();
+/** The profile's server, once the servers exist. */
+const serverOf = (profileId: string) => serverRegistry.get(profileId);
 
 export const scheduler = new Scheduler({
   now: () => new Date(),
   listProfiles,
-  getProcess: () => ({
-    running: server().process.isRunning(),
-    profileId: server().process.getStatus().activeProfileId,
-  }),
-  isBusy: () => server().playlist.getStatus().status === "restarting" || server().rotationPending(),
+  getProcess: (profileId) => {
+    const running = serverOf(profileId)?.process.isRunning() ?? false;
+    return { running, profileId: running ? profileId : null };
+  },
+  isBusy: (profileId) => {
+    const server = serverOf(profileId);
+    return !!server && (server.playlist.getStatus().status === "restarting" || server.rotationPending());
+  },
   start: async (profileId) => {
-    const result = await server().start({ profileId, reason: "schedule" });
+    const server = await serverRegistry.ensure(profileId);
+    if (!server) return { ok: false, error: `Profile not found: ${profileId}` };
+    const result = await server.start({ reason: "schedule" });
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   },
-  stop: async () => {
-    await server().stop("schedule");
+  stop: async (profileId) => {
+    await serverOf(profileId)?.stop("schedule");
   },
-  countHumans: async () => {
-    const session = sessionManager.getActive();
+  countHumans: async (profileId) => {
+    const session = serverOf(profileId)?.consoleSession();
     if (!session || session.state !== "ready") return null;
     try {
       return countHumanPlayers(await session.connection.send("$players"));
@@ -46,8 +51,8 @@ export const scheduler = new Scheduler({
       return null;
     }
   },
-  say: async (text) => {
-    const session = sessionManager.getActive();
+  say: async (text, profileId) => {
+    const session = serverOf(profileId)?.consoleSession();
     if (session?.state === "ready") await session.connection.send(sayToAll(text));
   },
   skipped: (profileId, action, reason) => {

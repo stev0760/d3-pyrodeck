@@ -26,6 +26,8 @@ vi.mock("./launcher.js", () => ({
   processManager: {
     getActiveLogPath: () => mocks.activeLog,
     getLaunchConfig: () => (mocks.activeLog ? { logPath: mocks.activeLog } : null),
+    getActiveLogPaths: () => (mocks.activeLog ? [mocks.activeLog] : []),
+    getLastLogPaths: () => (mocks.activeLog ? [mocks.activeLog] : []),
   },
 }));
 

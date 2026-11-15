@@ -5,8 +5,8 @@ import { serverRegistry } from "../servers/ServerRegistry.js";
 import { playerTracker } from "./players.js";
 import { BanStore } from "../bans/BanStore.js";
 import { BanService } from "../bans/BanService.js";
-import { activeConsoleLink, openConsoleIsLocal, openConsoleLink } from "../players/activeConsole.js";
-import { activeConsoleProfileId } from "../events/consoleEventHub.js";
+import { activeConsoleLink, openConsoleIsLocal, openConsoleLink, openConsoleLinks } from "../players/activeConsole.js";
+import { activeConsoleProfileId, openConsoleProfileIds } from "../events/consoleEventHub.js";
 import { LineSplitter } from "../events/consoleLines.js";
 import { validatePlayerSettings } from "../players/playerSettings.js";
 
@@ -16,6 +16,7 @@ export const banService = new BanService({
   store: new BanStore(path.join(CONFIG_DIR, "bans.json")),
   console: activeConsoleLink,
   openConsole: openConsoleLink,
+  openConsoles: openConsoleLinks,
   settings: () => pyrodeckConfig.get().players,
   lookupAddress: (profileId, name, slot) => playerTracker.lookupAddress(profileId, name, slot),
 });
@@ -24,20 +25,35 @@ export const banService = new BanService({
  * A launched server logs its writable directory ("Local dir: <path>",
  * mng_InitLocalTables, manage/manage.cpp:679), which is where DMFC reads
  * netgames/hosts.deny. Remember it so the editor works on the file that
- * server reads.
+ * server reads (the last one a server printed, for every server).
  */
 function watchLaunchedServerLocalDir(): void {
-  const launchedProcess = serverRegistry.getDefault().process;
-  let splitter = new LineSplitter();
-  launchedProcess.on("stateChange", (state: string) => {
-    if (state === "starting") splitter = new LineSplitter();
+  serverRegistry.onAdd((server) => {
+    let splitter = new LineSplitter();
+    server.process.on("stateChange", (state: string) => {
+      if (state === "starting") splitter = new LineSplitter();
+    });
+    server.process.on("stdout", (chunk: string) => {
+      for (const line of splitter.push(chunk)) {
+        const m = /\bLocal dir: (.+?)\s*$/.exec(line);
+        if (m && path.isAbsolute(m[1])) void banService.store.setDetectedLocalDir(m[1]).catch(() => {});
+      }
+    });
   });
-  launchedProcess.on("stdout", (chunk: string) => {
-    for (const line of splitter.push(chunk)) {
-      const m = /\bLocal dir: (.+?)\s*$/.exec(line);
-      if (m && path.isAbsolute(m[1])) void banService.store.setDetectedLocalDir(m[1]).catch(() => {});
-    }
-  });
+}
+
+/**
+ * The server a kick or ban is for: `profileId` from the body, else the
+ * default server's console when it is the only one open.
+ */
+function targetProfile(body: Record<string, unknown>): { profileId: string } | { code: number; error: string } {
+  if (typeof body.profileId === "string" && body.profileId) return { profileId: body.profileId };
+  const open = openConsoleProfileIds();
+  if (open.length > 1) {
+    return { code: 409, error: `${open.length} server consoles are open; name the server: { profileId }` };
+  }
+  const profileId = activeConsoleProfileId();
+  return profileId ? { profileId } : { code: 409, error: "No server console is open." };
 }
 
 function text(v: unknown): string {
@@ -101,17 +117,18 @@ export async function banRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  /** POST /api/bans/rehash: `$rehash` on the open console. */
+  /** POST /api/bans/rehash: `$rehash` on every open console. */
   app.post("/api/bans/rehash", async (_request, reply) => {
     if (!(await banService.rehash())) return reply.status(409).send({ error: "No server console is open." });
     return { ok: true };
   });
 
-  /** POST /api/players/kick  { name, reason?, slot? }: say why, then `$kick`. */
+  /** POST /api/players/kick  { name, reason?, slot?, profileId? }: say why, then `$kick`. */
   app.post("/api/players/kick", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const profileId = activeConsoleProfileId();
-    if (!profileId) return reply.status(409).send({ error: "No server console is open." });
+    const target = targetProfile(body);
+    if ("error" in target) return reply.status(target.code).send({ error: target.error });
+    const { profileId } = target;
     if (typeof body.name !== "string" || !body.name) return reply.status(400).send({ error: "name is required" });
     const result = await banService.kick(
       profileId,
@@ -130,8 +147,9 @@ export async function banRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post("/api/players/ban", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const profileId = activeConsoleProfileId();
-    if (!profileId) return reply.status(409).send({ error: "No server console is open." });
+    const target = targetProfile(body);
+    if ("error" in target) return reply.status(target.code).send({ error: target.error });
+    const { profileId } = target;
     if (typeof body.name !== "string" || !body.name) return reply.status(400).send({ error: "name is required" });
     const result = await banService.ban(profileId, body.name, typeof body.reason === "string" ? body.reason : "", {
       hostsDeny: body.hostsDeny !== false,

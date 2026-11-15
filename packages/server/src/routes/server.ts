@@ -2,12 +2,14 @@ import type { FastifyInstance } from "fastify";
 import { TelnetConnection } from "../connection/TelnetConnection.js";
 import { ResponseParser } from "../parser/ResponseParser.js";
 import { parseServercaps, serializeCaps } from "../parser/parsers/servercaps.js";
-import { SessionManager } from "../session/SessionManager.js";
+import { CONNECT_OWNER, type ServerSession } from "../session/SessionManager.js";
+import { sessionManager } from "../session/sessionStore.js";
 import { probeCapabilities } from "../session/probeCapabilities.js";
-import { wsBroadcast, wireSessionToClients } from "./command.js";
+import { serverBroadcast } from "../ws/wsHub.js";
+import { CONNECT_SERVER_ID, serverRegistry, wireSessionToClients } from "../servers/ServerRegistry.js";
 import { isLoopbackName } from "../middleware/requestSource.js";
 
-export const sessionManager = new SessionManager();
+export { sessionManager };
 export const responseParser = new ResponseParser();
 
 import { parseScores } from "../parser/parsers/scores.js";
@@ -30,7 +32,24 @@ responseParser.register("$botpopulation", parseBotpopulation);
 
 export { serializeCaps };
 
+/**
+ * The console session "the server" means for a client of a single-server
+ * Pyrodeck: Connect mode's when the default server is Connect mode, else the
+ * default server's (servers/ServerRegistry.ts defaultServerId).
+ */
+export function defaultConsoleSession(): ServerSession | undefined {
+  if (!serverRegistry.isReady()) return sessionManager.getActive();
+  const id = serverRegistry.defaultServerId();
+  if (id === CONNECT_SERVER_ID) return serverRegistry.connectSession();
+  return serverRegistry.defaultServer()?.consoleSession() ?? serverRegistry.connectSession();
+}
+
 export async function serverRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Connect mode: log in to a server's console that Pyrodeck did not launch.
+   * One Connect-mode session at a time; it replaces the one before, and
+   * leaves the consoles of the servers Pyrodeck runs alone.
+   */
   app.post("/api/server/connect", async (request, reply) => {
     const { host, port, password } = request.body as {
       host?: string;
@@ -44,19 +63,14 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
         .send({ error: "host and password are required" });
     }
 
-    // Disconnect existing session if any
-    const existing = sessionManager.getActive();
+    // Disconnect the Connect-mode session if any
+    const existing = sessionManager.getOwned(CONNECT_OWNER);
     if (existing) {
       sessionManager.remove(existing.id);
     }
 
     const connection = new TelnetConnection();
-    const session = sessionManager.create(
-      connection,
-      host,
-      port ?? 2092,
-      password,
-    );
+    const session = sessionManager.create(connection, host, port ?? 2092, password, { owner: CONNECT_OWNER });
 
     try {
       sessionManager.updateState(session.id, "connecting");
@@ -65,14 +79,14 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
       // Probe for capabilities
       sessionManager.updateState(session.id, "probing");
       const capabilities = await probeCapabilities(connection, (late) => {
-        if (sessionManager.getActive()?.id !== session.id) return;
+        if (sessionManager.getOwned(CONNECT_OWNER)?.id !== session.id) return;
         sessionManager.updateCapabilities(session.id, late);
-        wsBroadcast("capabilities", serializeCaps(late));
+        serverBroadcast(CONNECT_SERVER_ID, "capabilities", serializeCaps(late));
       });
 
       sessionManager.updateCapabilities(session.id, capabilities);
       sessionManager.updateState(session.id, "ready");
-      wireSessionToClients();
+      wireSessionToClients(CONNECT_SERVER_ID, session);
 
       return {
         sessionId: session.id,
@@ -93,8 +107,9 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /** Close Connect mode's session; without one, the default server's console session (as with one server). */
   app.post("/api/server/disconnect", async (_request, reply) => {
-    const session = sessionManager.getActive();
+    const session = serverRegistry.connectSession() ?? defaultConsoleSession();
     if (!session) {
       return reply.status(404).send({ error: "No active connection" });
     }
@@ -102,8 +117,9 @@ export async function serverRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  /** The default server's console session (GET /api/servers lists every server's). */
   app.get("/api/server/status", async () => {
-    const session = sessionManager.getActive();
+    const session = defaultConsoleSession();
     if (!session) {
       return { state: "disconnected", capabilities: null };
     }

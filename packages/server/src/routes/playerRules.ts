@@ -20,9 +20,10 @@ export async function playerRulesRoutes(app: FastifyInstance): Promise<void> {
   ruleService.start();
   app.addHook("onClose", async () => ruleService.stop());
 
-  /** GET /api/players/rules: the rules, the default word list, recent actions and this run's offenders. */
-  app.get("/api/players/rules", async () => {
-    const profileId = activeConsoleProfileId();
+  /** GET /api/players/rules?profileId=: the rules, the default word list, recent actions and this run's offenders (default: the default server's). */
+  app.get("/api/players/rules", async (request) => {
+    const q = request.query as Record<string, unknown>;
+    const profileId = typeof q.profileId === "string" && q.profileId ? q.profileId : activeConsoleProfileId();
     return {
       rules: pyrodeckConfig.get().playerRules,
       defaultWords: DEFAULT_PROFANITY_WORDS,
@@ -41,10 +42,10 @@ export async function playerRulesRoutes(app: FastifyInstance): Promise<void> {
     return { rules: check.rules };
   });
 
-  /** POST /api/players/rules/forgive  { name }: clear a player's profanity count on the open server. */
+  /** POST /api/players/rules/forgive  { name, profileId? }: clear a player's profanity count on a server (default: the default server). */
   app.post("/api/players/rules/forgive", async (request, reply) => {
-    const { name } = (request.body ?? {}) as { name?: unknown };
-    const profileId = activeConsoleProfileId();
+    const { name, profileId: named } = (request.body ?? {}) as { name?: unknown; profileId?: unknown };
+    const profileId = typeof named === "string" && named ? named : activeConsoleProfileId();
     if (!profileId || typeof name !== "string") return reply.status(400).send({ error: "name is required" });
     ruleService.forgive(profileId, name);
     return { ok: true };

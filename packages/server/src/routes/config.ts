@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { ServerProfileManager, type ServerProfile } from "../config/ServerProfile.js";
+import { ServerProfileManager, checkStartupFileName, type ServerProfile } from "../config/ServerProfile.js";
 import {
   parseDedicatedCfg,
   extractTelnetConfig,
@@ -46,7 +46,9 @@ import {
 } from "../gamefiles/Mn3UrlRewriter.js";
 import { hostDirError, hostMission } from "../gamefiles/missionHosting.js";
 import { hostedLinkFor, missionHost, missionHostMissionsDir } from "./mission-host.js";
-import { AUTOSTART_ENV, readAutostartEnv } from "../launcher/autostartSettings.js";
+import { AUTOSTART_ENV, AUTOSTART_LIST_ENV, readAutostartEnv } from "../launcher/autostartSettings.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
+import { AUTOEXEC_FILE } from "../launcher/ProcessManager.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
 
@@ -206,15 +208,27 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       maxPlayers?: number;
       pps?: number;
       consolePassword?: string;
+      /** RemoteConsolePort of a new config file (default 2092): each server running at once needs its own. */
+      remoteConsolePort?: unknown;
       /** Override the global game data directory for this profile. */
       gamePath?: string;
       /** Override the global D3 executable for this profile. */
       executablePath?: string;
       /** Launch flags from an imported script that the profile does not apply (shown to the operator). */
       importedArgs?: unknown;
-      /** Launch options read from an imported script (launcher/launchOptions.ts); invalid ones are dropped. */
+      /** Launch options (launcher/launchOptions.ts): from an imported script, or for a new profile; invalid ones are dropped. */
       launchOptions?: unknown;
     };
+
+    const consolePort = body.remoteConsolePort;
+    if (consolePort !== undefined && !(Number.isInteger(consolePort) && (consolePort as number) >= 1 && (consolePort as number) <= 65535)) {
+      return reply.status(400).send({ error: "remoteConsolePort must be a whole number from 1 to 65535." });
+    }
+    // A new profile's launch options are checked as on a save; an imported script's are taken as far as they are valid.
+    if (!body.existingConfigFile && body.launchOptions !== undefined) {
+      const check = validateLaunchOptions(body.launchOptions);
+      if (check.errors.length > 0) return reply.status(400).send({ error: check.errors.join(" "), details: check.errors });
+    }
 
     try {
       // Use a profile-specific gamePath if provided; otherwise fall back to global.
@@ -253,12 +267,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
             maxPlayers: body.maxPlayers,
             pps: body.pps,
             consolePassword: body.consolePassword,
+            ...(consolePort !== undefined ? { remoteConsolePort: consolePort as number } : {}),
           },
           {
             gamePath: body.gamePath,
             executablePath: body.executablePath,
           },
         );
+        const launchOptions = sanitizeStoredLaunchOptions(body.launchOptions);
+        if (launchOptions) profile = await manager.update(profile.id, { launchOptions });
       }
       return profile;
     } catch (err) {
@@ -287,8 +304,10 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       respawnScaling?: unknown;
       schedule?: unknown;
       importedArgs?: unknown;
-      /** "Start when Pyrodeck starts": true makes this the one autostart profile, false clears it if it is. */
+      /** "Start when Pyrodeck starts": true adds this profile to the ones that start with Pyrodeck, false removes it. */
       autostart?: unknown;
+      /** The profile's Startup Commands file in the game directory (a .dmfc name); null or "" for autoexec.dmfc. */
+      startupFile?: unknown;
     };
     const {
       postStart,
@@ -299,6 +318,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       schedule,
       importedArgs,
       autostart,
+      startupFile,
       ...rest
     } = body;
     const updates: Parameters<ServerProfileManager["update"]>[1] = { ...rest };
@@ -308,6 +328,15 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
 
     const errors: string[] = [];
     const warnings: string[] = [];
+    if (startupFile !== undefined) {
+      if (startupFile === null || startupFile === "") {
+        updates.startupFile = null;
+      } else {
+        const check = checkStartupFileName(startupFile);
+        if ("error" in check) errors.push(check.error);
+        else updates.startupFile = check.name;
+      }
+    }
     if (launchOptions !== undefined) {
       const check = validateLaunchOptions(launchOptions);
       errors.push(...check.errors);
@@ -352,14 +381,17 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: "Profile not found" });
     }
     if (typeof autostart === "boolean") {
-      // One profile at a time: ticking this one replaces any other.
-      const current = pyrodeckConfig.get().autostart.profileId;
-      if (autostart && current !== id) await pyrodeckConfig.save({ autostart: { profileId: id } });
-      if (!autostart && current === id) await pyrodeckConfig.save({ autostart: { profileId: null } });
+      // Several profiles may start with Pyrodeck; pyrodeck.json keeps the first, for an older Pyrodeck.
+      await serverRegistry.setAutostart(id, autostart);
       const envName = readAutostartEnv(process.env);
+      const envList = process.env[AUTOSTART_LIST_ENV]?.trim();
       if (envName !== null) {
         warnings.push(
           `${AUTOSTART_ENV} is set and wins over "Start when Pyrodeck starts": Pyrodeck starts the profile it names ("${envName}").`,
+        );
+      } else if (envList) {
+        warnings.push(
+          `${AUTOSTART_LIST_ENV} is set and wins over "Start when Pyrodeck starts": Pyrodeck starts the profiles it names ("${envList}").`,
         );
       }
     }
@@ -406,9 +438,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: "Profile not found" });
     }
     // A deleted profile cannot start with Pyrodeck.
-    if (pyrodeckConfig.get().autostart.profileId === id) {
-      await pyrodeckConfig.save({ autostart: { profileId: null } });
-    }
+    await serverRegistry.setAutostart(id, false);
     return { ok: true };
   });
 
@@ -451,10 +481,11 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       const botConfig = getCfgValue(entries, "BotConfig") || null;
       const multiSettingsFile = getCfgValue(entries, "MultiSettingsFile") || null;
 
-      // Check if autoexec.dmfc exists
+      // Check if the profile's Startup Commands file exists
+      const startupFile = profile.startupFile ?? AUTOEXEC_FILE;
       let autoexecExists = false;
       try {
-        await manager.readFile("autoexec.dmfc");
+        await manager.readFile(startupFile);
         autoexecExists = true;
       } catch {
         // doesn't exist
@@ -480,7 +511,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return {
         botConfig: botConfig ? { filename: botConfig, exists: botConfigExists } : null,
         multiSettingsFile: multiSettingsFile ? { filename: multiSettingsFile, exists: mpsExists } : null,
-        autoexec: { filename: "autoexec.dmfc", exists: autoexecExists },
+        autoexec: { filename: startupFile, exists: autoexecExists },
       };
     } catch {
       return reply.status(404).send({ error: "Profile not found" });

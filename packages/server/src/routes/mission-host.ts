@@ -20,8 +20,22 @@ import {
   type PlaylistHostingReport,
 } from "../gamefiles/missionHosting.js";
 import { playlistManager } from "../launcher/playlistInstance.js";
-import type { Playlist } from "../launcher/PlaylistManager.js";
-import { resolveRotationProfile } from "./rotation-profile.js";
+import type { Playlist, PlaylistManager } from "../launcher/PlaylistManager.js";
+import { resolveRotationProfile, serverPlaylistProfile } from "./rotation-profile.js";
+import { serverRegistry } from "../servers/ServerRegistry.js";
+
+/**
+ * Every server's playlist with the profile it runs against (before the
+ * servers exist: the one playlist, with the most recently launched profile).
+ */
+export async function playlistRunners(): Promise<
+  { playlist: PlaylistManager; profile: { gamePath: string; configFile: string } | null | undefined }[]
+> {
+  if (!serverRegistry.isReady()) return [{ playlist: playlistManager, profile: undefined }];
+  return Promise.all(
+    serverRegistry.list().map(async (s) => ({ playlist: s.playlist, profile: await serverPlaylistProfile(s) })),
+  );
+}
 
 /** The directory the mission host serves: the global game path's missions/. */
 export function missionHostMissionsDir(): string | null {
@@ -52,16 +66,22 @@ export function hostedLinkFor(file: string, missionsDir: string): { hostUrl?: st
  * rotation). Stock missions, missing files, links already hosted and links
  * the operator set by hand are left alone; a mission that cannot be rewritten
  * is an "error" result. Never throws. The report is logged and kept for the
- * playlist status; null (and nothing kept) while the host is off.
+ * playlist status of `targets` (default: the one playlist of a single-server
+ * Pyrodeck); null (and nothing kept) while the host is off.
  * `formerBaseUrls`: public URLs the host had before, whose links are replaced.
+ * `profile`: the game path and config to host from, instead of `profileId`'s.
  */
 export async function hostPlaylistDownloads(
   playlist: Playlist,
   profileId?: string,
-  options: { formerBaseUrls?: string[] } = {},
+  options: {
+    formerBaseUrls?: string[];
+    targets?: PlaylistManager[];
+    profile?: { gamePath: string; configFile: string } | null;
+  } = {},
 ): Promise<PlaylistHostingReport | null> {
   try {
-    const profile = await resolveRotationProfile(profileId);
+    const profile = options.profile !== undefined ? options.profile : await resolveRotationProfile(profileId);
     const missionsDir = profile ? path.join(profile.gamePath, "missions") : null;
     const target = playlistHostingTarget(pyrodeckConfig.get().missionHost, missionHostMissionsDir(), missionsDir);
     if (!target) return null;
@@ -85,7 +105,7 @@ export async function hostPlaylistDownloads(
         else if (r.outcome === "custom" || r.outcome === "missing") console.log(`[Playlist]   ${r.file}: ${r.message}`);
       }
     }
-    playlistManager.setDownloads(report);
+    for (const target of options.targets ?? [playlistManager]) target.setDownloads(report);
     return report;
   } catch (err) {
     console.warn(`[Playlist] Downloads for "${playlist.name}" not hosted: ${err instanceof Error ? err.message : err}`);
@@ -191,18 +211,26 @@ export async function missionHostRoutes(app: FastifyInstance): Promise<void> {
     await pyrodeckConfig.save({ missionHost: check.settings });
     const status = await missionHost.apply(check.settings);
 
-    // Turned on, or moved to another public URL, while a playlist is active: point its missions at the host.
-    // Links the host set under its former URL count as its own and are replaced.
+    // Turned on, or moved to another public URL, while playlists are active: point their missions at the host,
+    // every server's. Links the host set under its former URL count as its own and are replaced.
     const { enabled, publicBaseUrl } = check.settings;
-    const active = playlistManager.getActivePlaylist();
+    const runners = await playlistRunners();
     let downloads: PlaylistHostingReport | null = null;
     if (!enabled) {
-      playlistManager.setDownloads(null);
-    } else if (active && publicBaseUrl && (!before.enabled || before.publicBaseUrl !== publicBaseUrl)) {
+      for (const r of runners) r.playlist.setDownloads(null);
+    } else if (publicBaseUrl && (!before.enabled || before.publicBaseUrl !== publicBaseUrl)) {
       const former = before.publicBaseUrl;
-      downloads = await hostPlaylistDownloads(active, undefined, {
-        formerBaseUrls: former && former !== publicBaseUrl ? [former] : [],
-      });
+      const formerBaseUrls = former && former !== publicBaseUrl ? [former] : [];
+      for (const r of runners) {
+        const active = r.playlist.getActivePlaylist();
+        if (!active) continue;
+        const report = await hostPlaylistDownloads(active, undefined, {
+          formerBaseUrls,
+          targets: [r.playlist],
+          ...(r.profile !== undefined ? { profile: r.profile } : {}),
+        });
+        downloads ??= report;
+      }
     }
     return { settings: check.settings, status, warnings, downloads };
   });

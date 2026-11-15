@@ -5,10 +5,10 @@ import { pyrodeckConfig } from "./pyrodeck-config.js";
 import { ServerProfileManager } from "../config/ServerProfile.js";
 import { PlayerTracker } from "../players/PlayerTracker.js";
 import { activeConsoleLink } from "../players/activeConsole.js";
-import { activeConsoleProfileId } from "../events/consoleEventHub.js";
+import { activeConsoleProfileId, consoleProfileId, openConsoleProfileIds } from "../events/consoleEventHub.js";
 import { engineClearsTextBuffer } from "../players/consoleLink.js";
 import { validatePlayerSettings } from "../players/playerSettings.js";
-import { sessionManager } from "./server.js";
+import { sessionManager } from "../session/sessionStore.js";
 import { NO_PROFILE_ID } from "../events/ServerEvents.js";
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
@@ -66,9 +66,15 @@ function parseDate(v: unknown): Date | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
-/** The profile a query is about: the one asked for, else the open console's. */
+/** The profile a query is about: the one asked for, else the default server's console's. */
 function queryProfile(q: Record<string, unknown>): string | null {
   return typeof q.profileId === "string" && q.profileId ? q.profileId : activeConsoleProfileId();
+}
+
+/** The open console session whose events carry `profileId`. */
+function sessionOf(profileId: string | null) {
+  if (!profileId) return undefined;
+  return sessionManager.list().find((s) => consoleProfileId(s) === profileId);
 }
 
 export async function playersRoutes(app: FastifyInstance): Promise<void> {
@@ -78,11 +84,12 @@ export async function playersRoutes(app: FastifyInstance): Promise<void> {
     await playerTracker.flush();
   });
 
-  /** GET /api/players/profiles: profiles with a history, and the one whose console is open. */
+  /** GET /api/players/profiles: profiles with a history, every one whose console is open, and the default server's (`active`). */
   app.get("/api/players/profiles", async () => {
     const active = activeConsoleProfileId();
     const ids = new Set(await historyProfileIds());
     if (active) ids.add(active);
+    for (const id of openConsoleProfileIds()) ids.add(id);
     const labels = await profileLabels();
     const profiles = await Promise.all(
       [...ids].map(async (profileId) => {
@@ -133,16 +140,16 @@ export async function playersRoutes(app: FastifyInstance): Promise<void> {
     return { profileId, entries };
   });
 
-  /** GET /api/players/present: players in the open server's game as Pyrodeck tracks them (slot, address). */
-  app.get("/api/players/present", async () => {
-    const profileId = activeConsoleProfileId();
+  /** GET /api/players/present?profileId=: players in a server's game as Pyrodeck tracks them (slot, address); default: the default server. */
+  app.get("/api/players/present", async (request) => {
+    const profileId = queryProfile(request.query as Record<string, unknown>);
     return { profileId, players: profileId ? playerTracker.present(profileId) : [] };
   });
 
-  /** GET /api/players/settings */
-  app.get("/api/players/settings", async () => {
-    const profileId = activeConsoleProfileId();
-    const session = sessionManager.getActive();
+  /** GET /api/players/settings?profileId= */
+  app.get("/api/players/settings", async (request) => {
+    const profileId = queryProfile(request.query as Record<string, unknown>);
+    const session = sessionOf(profileId);
     return {
       settings: pyrodeckConfig.get().players,
       lookup: {

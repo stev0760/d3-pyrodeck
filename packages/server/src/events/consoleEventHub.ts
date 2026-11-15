@@ -1,7 +1,7 @@
-import { sessionManager } from "../routes/server.js";
+import { sessionManager } from "../session/sessionStore.js";
 import { serverRegistry } from "../servers/ServerRegistry.js";
+import { defaultConsoleSession } from "../routes/server.js";
 import { ConsoleEventSource } from "./ConsoleEventSource.js";
-import { NO_PROFILE_ID } from "./ServerEvents.js";
 import type { ServerSession } from "../session/SessionManager.js";
 
 /**
@@ -10,53 +10,54 @@ import type { ServerSession } from "../session/SessionManager.js";
  */
 export function isThisMachine(host: string): boolean {
   return (
-    host === "localhost" || host === "127.0.0.1" || host === "::1" || host === serverRegistry.getDefault().process.consoleHost()
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    serverRegistry.list().some((s) => s.process.consoleHost() === host)
   );
 }
 
 /**
- * The profile a console session belongs to: the launched profile when the
- * session is to Pyrodeck's own launch (this machine, its console port),
- * otherwise "connect:<host>:<port>". A launch without a profile is
- * NO_PROFILE_ID.
+ * The server a console session's player and level events belong to: the
+ * server Pyrodeck runs that opened it (its profile id, NO_PROFILE_ID without
+ * one), or "connect:<host>:<port>" for Connect mode.
  */
-export function consoleProfileId(host: string, port: number): string {
-  const launchedProcess = serverRegistry.getDefault().process;
-  const status = launchedProcess.getStatus();
-  const launched = status.state === "running" || status.state === "starting";
-  if (launched && isThisMachine(host) && port === launchedProcess.getLaunchConfig()?.telnetPort) {
-    return status.activeProfileId ?? NO_PROFILE_ID;
-  }
+export function consoleProfileId(session: ServerSession): string {
+  if (session.profileId) return session.profileId;
+  const { host, port } = session.connectionInfo;
   return `connect:${host}:${port}`;
 }
 
-let current: { sessionId: string; source: ConsoleEventSource } | null = null;
+/** One event source per open session, by session id. */
+const sources = new Map<string, ConsoleEventSource>();
 
 /** Read a session from its login on, so nothing printed after the connect is missed. */
 function onSessionState(session: ServerSession): void {
   if (session.state === "disconnected") {
-    if (current?.sessionId === session.id) {
-      current.source.dispose();
-      current = null;
-    }
+    sources.get(session.id)?.dispose();
+    sources.delete(session.id);
     return;
   }
-  if (session.state === "connecting" || current?.sessionId === session.id) return;
-  current?.source.dispose();
-  const { host, port } = session.connectionInfo;
-  const source = new ConsoleEventSource(consoleProfileId(host, port));
+  if (session.state === "connecting" || sources.has(session.id)) return;
+  const source = new ConsoleEventSource(consoleProfileId(session));
   session.connection.onData((chunk) => {
-    if (current?.source === source) source.feed(chunk);
+    if (sources.get(session.id) === source) source.feed(chunk);
   });
-  current = { sessionId: session.id, source };
+  sources.set(session.id, source);
 }
 
-/** The profile id of the console session being read, or null. */
+/** The profile id of the default server's console session (routes/server.ts defaultConsoleSession), or null. */
 export function activeConsoleProfileId(): string | null {
-  return current?.source.profileId ?? null;
+  const session = defaultConsoleSession();
+  return session ? (sources.get(session.id)?.profileId ?? null) : null;
 }
 
-/** Start reading every console session Pyrodeck opens (Connect and Launch mode). */
+/** The profile id each open console session's events carry. */
+export function openConsoleProfileIds(): string[] {
+  return [...sources.values()].map((s) => s.profileId);
+}
+
+/** Start reading every console session Pyrodeck opens (every server's and Connect mode's). */
 export function startConsoleEvents(): void {
   sessionManager.onStateChange(onSessionState);
 }

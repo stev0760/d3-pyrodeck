@@ -3,10 +3,11 @@ import fs from "node:fs/promises";
 import Fastify, { type FastifyInstance } from "fastify";
 
 /**
- * "Start when Pyrodeck starts" on the profile API: one profile at a time,
- * cleared with its profile, and PYRODECK_AUTOSTART_PROFILE winning (said in
- * the save's warnings). profiles.json lives in a temp config directory; the
- * stored Pyrodeck config is a stand-in.
+ * "Start when Pyrodeck starts" on the profile API: on for several profiles
+ * (servers.json keeps the list, pyrodeck.json its first), cleared with its
+ * profile, and PYRODECK_AUTOSTART_PROFILE winning (said in the save's
+ * warnings). profiles.json lives in a temp config directory; the stored
+ * Pyrodeck config is a stand-in.
  */
 const mocks = await vi.hoisted(async () => {
   // Before routes/config.ts reads PYRODECK_CONFIG_DIR at import.
@@ -39,8 +40,12 @@ const PROFILES = [
 
 let app: FastifyInstance;
 
+const autostartList = async (): Promise<string[]> =>
+  (JSON.parse(await fs.readFile(`${mocks.dir}/servers.json`, "utf-8")) as { autostart: string[] }).autostart;
+
 beforeEach(async () => {
   await fs.writeFile(`${mocks.dir}/profiles.json`, JSON.stringify(PROFILES));
+  await fs.rm(`${mocks.dir}/servers.json`, { force: true });
   mocks.config.autostart = { profileId: null };
   app = Fastify();
   await app.register(configRoutes);
@@ -61,10 +66,14 @@ afterAll(async () => {
 const patch = (id: string, payload: unknown) => app.inject({ method: "PATCH", url: `/api/profiles/${id}`, payload: payload as object });
 
 describe("PATCH /api/profiles/:id { autostart }", () => {
-  it("makes the profile the one that starts with Pyrodeck; ticking another replaces it", async () => {
+  it("adds the profile to those that start with Pyrodeck; pyrodeck.json keeps the first", async () => {
     expect((await patch("id-ctf", { autostart: true })).statusCode).toBe(200);
     expect(mocks.config.autostart.profileId).toBe("id-ctf");
     await patch("id-anarchy", { autostart: true });
+    expect(await autostartList()).toEqual(["id-ctf", "id-anarchy"]);
+    expect(mocks.config.autostart.profileId).toBe("id-ctf");
+    await patch("id-ctf", { autostart: false });
+    expect(await autostartList()).toEqual(["id-anarchy"]);
     expect(mocks.config.autostart.profileId).toBe("id-anarchy");
   });
 
