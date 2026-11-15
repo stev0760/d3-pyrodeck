@@ -56,7 +56,9 @@ back. With autostart Pyrodeck launches a profile itself when it starts:
 - `PYRODECK_AUTOSTART_PROFILE=<profile name>` in the service's environment, the name exactly as the Launch panel shows
   it (a profile's id also works). It wins over the UI setting, which then shows as locked. Unset or blank leaves the
   choice to the UI.
-- Or, in the panel, Edit the profile and tick **Start when Pyrodeck starts**. One profile at a time.
+- Or, in the panel, Edit the profile and tick **Start when Pyrodeck starts**.
+- Several servers: `PYRODECK_AUTOSTART_PROFILES=<name>,<name>` names several profiles, and the setting can be on for
+  several (through the API for now; the panel shows one); each starts with its own crash-loop guard.
 
 At startup Pyrodeck first tries to re-attach. A server that is running is left alone, whether it was re-attached or
 not: autostart applies only when no server runs. Otherwise the profile is launched exactly as the Launch button

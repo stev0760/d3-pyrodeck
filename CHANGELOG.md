@@ -2,6 +2,52 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [Unreleased]
+
+One Pyrodeck runs several game servers at once: an Anarchy and a CTF server from one panel. This is the server side,
+used through the API; the panel shows one server (the default) until the next release.
+
+### Added
+- **A server per profile.** Each profile's server launches, logs in to its console, is watched by its own supervisor,
+  rotates its own playlist and records its own run, beside the others. `GET /api/servers` lists them (state, console,
+  mission and level, humans and max players, game type, playlist, ports, supervisor, autostart), and
+  `/api/servers/<id>/start`, `stop`, `status`, `command`, `players`, `playlist` (`activate`, `deactivate`, `resume`),
+  `supervisor` (`cancel-relaunch`) and `autostart` (`cancel`) act on one. A server's id is its profile's id; `launch`
+  is the server started from the global `dedicated.cfg`, `connect` Connect mode's session.
+- **Launches that would clash are refused**, with a message naming the other server: the same game port, GameSpy port
+  set in the profile, console port, server config file, Startup Commands file in use, or temp directory set in the
+  profile. A setting the operator made is never changed.
+- **Each server gets its own temp directory** (`-tempdir`, short, the same at every launch) unless the profile sets
+  one, so two servers no longer fight over the engine's lock file; and **a free GameSpy port** (`-gamespyport`) when
+  another server holds 20142 and the profile sets none. Launch options take a **temp directory** of their own.
+- **A Startup Commands file per profile** (`startupFile`, default `autoexec.dmfc`), for servers sharing a game
+  directory.
+- **Each server has its own playlist**: a different one active on each, and two rotations at the same moment each
+  restart their own server on their own profile. Hosting a playlist's missions covers every active playlist.
+- **Re-attach to several games** after Pyrodeck restarts, and **autostart of several profiles**: "Start when Pyrodeck
+  starts" can be on for more than one, and `PYRODECK_AUTOSTART_PROFILES` takes a comma-separated list (the single
+  `PYRODECK_AUTOSTART_PROFILE` still works).
+- **WebSocket protocol 2.** A client that sends `{ "type": "hello", "payload": { "protocol": 2 } }` gets every
+  server's messages tagged with `serverId`, and names the server in its commands.
+- `POST /api/profiles` takes the new config's `remoteConsolePort` and launch options.
+
+### Changed
+- The URLs and WebSocket messages of earlier versions keep working for one server: they act on the profile named in
+  the request, else on the only server running, else on the default server (the one running, else the last one). A
+  change that names no server while several run answers 409 with the route to use, and `POST /api/launcher/start`
+  still refuses while another server runs. A WebSocket that never says hello gets the default server's messages only,
+  as before.
+- Every launch now passes `-tempdir` (see above).
+- Log retention and log deletion protect every running server's log; process priority applies to every server;
+  `$rehash` after a hosts.deny edit goes to every server's console. Kick and ban take the server's `profileId` when
+  several consoles are open.
+
+### Upgrade
+- The first start upgrades the config directory in place: `servers.json` (the autostart list) and `servers/<id>/`
+  (each server's run record and playlist state) are added; nothing else is moved. A running server is re-attached
+  to. For a downgrade, `running-server.json`, `playlist-state.json` and `autostart.profileId` keep describing one
+  server; stop the others first.
+
 ## [0.5.7] - 2026-11-15
 
 A playlist's missions download from the mission host without a click per mission.

@@ -357,6 +357,7 @@ The admin password can also be set via the web UI on first run (stored as a scry
 | `PYRODECK_STATIC_DIR` | *(auto-detected)* | Path to the `resources/` SPA directory. Auto-detected from the executable's location in binary mode. Set manually if needed. |
 | `PYRODECK_SIDECAR` | *(unset)* | Set to `1` by the Tauri wrapper. Binds loopback-only on an ephemeral port and writes `sidecar-port:{n}` to stdout. |
 | `PYRODECK_AUTOSTART_PROFILE` | *(unset)* | The profile to launch when Pyrodeck starts, by its exact name (or id), after re-attach. Unset or blank leaves it to "Start when Pyrodeck starts" in the profile, which this wins over. An unknown name is logged as an error and starts nothing. See [docs/running-as-a-service.md](docs/running-as-a-service.md#after-a-reboot). |
+| `PYRODECK_AUTOSTART_PROFILES` | *(unset)* | Several profiles to launch when Pyrodeck starts, comma-separated names (or ids), each with its own crash-loop guard. Together with `PYRODECK_AUTOSTART_PROFILE` (which comes first) it wins over the profiles ticked "Start when Pyrodeck starts". A name that matches no profile is logged; the others still start. |
 
 None of these reach the game server. Pyrodeck starts it with `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TMP`/`TEMP`, `TZ`, `LANG`, `LANGUAGE`, `LC_*`, `XDG_*`, `SDL_*`, `D3_*` and `LD_LIBRARY_PATH` from its own environment (on Windows also the system variables such as `SystemRoot`, `TEMP` and `APPDATA`), `SDL_VIDEODRIVER=dummy` unless set, and no `PYRODECK_*` variable.
 

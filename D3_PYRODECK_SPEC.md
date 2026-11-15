@@ -130,14 +130,14 @@ The parser must strip this echo line before processing the response.
 
 ### 3.5 Server instances
 
-The server Pyrodeck launches is one object, `servers/ServerInstance.ts`: its `ProcessManager`, the console login (the
+Each server Pyrodeck launches is one object, `servers/ServerInstance.ts`: its `ProcessManager`, the console login (the
 session, the 5 s reconnect, the `quit` a stop sends), the console quit watch, the supervisor, autostart and its
 crash-loop guard, the profile automation, the playlist rotation with its restart health check, the run record, and
-the batching of process output for the browsers. `servers/ServerRegistry.ts` holds the instances by id and builds the
-one Pyrodeck runs, the default, from the shared session manager, WebSocket broadcast, `pyrodeck.json` settings and
-playlist manager. The launcher, schedule, bans and process priority routes and the console event hub take that server
-from the registry. Its console session lives in the `SessionManager` it shares with Connect mode, which holds one open
-session.
+the batching of process output for the browsers. `servers/ServerRegistry.ts` holds one instance per profile and one
+for the global `dedicated.cfg` (Addendum H), each with its own playlist manager, its view of the event bus scoped to
+its own events, and its run record; it checks every launch against the others under one lock, and decides which
+server the routes and sockets of a single-server client mean (the default server). Each instance's console session
+lives in the `SessionManager` it shares with the other servers and Connect mode; an instance only touches its own.
 
 On a process state change the instance sends the buffered output first, then the state; forgets the loaded level;
 fails a playlist restart that died while its health check waited, having first read whether the check was pending, so
@@ -146,7 +146,7 @@ the exit to autostart's guard before the supervisor. The per-event lines in Pyro
 are subscribed to the bus before the instance, so they print first.
 
 The instance takes its process, console transport, process checks and timings as options; `ServerInstance.test.ts`
-runs it on a stand-in process and console.
+runs it on a stand-in process and console, and `ServerRegistry.test.ts` runs three on one bus.
 
 ---
 
@@ -737,23 +737,26 @@ All REST endpoints are prefixed with `/api`. WebSocket endpoint is `/ws`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/server/connect` | Connect to D3 server (host, port, password) |
-| `POST` | `/api/server/disconnect` | Disconnect from current server |
-| `GET` | `/api/server/status` | Connection state + cached capabilities |
+| `POST` | `/api/server/connect` | Connect to D3 server (host, port, password); replaces Connect mode's session only |
+| `POST` | `/api/server/disconnect` | Disconnect Connect mode's session, else the default server's console (Addendum H.7) |
+| `GET` | `/api/server/status` | The default server's connection state + cached capabilities |
+| `GET` | `/api/servers` | Every server Pyrodeck runs; `/api/servers/:serverId/...` acts on one (Addendum H.7) |
 | `GET` | `/api/servers/saved` | List saved server profiles |
 | `POST` | `/api/servers/saved` | Add/update a saved server profile (name, host, port) |
 | `DELETE` | `/api/servers/saved/:id` | Delete a saved server profile |
 
 ### 8.3 Commands
 
-All console commands flow through the WebSocket (`/ws`), so their output streams back as it arrives. There is no
-REST endpoint for a raw command.
+Console commands flow through the WebSocket (`/ws`), so their output streams back as it arrives;
+`POST /api/servers/:serverId/command` sends one and returns the reply (Addendum H.7). With protocol 2 (a `hello`), a
+server's messages carry `serverId` (Addendum H.8).
 
 **WebSocket message types:**
 
 ```typescript
 // Client → Server
-{ type: "command", payload: { command: string } }
+{ type: "hello",   payload: { protocol: 2 } }
+{ type: "command", payload: { command: string; serverId?: string } }
 
 // Server → Client
 { type: "output",                payload: { raw: string; parsed?: StructuredResponse } }
@@ -1794,7 +1797,8 @@ the profile by its exact, case-sensitive name, else by id; two profiles of that 
 (`PATCH /api/profiles/:id { autostart: true }` makes the profile the one, replacing another; `false` clears it only if
 it is this profile; any other value is a 400). Deleting the profile clears it. While the variable is set the UI box is
 locked, and a PATCH that sends `autostart` anyway is stored and answered with a warning that the variable wins.
-Neither set: no autostart.
+Neither set: no autostart. Since several servers (Addendum H.6), the UI setting is a list in `servers.json` and
+`PYRODECK_AUTOSTART_PROFILES` names several; each listed profile starts with its own guard.
 
 ### F.2 When, and how
 
@@ -1917,6 +1921,174 @@ server; a desktop capture before the work is the baseline, and `magick compare -
 idle desktop and tablet screen after it (the Logs tab and the live screens carry changing text). Server vitest covers
 the roster round-trip, the population parser and the backups; client vitest covers the line buffer, the hash routes
 and the command table.
+
+## Addendum H — Several servers at once (2026-11-15, unreleased, branch `feature/multi-server`)
+
+One Pyrodeck runs several Descent 3 dedicated servers side by side, each with its own profile, ports, console,
+supervisor and playlist. This addendum covers the server side; the panel still shows one server (the default, H.7).
+
+### H.1 Servers and ids
+
+`servers/ServerRegistry.ts` creates a `ServerInstance` (§3.5) per profile at startup (`init()`, from `launcherRoutes`)
+and when a profile is added; its id is the profile's id, and it only ever launches that profile. `launch` is the server
+started from the global `dedicated.cfg` without a profile (its events carry `profileId: "launch"`, `NO_PROFILE_ID`).
+`connect` names Connect mode's console session (one remote server) in the list and on the WebSocket; it has no process.
+`saved` is reserved (`/api/servers/saved`). A profile id that cannot name a directory (`[A-Za-z0-9._-]`, at most 100)
+or is one of these is logged and gets no server. An idle server whose profile was deleted is dropped on the next list.
+
+### H.2 Console sessions and events
+
+`SessionManager` holds every open session: each has an `owner` (a server's id, or `connect`) and the `profileId` its
+events carry. A server opens, replaces and closes only its own session; Connect mode replaces only its own. Everything
+that talks to "the server's console" asks the server for its session: the supervisor's probes, the schedule's player
+count and `say`, periodic commands and respawn scaling, players, bans and rules (`players/activeConsole.ts`, by
+profile id), WebSocket commands. `events/consoleEventHub.ts` keeps one `ConsoleEventSource` per session and takes the
+profile id from the session (Connect mode: `connect:<host>:<port>`); nothing is guessed from ports. `$rehash` after a
+hosts.deny edit goes to every open console.
+
+Each server gets `scopedEvents(bus, id)` as its `events` (`events/ServerEvents.ts`): its supervisor, autostart guard,
+quit watch and profile automation hear only events whose `profileId` is the server's, so a join on one server never
+counts on another and a start of one does not end another's autostart watch. What a server emits goes through the
+shared bus, where alerts, player history, bans, rules, process priority and the event log hear every server.
+
+### H.3 Launch checks and per-server defaults
+
+Every launch (by hand, a playlist rotation and its retry, a supervisor relaunch, the schedule, autostart) passes
+`ServerRegistry.reserve()` (the `LaunchGuard`) right before the spawn, one at a time under the registry's launch lock.
+`servers/launchConflicts.ts` compares the launch with every other server that holds one: its process is starting,
+running or stopping, a playlist rotation is restarting it, a reservation is in flight, or (H.6) a game from before
+Pyrodeck's restart still runs without being re-attached. Refused, with a message naming the other server and what to
+change (409 from the start routes; a rotation retries once and then pauses the playlist; the supervisor backs off):
+
+| Shared | Why |
+|--------|-----|
+| Game UDP port (`-useport`, default 2092), also against the other's GameSpy port | the second server runs without network (`init.cpp:1808`, `networking.cpp:746`) |
+| GameSpy UDP port set by the operator (`-gamespyport`) | opened on every launch (`gamespy.cpp:144`, `init.cpp:1883`) |
+| Console TCP port (`RemoteConsolePort`) | Pyrodeck would log in to the other server |
+| Server config file (same game path and file) | a rotation rewrites its `MissionName` |
+| Startup Commands file, when it exists or a launch writes Pyrodeck's block | every launch rewrites it |
+| Temp directory set by the operator (`-tempdir`) | the second server exits "Unable to create lock file" (`init.cpp:2040`) |
+
+UDP ports clash only on the same `-useip` address or when either binds every address. The operator's settings are
+never changed. Where the profile sets nothing, the launch gets `defaultOptions`, merged under the profile's
+`launchOptions` (which win) by `buildLaunchArgs`: `tempDir` always, `<os.tmpdir()>/pyrodeck-<12 hex>` (a hash of the
+config directory and server id: the same at every launch, different per server and per Pyrodeck; `/tmp`, or the drive
+root on Windows, when the system temp path would make it longer than the engine's 99 bytes), with a stale `.lock` in
+it removed before the launch (the server is down, so no process of its holds it); and `gameSpyPort`, only when another
+server holds 20142: the first free port above it. A log of the same name as another server's live log gets `-2`,
+`-3` ... before `.log`. A profile sets its own Startup Commands file with `startupFile` (H.7); default
+`autoexec.dmfc`, so a single-server setup is unchanged.
+
+### H.4 Playlists
+
+The library (`playlists.json`) is shared. Each server has its own `PlaylistManager` (active playlist, position, pause,
+votes, hold) saved in `servers/<id>/playlist-state.json`; the legacy owner (H.5) keeps `playlist-state.json`. A
+rotation restarts its own server: its profile, its config file, its executable, its launch options, through the launch
+check; the server without a profile restarts its last launch. While it restarts the server keeps its ports (H.3).
+Saving a playlist refreshes it on every server that has it active, and deleting it deactivates it there. Activation
+checks the entries against the server's own profile and hosts the missions from its game path; turning the mission
+host on, or moving it, hosts every server's active playlist; each server's playlist status carries its own
+`downloads`.
+
+### H.5 Files and the upgrade
+
+| File | Holds |
+|------|-------|
+| `servers.json` | `{ version: 1, autostart: [profileId…], legacyOwner }` |
+| `servers/<id>/run.json` | the server's run record (E.5), plus `serverId`, `defaultOptions`, `startupFile` |
+| `servers/<id>/playlist-state.json` | the server's playlist state (not the legacy owner's) |
+| `running-server.json` | a copy of one running server's record, for a Pyrodeck that ran one server: the legacy owner's when it runs, else the server started first; removed when none runs |
+| `playlist-state.json` | the legacy owner's playlist state |
+| `pyrodeck.json` `autostart.profileId` | the first of the autostart list |
+
+Not in `pyrodeck.json`, which a Pyrodeck from before saves with only the keys it knows. `servers/serverStore.ts`
+`upgradeConfigDir()` runs at every start and is idempotent. Without `servers.json` (the first start): the legacy owner is
+the server `running-server.json` names (its profile, else `launch`), else `autostart.profileId`, else the most recently
+launched profile, else the only profile, else `launch`; the autostart list is `[autostart.profileId]`; profiles,
+schedules, bans, history and playlists are not touched. With it: when `autostart.profileId` is not the list's first, a
+downgraded Pyrodeck changed it, and the list follows (that profile first, or the old first dropped when it was
+cleared); `pyrodeck.json` is then set to the list's first again. A downgraded Pyrodeck re-attaches to the one server in
+`running-server.json`; the others keep running unseen (stop them first).
+
+### H.6 Re-attach and autostart
+
+`reattachAll()` creates a server for every `servers/<id>/run.json` (also a deleted profile's) and for the server
+`running-server.json` names, then lets each re-attach (E.5) from its own record and, for that one server, the copy; the
+newer live record wins and becomes its own. A live game whose console cannot be logged in to holds its ports (H.3) and
+blocks that server's autostart. Then autostart runs once per listed profile, each with its own crash-loop guard (F.3):
+`PYRODECK_AUTOSTART_PROFILE` (one name) and `PYRODECK_AUTOSTART_PROFILES` (a comma list of names or ids) together,
+when either is set, win over the profiles ticked **Start when Pyrodeck starts**; `PATCH /api/profiles/:id
+{ autostart }` now adds or removes one profile of `servers.json`'s list instead of replacing the one. A name that
+matches no profile is logged; the others still start. Autostart launches go through the launch check like any other.
+
+### H.7 API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/servers` | `{ defaultServerId, servers: [row] }`: every profile's server, `launch` once used (or when there are no profiles), `connect` while open. Row: `id, kind ("profile"\|"launch"\|"connect"), name, profileId, profileExists, default, state, pid, startedAt, adopted, stopReason, console, log, gameName, gameType, mission, level, humans, maxPlayers, playlist { id, name, status, currentEntry, pausedReason } \| null, ports { bindIp, game, gameSpy, console, tempDir, startupFile }, held { why, pid } \| null, supervisor { enabled, relaunchCount, pendingRelaunch, gaveUp, hang, uptimeMs }, autostart { listed, state, reason }` (ports: the running launch's, else what the next launch would use) |
+| `GET` | `/api/servers/:serverId` | One row |
+| `POST` | `/api/servers/:serverId/start` | Launch it beside the others (409 with the clash, H.3) |
+| `POST` | `/api/servers/:serverId/stop` | Stop it |
+| `GET` | `/api/servers/:serverId/status` | As `GET /api/launcher/status`, plus `serverId`, `console`, `capabilities`, `playlist` |
+| `POST` | `/api/servers/:serverId/command` | Body `{ command }` (one line): `{ serverId, reply, parsed: { type, payload } \| null, problems }`; 409 while its console is not logged in |
+| `GET` | `/api/servers/:serverId/players` | `{ serverId, profileId, humans, players }` (the tracker's players in its game) |
+| `GET` | `/api/servers/:serverId/playlist` | Its playlist status |
+| `POST` | `/api/servers/:serverId/playlist/activate` | Body `{ playlistId }`: `{ serverId, ok, status, downloads }` |
+| `POST` | `/api/servers/:serverId/playlist/deactivate` | |
+| `POST` | `/api/servers/:serverId/playlist/resume` | 409 when not paused |
+| `GET` | `/api/servers/:serverId/supervisor` | Its supervisor snapshot (the settings are every server's) |
+| `POST` | `/api/servers/:serverId/supervisor/cancel-relaunch` | 409 when none is pending |
+| `GET` | `/api/servers/:serverId/autostart` | As `GET /api/launcher/autostart`, `run` being this server's |
+| `POST` | `/api/servers/:serverId/autostart/cancel` | 409 when no retry is pending |
+
+`connect` answers `status`, `command` and `players`, 400 for the rest; an unknown id is 404.
+
+The flat routes stay as aliases (`routes/launcher.ts`, `routes/playlists.ts`, `routes/bans.ts`): the server of the
+`profileId` in the body or query; else, for a route that changes something, the only server running (409 naming the
+`/api/servers/:serverId/...` route when several run); else the default server. `POST /api/launcher/start` still
+refuses while any other server runs (409 naming `POST /api/servers/<id>/start`) and still replaces a Connect-mode
+session. `POST /api/playlists/deactivate` and `/resume` take the only server whose playlist is active (or paused).
+`POST /api/players/kick` and `/ban` take `profileId`, else the one open console (409 when several are open).
+`GET /api/players/present`, `/settings` and `/rules` take `?profileId=`. `PUT /api/launcher/supervisor` applies to every
+server. `GET /api/launcher/autostart` adds `envList`, `settingProfileIds`, `profiles` (each with its `run`) and
+`errors`. `PUT /api/process-priority` applies to every running server; both priority routes add `byServer`. The log
+routes and retention protect every server's live log.
+
+The default server (`defaultServerId()`) is what a single-server client means by "the server": the one with a process
+or console session open; with several, the one that was the default already, else the one started first (Connect
+mode counts while its session is open); with none, the last default (at first, the legacy owner). An alias that names
+a profile makes it the default while the default has nothing running.
+
+Profiles: `POST /api/profiles` takes `remoteConsolePort` (1-65535, written into the new config file) and, for a new
+profile, `launchOptions` (refused with 400 when invalid). `PATCH /api/profiles/:id` takes `startupFile` (a plain
+`.dmfc` name in the game directory, at most 64 characters; `null` or `""` goes back to `autoexec.dmfc`) and
+`launchOptions.tempDir` (an absolute path of at most 99 bytes, `-tempdir`). `GET /api/profiles/:id/companions` reports
+the profile's Startup Commands file.
+
+### H.8 WebSocket
+
+One `/ws`. A server's messages (`process_state`, `process_output`, `output`, `connection_state`, `capabilities`,
+`playlist_*`, `level_changed`, `serverinfo`, its `error`s) are sent as `{ type, serverId, payload }` to a socket that
+sent `{ type: "hello", payload: { protocol: 2 } }`; the reply is `{ type: "hello", payload: { protocol, defaultServerId,
+servers } }`, then each server's `connection_state`, `capabilities` and `level_changed`, tagged. A socket that never
+says hello gets the default server's messages only, untagged, and its greeting at connect, exactly as before. Global
+messages (`ping`, errors of no server: schedule, process priority) go to every socket untagged. `{ type: "command",
+payload: { command, serverId? } }` runs on the named server's console (protocol 2), else on the default server's; the
+parsed reply (`players`, `bots`, ...) comes back to that socket, tagged for protocol 2.
+
+### H.9 Verified, and not yet
+
+Server vitest runs three servers on one bus with stand-in processes and consoles (`servers/testing/fakeGames.ts`):
+launches side by side, a crash and relaunch of one, a human on one and the restart-when-empty of another, two
+rotations at once, each refusal, the defaults, re-attach to several, `running-server.json` from an older Pyrodeck, the
+autostart list; the upgrade cases (fresh, 0.5.x idle, 0.5.x running with a playlist, running without a profile,
+downgrade then upgrade, idempotent); the API, the aliases and the hello over Fastify's inject. The built server was run
+against a scratch config directory with a stand-in game executable: three servers launched, logged in and listed;
+two rotations at the same moment; Pyrodeck restarted and re-attached to all three; two profiles autostarted.
+
+Only real servers can show: two games on one machine with clients on both; `-tempdir` on retail 1.4 and PiccuEngine;
+a separate `-autoexec` file per profile read by DMFC; `systemctl restart` with `KillMode=process` re-attaching
+several; the CPU of several bot servers on one VPS; a downgrade to 0.5.7 on a copy of a config directory.
 
 ---
 
