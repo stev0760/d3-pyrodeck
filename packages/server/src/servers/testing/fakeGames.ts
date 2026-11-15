@@ -31,8 +31,18 @@ export class FakeWorld {
     return p;
   }
 
+  /** Every console opened, in order. */
+  readonly consoles: FakeConsole[] = [];
+
   connect(): FakeConsole {
-    return new FakeConsole(this);
+    const c = new FakeConsole(this);
+    this.consoles.push(c);
+    return c;
+  }
+
+  /** The latest console logged in to `serverId`'s process. */
+  consoleOf(serverId: string): FakeConsole | undefined {
+    return this.consoles.filter((c) => c.serverId === serverId && c.isConnected()).at(-1);
   }
 
   /** What re-attach reads about a pid. */
@@ -242,6 +252,11 @@ export class FakeConsole implements ServerConnection {
   private disconnectCallbacks: ((reason: string) => void)[] = [];
 
   constructor(private readonly world: FakeWorld) {}
+
+  /** The server this console is logged in to. */
+  get serverId(): string | null {
+    return this.target?.serverId ?? null;
+  }
 
   async connect(_host: string, port: number): Promise<void> {
     const target = this.world.listening.get(port);

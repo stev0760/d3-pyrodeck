@@ -304,12 +304,9 @@ export class ServerRegistry implements LaunchGuard {
     if (this.stickyServer === id) this.stickyServer = null;
   }
 
-  /** Servers whose process runs (or is starting or stopping). */
+  /** Servers whose process is starting or running (a stopping one still holds its ports: heldLaunch). */
   running(): ServerInstance[] {
-    return this.list().filter((s) => {
-      const state = s.process.getStatus().state;
-      return state === "starting" || state === "running" || state === "stopping";
-    });
+    return this.list().filter((s) => s.process.isRunning());
   }
 
   /** Stop every timer and listener (Pyrodeck shutting down, tests). The game processes keep running. */

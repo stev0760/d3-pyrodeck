@@ -92,6 +92,8 @@ const { serversRoutes } = await import("./servers.js");
 const { playlistRoutes } = await import("./playlists.js");
 const { commandRoutes } = await import("./command.js");
 const { serverRegistry } = await import("../servers/ServerRegistry.js");
+const { startConsoleEvents } = await import("../events/consoleEventHub.js");
+const { serverEvents } = await import("../events/ServerEvents.js");
 
 const PROFILES = [
   { id: "p-anarchy", name: "Anarchy", configFile: "anarchy.cfg", consolePort: 2701, launchOptions: { gamePort: 2092 } },
@@ -152,6 +154,7 @@ beforeAll(async () => {
     ),
   );
   for (const level of ["log", "warn", "error"] as const) vi.spyOn(console, level).mockImplementation(() => {});
+  startConsoleEvents();
   app = Fastify({ logger: false });
   await app.register(fastifyWebSocket);
   await app.register(launcherRoutes);
@@ -227,6 +230,26 @@ describe("the servers API with several servers", () => {
       `Server is already running ("Anarchy"). To run another beside it, use POST /api/servers/${C.id}/start`,
     );
     expect(world().processes.get(C.id)?.launches ?? []).toHaveLength(0);
+  });
+
+  it("reads each console's joins as its own server's: the events never cross", async () => {
+    const joins: string[] = [];
+    const listener = (p: { profileId: string; name: string }) => joins.push(`${p.profileId} ${p.name}`);
+    serverEvents.onEvent("player.joined", listener);
+    try {
+      world().consoleOf(B.id)!.print("*Pilot has joined CTF\n");
+      world().consoleOf(A.id)!.print("*Gunner has joined the Anarchy\n");
+      await settle(() => joins.length === 2, "both joins");
+      expect(joins).toEqual([`${B.id} Pilot`, `${A.id} Gunner`]);
+      expect(serverRegistry.get(B.id)!.supervisor.humansOnline()).toBe(1);
+      expect(serverRegistry.get(A.id)!.supervisor.humansOnline()).toBe(1);
+      expect(serverRegistry.get(C.id)!.supervisor.humansOnline()).toBeNull();
+      world().consoleOf(B.id)!.print("*Pilot has left the game\n");
+      await settle(() => serverRegistry.get(B.id)!.supervisor.humansOnline() === 0, "B's leave");
+      expect(serverRegistry.get(A.id)!.supervisor.humansOnline()).toBe(1);
+    } finally {
+      serverEvents.offEvent("player.joined", listener);
+    }
   });
 
   it("sends a console command to the server named, and only to it", async () => {
