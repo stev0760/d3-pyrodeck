@@ -201,6 +201,8 @@ export interface LogRetentionRunOptions {
   settings: LogRetentionSettings;
   /** The log the running server is writing, or null. */
   activeLogPath: string | null;
+  /** Every running server's log (with several servers); each is left alone like activeLogPath. */
+  activeLogPaths?: readonly string[];
   log: RetentionLogger;
   now?: number;
   /** Logs written within this many ms are left alone (default LOG_QUIET_MS). */
@@ -238,7 +240,7 @@ function formatMb(bytes: number): string {
   return bytes < MB ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / MB).toFixed(1)} MB`;
 }
 
-async function scanDir(dir: string, activeLogPath: string | null, now: number, quietMs: number): Promise<Entry[]> {
+async function scanDir(dir: string, activeLogPaths: ReadonlySet<string>, now: number, quietMs: number): Promise<Entry[]> {
   let names: string[];
   try {
     names = await fs.readdir(dir);
@@ -258,7 +260,7 @@ async function scanDir(dir: string, activeLogPath: string | null, now: number, q
     }
     // Regular files only: a symlink with a log's name may point anywhere.
     if (!st.isFile()) continue;
-    const isActive = activeLogPath !== null && path.resolve(full) === activeLogPath;
+    const isActive = activeLogPaths.has(path.resolve(full));
     entries.push({ path: full, kind, size: st.size, mtimeMs: st.mtimeMs, open: isActive || now - st.mtimeMs < quietMs });
   }
   return entries;
@@ -305,7 +307,11 @@ export async function runLogRetention(options: LogRetentionRunOptions): Promise<
   const { settings, log } = options;
   const now = options.now ?? Date.now();
   const quietMs = options.quietMs ?? LOG_QUIET_MS;
-  const activeLogPath = options.activeLogPath ? path.resolve(options.activeLogPath) : null;
+  const activeLogPaths = new Set(
+    [options.activeLogPath, ...(options.activeLogPaths ?? [])]
+      .filter((p): p is string => !!p)
+      .map((p) => path.resolve(p)),
+  );
   const dirs = [...new Set(options.dirs.filter(Boolean).map((d) => path.resolve(d)))];
 
   const result: LogRetentionResult = {
@@ -339,7 +345,7 @@ export async function runLogRetention(options: LogRetentionRunOptions): Promise<
   };
 
   let entries: Entry[] = [];
-  for (const dir of dirs) entries.push(...(await scanDir(dir, activeLogPath, now, quietMs)));
+  for (const dir of dirs) entries.push(...(await scanDir(dir, activeLogPaths, now, quietMs)));
 
   // A compression that never finished (Pyrodeck stopped mid-way) leaves a
   // .partial; the original .log is still there.
@@ -432,6 +438,8 @@ export interface LogRetentionServiceDeps {
   /** Directories to prune: the Log Directory, and the folder of the last launch's log. */
   dirs(): string[];
   activeLogPath(): string | null;
+  /** Every running server's log, when Pyrodeck runs several. */
+  activeLogPaths?(): string[];
   settings(): LogRetentionSettings;
   log: RetentionLogger;
   /** Default: an hour. */
@@ -488,6 +496,7 @@ export class LogRetentionService {
         dirs: this.deps.dirs(),
         settings: this.deps.settings(),
         activeLogPath: this.deps.activeLogPath(),
+        activeLogPaths: this.deps.activeLogPaths?.() ?? [],
         log: this.deps.log,
       });
       if (result.compressed > 0 || result.deleted > 0) {

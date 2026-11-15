@@ -11,6 +11,12 @@ import type { LaunchOptions } from "./launchOptions.js";
  */
 export interface RunRecord {
   version: 1;
+  /**
+   * The server Pyrodeck runs it as (servers/ServerRegistry.ts). Absent in
+   * records written before Pyrodeck ran several servers, and in the copy kept
+   * in running-server.json for them; the profile id then names the server.
+   */
+  serverId?: string;
   pid: number;
   profileId: string | null;
   executablePath: string;
@@ -21,6 +27,10 @@ export interface RunRecord {
   telnetPort: number;
   /** The profile's launch options; -useip decides where the console listens. */
   launchOptions?: LaunchOptions | null;
+  /** Options Pyrodeck added for this server (its own -tempdir, a free -gamespyport); the profile's win. */
+  defaultOptions?: LaunchOptions | null;
+  /** The Startup Commands file in the game directory (default autoexec.dmfc). */
+  startupFile?: string;
   /**
    * AllowRemoteConsole=1 at launch (with 0 the console is on 127.0.0.1).
    * Absent in records written before 0.5.1, whose launches all had 1.
@@ -38,22 +48,25 @@ export interface RunRecord {
 
 export const RUN_RECORD_FILE = "running-server.json";
 
-export async function writeRunRecord(dir: string, record: RunRecord): Promise<void> {
+/** A server's own record when Pyrodeck runs several: `<config>/servers/<id>/run.json`. */
+export const SERVER_RUN_FILE = "run.json";
+
+export async function writeRunRecord(dir: string, record: RunRecord, name = RUN_RECORD_FILE): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
-  const file = path.join(dir, RUN_RECORD_FILE);
+  const file = path.join(dir, name);
   await fs.writeFile(`${file}.tmp`, JSON.stringify(record, null, 2));
   await fs.rename(`${file}.tmp`, file);
 }
 
-export async function clearRunRecord(dir: string): Promise<void> {
-  await fs.rm(path.join(dir, RUN_RECORD_FILE), { force: true });
+export async function clearRunRecord(dir: string, name = RUN_RECORD_FILE): Promise<void> {
+  await fs.rm(path.join(dir, name), { force: true });
 }
 
 /** The saved record, or null when there is none or it is not one. */
-export async function readRunRecord(dir: string): Promise<RunRecord | null> {
+export async function readRunRecord(dir: string, name = RUN_RECORD_FILE): Promise<RunRecord | null> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await fs.readFile(path.join(dir, RUN_RECORD_FILE), "utf-8"));
+    raw = JSON.parse(await fs.readFile(path.join(dir, name), "utf-8"));
   } catch {
     return null;
   }

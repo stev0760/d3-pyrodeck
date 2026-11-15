@@ -69,11 +69,37 @@ export interface ServerProfile {
    * profile does not apply, kept verbatim for the operator to see.
    */
   importedArgs?: string[];
+  /**
+   * The Startup Commands file in the game directory: passed with -autoexec,
+   * and where Pyrodeck writes the profile's team settings. Unset:
+   * autoexec.dmfc. Two servers running from one game directory need two
+   * files (a launch sharing one with a running server is refused).
+   */
+  startupFile?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }
 
 const PROFILES_FILE = "profiles.json";
+
+const STARTUP_FILE_MAX = 64;
+
+/**
+ * A Startup Commands file name for a profile: a plain `.dmfc` file name in
+ * the game directory. Returns the name, or the reason it is refused.
+ */
+export function checkStartupFileName(raw: unknown): { name: string } | { error: string } {
+  const name = typeof raw === "string" ? raw.trim() : "";
+  if (!/^[A-Za-z0-9._-]+\.dmfc$/i.test(name) || name.length > STARTUP_FILE_MAX) {
+    return {
+      error: `The Startup Commands file must be a plain file name ending in .dmfc (letters, digits, . _ -; at most ${STARTUP_FILE_MAX} characters).`,
+    };
+  }
+  return { name };
+}
+
+/** profiles.json writes that Pyrodeck makes on its own (a launch's lastLaunchedAt), one at a time per file. */
+const launchMarks = new Map<string, Promise<void>>();
 
 export type GameFileType =
   | "server-config"
@@ -295,6 +321,8 @@ export class ServerProfileManager {
       schedule?: ProfileSchedule | null;
       /** Already sanitized; null or [] clears them. */
       importedArgs?: string[] | null;
+      /** Already checked (checkStartupFileName); null or "" goes back to autoexec.dmfc. */
+      startupFile?: string | null;
     }, // settings already validated; null clears one
   ): Promise<ServerProfile> {
     const profiles = await this.loadProfiles();
@@ -347,18 +375,39 @@ export class ServerProfileManager {
         profile.importedArgs = updates.importedArgs;
       }
     }
+    if (updates.startupFile !== undefined) {
+      if (!updates.startupFile) {
+        delete profile.startupFile;
+      } else {
+        profile.startupFile = updates.startupFile;
+      }
+    }
 
     await this.saveProfiles(profiles);
     return profile;
   }
 
-  /** Record that a profile was launched. */
+  /**
+   * Record that a profile was launched. Two servers can launch at the same
+   * moment (two playlist rotations), so these writes queue per file instead
+   * of one overwriting the other's.
+   */
   async markLaunched(id: string): Promise<void> {
-    const profiles = await this.loadProfiles();
-    const profile = profiles.find((p) => p.id === id);
-    if (!profile) return;
-    profile.lastLaunchedAt = new Date().toISOString();
-    await this.saveProfiles(profiles);
+    const file = path.resolve(this.profilesPath);
+    const previous = launchMarks.get(file) ?? Promise.resolve();
+    const mine = previous.then(async () => {
+      const profiles = await this.loadProfiles();
+      const profile = profiles.find((p) => p.id === id);
+      if (!profile) return;
+      profile.lastLaunchedAt = new Date().toISOString();
+      await this.saveProfiles(profiles);
+    });
+    const settled = mine.catch(() => {});
+    launchMarks.set(file, settled);
+    void settled.then(() => {
+      if (launchMarks.get(file) === settled) launchMarks.delete(file);
+    });
+    return mine;
   }
 
   /** Delete a profile (metadata only — does not delete the config file from gamePath). */

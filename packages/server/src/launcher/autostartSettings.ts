@@ -35,6 +35,19 @@ export function readAutostartEnv(env: Readonly<Record<string, string | undefined
   return raw === "" ? null : raw;
 }
 
+/** Several profiles to start with Pyrodeck, by name or id, comma-separated. */
+export const AUTOSTART_LIST_ENV = "PYRODECK_AUTOSTART_PROFILES";
+
+/**
+ * The profiles the environment names: PYRODECK_AUTOSTART_PROFILE first, then
+ * those of PYRODECK_AUTOSTART_PROFILES, each once. Empty when neither is set,
+ * which leaves autostart to the profiles ticked in the UI.
+ */
+export function readAutostartListEnv(env: Readonly<Record<string, string | undefined>>): string[] {
+  const names = [readAutostartEnv(env), ...(env[AUTOSTART_LIST_ENV] ?? "").split(",").map((s) => s.trim())];
+  return [...new Set(names.filter((n): n is string => !!n))];
+}
+
 export interface AutostartProfileRef {
   id: string;
   name: string;

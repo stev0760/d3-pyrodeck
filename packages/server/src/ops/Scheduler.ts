@@ -1,10 +1,13 @@
 import { activeInterval, nextScheduleAction, type ProfileSchedule, type ScheduleAction } from "./schedule.js";
 
 /**
- * Runs every profile's weekly schedule (schedule.ts) against the server.
+ * Runs every profile's weekly schedule (schedule.ts) against its server.
  *
- * - At a window's start, the profile's server is started if nothing is running.
- *   Another profile's running server is left alone and the start is skipped.
+ * - At a window's start, the profile's server is started if it is not
+ *   running. With one server for every profile (`getProcess` reports the one
+ *   process), another profile's running server is left alone and the start
+ *   is skipped; with a server per profile, a start that would share a port
+ *   with another running server is refused by the launch and skipped.
  * - At a window's end, the profile's server is stopped as soon as no human is
  *   on it, and after `stopWaitMinutes` at the latest. Players get one `say`
  *   when the wait begins.
@@ -25,15 +28,16 @@ export interface ScheduledProfile {
 export interface SchedulerDeps {
   now(): Date;
   listProfiles(): Promise<ScheduledProfile[]>;
-  /** Whether a server process is up, and from which profile. */
-  getProcess(): { running: boolean; profileId: string | null };
-  /** A playlist restart is in progress: the server is down on purpose for a moment. */
-  isBusy(): boolean;
+  /** Whether `profileId`'s server process is up, and from which profile. */
+  getProcess(profileId: string): { running: boolean; profileId: string | null };
+  /** A playlist restart of `profileId`'s server is in progress: it is down on purpose for a moment. */
+  isBusy(profileId: string): boolean;
   start(profileId: string): Promise<{ ok: true } | { ok: false; error: string }>;
-  stop(): Promise<void>;
-  /** Human players on the running server, or null when the console cannot be asked. */
-  countHumans(): Promise<number | null>;
-  say(text: string): Promise<void>;
+  stop(profileId: string): Promise<void>;
+  /** Human players on `profileId`'s running server, or null when its console cannot be asked. */
+  countHumans(profileId: string): Promise<number | null>;
+  /** Say `text` in `profileId`'s game. */
+  say(text: string, profileId: string): Promise<void>;
   /** A scheduled action did not happen; `reason` says why. */
   skipped(profileId: string, action: "start" | "stop", reason: string): void;
   log: { info(msg: string): void; warn(msg: string): void };
@@ -128,7 +132,7 @@ export class Scheduler {
       const ended = this.handledRun.get(p.id);
       if (ended && t >= ended.end) {
         this.handledRun.delete(p.id);
-        const proc = this.deps.getProcess();
+        const proc = this.deps.getProcess(p.id);
         if (proc.running && proc.profileId === p.id) {
           this.pendingStops.set(p.id, { deadline: ended.end + s.stopWaitMinutes * 60_000, announced: false });
         }
@@ -140,14 +144,14 @@ export class Scheduler {
   }
 
   private async startFor(p: ScheduledProfile): Promise<void> {
-    const proc = this.deps.getProcess();
+    const proc = this.deps.getProcess(p.id);
     if (proc.running) {
       if (proc.profileId !== p.id) {
         this.skip(p, "start", "another profile's server is running");
       }
       return;
     }
-    if (this.deps.isBusy()) {
+    if (this.deps.isBusy(p.id)) {
       this.skip(p, "start", "a playlist restart is in progress");
       return;
     }
@@ -157,25 +161,25 @@ export class Scheduler {
   }
 
   private async continueStop(p: ScheduledProfile, pending: PendingStop, t: number): Promise<void> {
-    const proc = this.deps.getProcess();
+    const proc = this.deps.getProcess(p.id);
     if (!proc.running || proc.profileId !== p.id) {
       this.pendingStops.delete(p.id);
       return;
     }
-    const humans = await this.deps.countHumans();
+    const humans = await this.deps.countHumans(p.id);
     if (humans === 0 || t >= pending.deadline) {
       this.pendingStops.delete(p.id);
       this.deps.log.info(
         `[Schedule] Stopping "${p.name}" (window end${humans === 0 ? ", no players" : ", wait for players over"})`,
       );
-      await this.deps.stop();
+      await this.deps.stop(p.id);
       return;
     }
     if (!pending.announced && humans !== null) {
       pending.announced = true;
       const minutes = Math.max(1, Math.ceil((pending.deadline - t) / 60_000));
       await this.deps
-        .say(`Scheduled stop: this server closes within ${minutes} minute${minutes === 1 ? "" : "s"}.`)
+        .say(`Scheduled stop: this server closes within ${minutes} minute${minutes === 1 ? "" : "s"}.`, p.id)
         .catch(() => {});
     }
   }

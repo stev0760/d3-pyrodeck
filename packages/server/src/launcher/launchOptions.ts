@@ -1,3 +1,5 @@
+import path from "node:path";
+
 /**
  * Launch options: engine command-line flags a profile adds after
  * `-dedicated <cfg>`. Every flag here is read by the open-source engine
@@ -25,10 +27,20 @@
  *   -gspyfile <file>  Descent3/gamespy.cpp:113-128: the tracker list, looked up
  *                     under the game directory (cf_LocatePath), default
  *                     gamespy.cfg.
+ *   -tempdir <dir>    Descent3/init.cpp:1970-2044 (SetupTempDirectory): the
+ *                     server's temp directory, created if missing, default
+ *                     <system temp>/Descent3/cache. The server locks it with a
+ *                     `.lock` file holding its PID (ddio/file.cpp,
+ *                     ddio_CreateLockFile) and exits "Unable to create lock
+ *                     file" when a live process holds it, so two servers need
+ *                     two directories.
  *
  * The engine keeps at most 99 characters of an argument (MAX_CHARS_PER_ARG in
  * Descent3/args.h); every value accepted here is shorter.
  */
+
+/** The longest argument the engine keeps whole (MAX_CHARS_PER_ARG - 1, Descent3/args.h). */
+export const MAX_ENGINE_ARG_BYTES = 99;
 
 /** Game UDP port when -useport is not given (D3_DEFAULT_PORT, Descent3/descent.h). */
 export const D3_DEFAULT_GAME_PORT = 2092;
@@ -54,6 +66,8 @@ export interface LaunchOptions {
   gameSpyPort?: number;
   /** -gspyfile: tracker list file name in the game directory. */
   gameSpyFile?: string;
+  /** -tempdir: the server's temp directory (absolute). Unset: Pyrodeck gives each server its own. */
+  tempDir?: string;
 }
 
 export interface LaunchOptionsCheck {
@@ -146,6 +160,19 @@ export function validateLaunchOptions(raw: unknown): LaunchOptionsCheck {
     }
   }
 
+  if (present(r.tempDir)) {
+    const dir = typeof r.tempDir === "string" ? r.tempDir.trim() : "";
+    if (!path.isAbsolute(dir) || [...dir].some((c) => c.charCodeAt(0) < 0x20)) {
+      errors.push("The temp directory must be an absolute path.");
+    } else if (Buffer.byteLength(dir) > MAX_ENGINE_ARG_BYTES) {
+      errors.push(
+        `The temp directory must be at most ${MAX_ENGINE_ARG_BYTES} characters: the engine cuts a longer command-line argument.`,
+      );
+    } else {
+      out.tempDir = dir;
+    }
+  }
+
   const ports = effectivePorts(out);
   if ((out.gamePort !== undefined || out.gameSpyPort !== undefined) && ports.game === ports.gameSpy) {
     warnings.push(
@@ -172,7 +199,17 @@ export function launchOptionArgs(options: LaunchOptions | null | undefined): str
   if (options.noMultiBmp) args.push("-nomultibmp");
   if (options.gameSpyPort !== undefined) args.push("-gamespyport", String(options.gameSpyPort));
   if (options.gameSpyFile) args.push("-gspyfile", options.gameSpyFile);
+  if (options.tempDir) args.push("-tempdir", options.tempDir);
   return args;
+}
+
+/** The options a launch runs with: Pyrodeck's defaults for the server, then the profile's own, which win. */
+export function mergeLaunchOptions(
+  defaults: LaunchOptions | null | undefined,
+  own: LaunchOptions | null | undefined,
+): LaunchOptions | null {
+  const merged = { ...(defaults ?? {}), ...(own ?? {}) };
+  return Object.keys(merged).length > 0 ? merged : null;
 }
 
 /**
@@ -263,8 +300,9 @@ export interface ProfilePorts {
  * Ports this profile shares with other profiles (or with another TCP service
  * on this machine, such as the mission host). The game and GameSpy sockets
  * are UDP and the console is TCP, so a UDP port and a TCP port with the same
- * number do not collide. Pyrodeck runs one server at a time, so a shared port
- * is a warning: the two profiles cannot run at once.
+ * number do not collide. A shared port is a warning when the profile is
+ * saved: the two profiles cannot run at once, and the second launch is
+ * refused (servers/launchConflicts.ts).
  */
 export function findPortConflicts(
   self: ProfilePorts,

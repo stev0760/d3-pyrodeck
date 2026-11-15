@@ -28,6 +28,8 @@ export interface BanServiceDeps extends ActionDeps {
   console: ConsoleProvider;
   /** The open console, whatever its profile (for `$rehash` after an edit). */
   openConsole: () => ConsoleLink | null;
+  /** Every open console, when Pyrodeck runs several servers: each gets the `$rehash`. */
+  openConsoles?: () => ConsoleLink[];
   settings: () => BanSettings;
   /** A player's address, looked up if needed (rationed `$playerinfo`). */
   lookupAddress: (profileId: string, name: string, slot: number) => Promise<string | undefined>;
@@ -181,11 +183,16 @@ export class BanService {
     return { ban: await this.deps.store.addNameBan(check.pattern, reason.trim()) };
   }
 
-  /** `$rehash` on the open console. Returns whether one was open. */
+  /**
+   * `$rehash` on every open console (each server reloads hosts.deny), or on
+   * the one open console without `openConsoles`. Returns whether one was open.
+   */
   async rehash(): Promise<boolean> {
-    const link = this.deps.openConsole();
-    if (!link) return false;
-    await link.send("$rehash").catch(() => {});
+    const links = this.deps.openConsoles
+      ? this.deps.openConsoles()
+      : [this.deps.openConsole()].filter((l): l is ConsoleLink => l !== null);
+    if (links.length === 0) return false;
+    await Promise.all(links.map((link) => link.send("$rehash").catch(() => {})));
     return true;
   }
 

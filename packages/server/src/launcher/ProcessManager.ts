@@ -4,7 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { NO_PROFILE_ID, serverEvents, type ServerEventMap, type ServerEvents } from "../events/ServerEvents.js";
-import { consoleHostFor, launchOptionArgs, localConsoleUseipNote, type LaunchOptions } from "./launchOptions.js";
+import {
+  MAX_ENGINE_ARG_BYTES,
+  consoleHostFor,
+  launchOptionArgs,
+  localConsoleUseipNote,
+  mergeLaunchOptions,
+  type LaunchOptions,
+} from "./launchOptions.js";
 import { syncAutoexecBlock } from "./autoexecBlock.js";
 import { buildChildEnv } from "./childEnv.js";
 
@@ -94,11 +101,19 @@ export interface LaunchConfig {
   /** The profile's launch options (-useip, -useport, -framecap, ...), placed right after the config file. */
   launchOptions?: LaunchOptions | null;
   /**
+   * Options Pyrodeck adds for this server where the profile sets none: its
+   * own -tempdir, and a free -gamespyport when another server holds the
+   * default (servers/launchConflicts.ts). The profile's options win.
+   */
+  defaultOptions?: LaunchOptions | null;
+  /**
    * Lines for Pyrodeck's block in the Startup Commands file (autoexecBlock.ts),
    * written before the server starts; [] removes the block. Undefined leaves
    * the file alone.
    */
   autoexecBlock?: string[];
+  /** The Startup Commands file in the game directory. Default AUTOEXEC_FILE. */
+  startupFile?: string;
   /** Profile this launch originates from, surfaced in status so the UI can mark the live profile. */
   profileId?: string;
   /** Optional path to write server log file. If set, stdout/stderr are written here. */
@@ -116,9 +131,10 @@ export interface LaunchConfig {
 /** DMFC startup script: the Config tab's "Startup Commands", kept in the game directory. */
 export const AUTOEXEC_FILE = "autoexec.dmfc";
 
-// The engine copies each command-line argument into a 100-byte buffer
-// (MAX_CHARS_PER_ARG in Descent3/args.h); a longer one reaches DMFC mangled.
-const MAX_ENGINE_ARG_BYTES = 99;
+/** The Startup Commands file a launch reads and writes Pyrodeck's block in. */
+export function startupFilePath(config: Pick<LaunchConfig, "gamePath" | "startupFile">): string {
+  return path.resolve(config.gamePath, config.startupFile || AUTOEXEC_FILE);
+}
 
 export interface LaunchArgs {
   args: string[];
@@ -143,11 +159,11 @@ export async function buildLaunchArgs(config: LaunchConfig): Promise<LaunchArgs>
   const args = [
     "-dedicated",
     `./${config.configFile}`,
-    ...launchOptionArgs(config.launchOptions),
+    ...launchOptionArgs(mergeLaunchOptions(config.defaultOptions, config.launchOptions)),
     ...(config.additionalArgs ?? []),
   ];
 
-  const autoexecPath = path.resolve(config.gamePath, AUTOEXEC_FILE);
+  const autoexecPath = startupFilePath(config);
   try {
     if (!(await fs.promises.stat(autoexecPath)).isFile()) return { args, warning: null };
   } catch {
@@ -383,10 +399,10 @@ export class ProcessManager extends EventEmitter {
     // which then has to be passed with -autoexec.
     if (config.autoexecBlock !== undefined) {
       try {
-        await syncAutoexecBlock(path.resolve(config.gamePath, AUTOEXEC_FILE), config.autoexecBlock);
+        await syncAutoexecBlock(startupFilePath(config), config.autoexecBlock);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.emit("stderr", `Team and Hoard settings not written to ${AUTOEXEC_FILE}: ${message}\n`);
+        this.emit("stderr", `Team and Hoard settings not written to ${config.startupFile || AUTOEXEC_FILE}: ${message}\n`);
       }
     }
 

@@ -81,6 +81,23 @@ export interface ServerEventMap {
 
 export type ServerEventName = keyof ServerEventMap;
 
+/** Every event name, for code that relays all of them (scopedEvents). */
+export const SERVER_EVENT_NAMES: readonly ServerEventName[] = [
+  "server.started",
+  "server.stopped",
+  "server.crashed",
+  "server.hung",
+  "level.started",
+  "player.joined",
+  "player.left",
+  "player.kicked",
+  "player.banned",
+  "player.chat",
+  "server.adopted",
+  "schedule.skipped",
+  "player.identified",
+];
+
 export class ServerEvents extends EventEmitter {
   emitEvent<K extends ServerEventName>(name: K, payload: ServerEventMap[K]): boolean {
     return this.emit(name, payload);
@@ -95,6 +112,53 @@ export class ServerEvents extends EventEmitter {
   }
 }
 
+/**
+ * One server's view of a shared bus: its listeners hear only the events whose
+ * `profileId` is `scopeId`, and what it emits goes to the shared bus, where
+ * every other listener (alerts, history, bans) hears it too and it comes back
+ * to this view's listeners from there. The parts of a server instance that
+ * watch "the server" (supervisor, autostart, quit watch, profile automation)
+ * take one of these, so a join on another server is not a join on theirs.
+ */
+export class ScopedServerEvents extends ServerEvents {
+  private readonly relays: Array<() => void> = [];
+
+  constructor(
+    readonly parent: ServerEvents,
+    readonly scopeId: string,
+  ) {
+    super();
+    this.setMaxListeners(50);
+    for (const name of SERVER_EVENT_NAMES) {
+      const relay = (payload: { profileId: string }) => {
+        if (payload.profileId === scopeId) super.emit(name, payload);
+      };
+      parent.on(name, relay);
+      this.relays.push(() => parent.off(name, relay));
+    }
+  }
+
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    // Server events go out through the shared bus, so every listener hears
+    // them in the order they were added there; anything else stays local.
+    if ((SERVER_EVENT_NAMES as readonly (string | symbol)[]).includes(eventName)) {
+      return this.parent.emit(eventName, ...args);
+    }
+    return super.emit(eventName, ...args);
+  }
+
+  /** Stop relaying from the shared bus. */
+  dispose(): void {
+    for (const off of this.relays.splice(0)) off();
+  }
+}
+
+/** A view of `bus` for the server whose events carry `profileId` `scopeId`. */
+export function scopedEvents(bus: ServerEvents, scopeId: string): ScopedServerEvents {
+  return new ScopedServerEvents(bus, scopeId);
+}
+
 /** The one instance; modules import this rather than passing it around. */
 export const serverEvents = new ServerEvents();
-serverEvents.setMaxListeners(50);
+// A relay per event name for each server (scopedEvents), on top of the global consumers.
+serverEvents.setMaxListeners(100);

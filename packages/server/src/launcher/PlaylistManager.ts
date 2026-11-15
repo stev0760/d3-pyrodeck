@@ -218,9 +218,20 @@ export class PlaylistManager extends EventEmitter {
   // Stdout line buffering
   private stdoutLineBuffer = "";
 
-  constructor(configDir: string) {
+  /** Where this server's playlist state is saved. */
+  private readonly statePath: string;
+
+  /**
+   * One server's playlist. The playlists themselves (playlists.json in
+   * `configDir`) are shared by every server; the active one, its position and
+   * a pause are this server's, saved at `options.statePath` (default
+   * `<configDir>/playlist-state.json`, the one file a single-server Pyrodeck
+   * kept).
+   */
+  constructor(configDir: string, options: { statePath?: string } = {}) {
     super();
     this.configDir = configDir;
+    this.statePath = options.statePath ?? path.join(configDir, STATE_FILE);
   }
 
   // ---------------------------------------------------------------------------
@@ -313,6 +324,16 @@ export class PlaylistManager extends EventEmitter {
     const filtered = playlists.filter((p) => p.id !== id);
     if (filtered.length === playlists.length) throw new Error(`Playlist not found: ${id}`);
     await this.savePlaylists(filtered);
+  }
+
+  /** Another server's manager saved a playlist: refresh the copy when it is this one's active playlist. */
+  playlistSaved(playlist: Playlist): void {
+    if (this.activePlaylist?.id === playlist.id) this.activePlaylist = playlist;
+  }
+
+  /** Another server's manager deleted a playlist: deactivate it here when it is the active one. */
+  playlistDeleted(id: string): void {
+    if (this.activePlaylist?.id === id) this.deactivate();
   }
 
   // ---------------------------------------------------------------------------
@@ -1294,11 +1315,8 @@ export class PlaylistManager extends EventEmitter {
             ? { reason: this.pausedReason, at: this.pausedAt ?? Date.now() }
             : null,
       };
-      await fs.mkdir(this.configDir, { recursive: true });
-      await fs.writeFile(
-        path.join(this.configDir, STATE_FILE),
-        JSON.stringify(state, null, 2),
-      );
+      await fs.mkdir(path.dirname(this.statePath), { recursive: true });
+      await fs.writeFile(this.statePath, JSON.stringify(state, null, 2));
     } catch {
       // State persistence is best-effort
     }
@@ -1306,7 +1324,7 @@ export class PlaylistManager extends EventEmitter {
 
   async restoreState(): Promise<void> {
     try {
-      const raw = await fs.readFile(path.join(this.configDir, STATE_FILE), "utf-8");
+      const raw = await fs.readFile(this.statePath, "utf-8");
       const state = JSON.parse(raw) as PlaylistState;
       if (state.activePlaylistId) {
         try {
