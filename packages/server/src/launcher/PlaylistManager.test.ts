@@ -386,6 +386,51 @@ describe("PlaylistManager — pause after a failed restart", () => {
   });
 });
 
+describe("PlaylistManager — download results", () => {
+  const report = (playlistId: string) => ({
+    playlistId,
+    at: 1,
+    summary: "2 hosted",
+    results: [],
+  });
+
+  it("keeps the active playlist's report in the status and announces it", async () => {
+    const mgr = await makeManager();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    const other = await mgr.create("q", "sequential", sampleEntries);
+    let statusEvents = 0;
+    mgr.on("statusChanged", () => statusEvents++);
+
+    mgr.setDownloads(report(pl.id)); // nothing active
+    expect(mgr.getStatus().downloads).toBeNull();
+    mgr.setDownloads(null); // nothing to clear
+    expect(statusEvents).toBe(0);
+
+    await mgr.activate(pl.id);
+    expect(mgr.getActivePlaylist()?.id).toBe(pl.id);
+    mgr.setDownloads(report(pl.id));
+    expect(mgr.getStatus().downloads).toMatchObject({ playlistId: pl.id, summary: "2 hosted" });
+    expect(statusEvents).toBe(1);
+
+    mgr.setDownloads(report(other.id)); // a late report for another playlist
+    expect(mgr.getStatus().downloads?.playlistId).toBe(pl.id);
+    expect(statusEvents).toBe(1);
+  });
+
+  it("forgets the report on activation and deactivation", async () => {
+    const mgr = await makeManager();
+    const pl = await mgr.create("p", "sequential", sampleEntries);
+    await mgr.activate(pl.id);
+    mgr.setDownloads(report(pl.id));
+    await mgr.activate(pl.id);
+    expect(mgr.getStatus().downloads).toBeNull();
+    mgr.setDownloads(report(pl.id));
+    mgr.deactivate();
+    expect(mgr.getStatus().downloads).toBeNull();
+    expect(mgr.getActivePlaylist()).toBeNull();
+  });
+});
+
 describe("PlaylistManager — voting", () => {
   let mgr: PlaylistManager;
 

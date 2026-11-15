@@ -5,11 +5,14 @@ import {
   fetchMissionHost,
   type MissionHostState,
 } from "@/lib/missionHost";
+import type { PlaylistDownloads as Downloads } from "@/lib/playlistDownloads";
+import { PlaylistDownloads } from "./PlaylistDownloads.tsx";
 
 /**
  * Global mission host settings (Launch panel): a second listener that serves
  * the server's missions to players who join without them. Per-mission links
- * are set from the Config tab's mission panel.
+ * are set from the Config tab's mission panel; turning the host on points the
+ * active playlist's missions at it.
  */
 export function MissionHostSettings() {
   const [state, setState] = useState<MissionHostState | null>(null);
@@ -20,6 +23,7 @@ export function MissionHostSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [downloads, setDownloads] = useState<Downloads | null>(null);
 
   const load = (s: MissionHostState) => {
     setState(s);
@@ -36,6 +40,7 @@ export function MissionHostSettings() {
     setSaving(true);
     setError(null);
     setWarnings([]);
+    setDownloads(null);
     try {
       const res = await fetch("/api/mission-host", {
         method: "PUT",
@@ -50,6 +55,7 @@ export function MissionHostSettings() {
       }
       load({ settings: data.settings, status: data.status });
       setWarnings(data.warnings ?? []);
+      setDownloads(data.downloads ?? null);
     } catch {
       setError("Failed to save");
     } finally {
@@ -118,7 +124,9 @@ export function MissionHostSettings() {
             over plain http (the game has no https). Forward TCP port {port || "…"} on your router to this
             machine and give the address players reach it at. Clients built from the original 1999 code accept
             no port in a link: to reach them too, forward public port 80 here and leave the port out of the URL.
-            Retail missions are never served. Set a mission's link to this host in Config → Mission.
+            Missions that ship with the game are never served: every player has them. Turning the host on points
+            the active playlist's missions at it, and so does activating a playlist; set any other mission's link in
+            Config → Mission.
           </p>
           {error && <p className="text-[11px] text-destructive break-words">{error}</p>}
           {warnings.map((w) => (
@@ -126,6 +134,7 @@ export function MissionHostSettings() {
               {w}
             </p>
           ))}
+          {downloads && <PlaylistDownloads downloads={downloads} />}
           {status?.missionsDir && (
             <p className="text-[10px] text-muted-foreground font-mono break-all">Serves: {status.missionsDir}</p>
           )}

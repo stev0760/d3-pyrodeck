@@ -19,6 +19,8 @@ export interface MissionDetails {
   urls?: string[];
   /** Pyrodeck rewrote the links and holds the original .mn3 (restorable). */
   urlBackup?: boolean;
+  /** Why the mission takes no new link: it ships with the game (retail missions included). */
+  linkError?: string;
   /** While the mission host is on: the link it serves this mission at. */
   hostUrl?: string;
   /** While the mission host is on: why it cannot serve this mission. */

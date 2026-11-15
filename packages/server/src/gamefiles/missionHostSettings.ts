@@ -1,5 +1,11 @@
 import path from "node:path";
-import { MISSION_URL_MAX, RETAIL_MISSIONS, checkMissionFilename, validateMissionUrl } from "./Mn3UrlRewriter.js";
+import {
+  MISSION_URL_MAX,
+  RETAIL_MISSIONS,
+  checkLinkableMission,
+  isStockMission,
+  validateMissionUrl,
+} from "./Mn3UrlRewriter.js";
 
 /**
  * Mission host settings, the hosted-link builder, and the file allowlist.
@@ -131,11 +137,11 @@ export function sanitizeStoredMissionHost(raw: unknown): MissionHostSettings {
 
 /**
  * The link the host serves `file` at: `<base>/missions/<file>`, the name
- * percent-encoded. Refused for retail missions, non-.mn3 names, and links too
- * long for the client (MISSION_URL_MAX).
+ * percent-encoded. Refused for retail and stock missions, non-.mn3 names, and
+ * links too long for the client (MISSION_URL_MAX).
  */
 export function buildHostedMissionUrl(publicBaseUrl: string, file: string): { url: string } | { error: string } {
-  const nameError = checkMissionFilename(file);
+  const nameError = checkLinkableMission(file);
   if (nameError) return { error: nameError };
   const url = `${publicBaseUrl}/missions/${encodeURIComponent(file)}`;
   if (url.length > MISSION_URL_MAX) {
@@ -150,14 +156,14 @@ export function buildHostedMissionUrl(publicBaseUrl: string, file: string): { ur
 
 /**
  * Whether the listener may serve `name` from a missions directory listing
- * `entries`: a plain basename ending in .mn3, not retail, listed exactly
- * (case included). Pure, so the allowlist is testable without a server.
+ * `entries`: a plain basename ending in .mn3, not retail or stock, listed
+ * exactly (case included). Pure, so the allowlist is testable without a server.
  */
 export function isServableMission(name: string, entries: readonly string[]): boolean {
   if (!name || name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
   if (name !== path.basename(name)) return false;
   if (!/\.mn3$/i.test(name)) return false;
-  if (RETAIL_MISSIONS.has(name.toLowerCase())) return false;
+  if (RETAIL_MISSIONS.has(name.toLowerCase()) || isStockMission(name)) return false;
   return entries.includes(name);
 }

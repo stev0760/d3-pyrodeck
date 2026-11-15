@@ -30,7 +30,10 @@ const URL_MAX = 86;
  */
 export function MissionUrlEditor({ profileId, mission, onUpdated, host }: MissionUrlEditorProps) {
   const urls = mission.urls ?? [];
-  const hostOn = !!host?.settings.enabled;
+  // A mission that ships with the game takes no link (every player has it); a backup from before can still be
+  // restored.
+  const fixed = mission.linkError ?? null;
+  const hostOn = !!host?.settings.enabled && !fixed;
   const hosted = !!mission.hostUrl && urls.includes(mission.hostUrl);
   const [test, setTest] = useState<MissionHostTestResult | null>(null);
   const [testing, setTesting] = useState(false);
@@ -166,17 +169,19 @@ export function MissionUrlEditor({ profileId, mission, onUpdated, host }: Missio
         </span>
         {!editing && (
           <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setDraft(urls[0] ?? "");
-                setEditing(true);
-                setNotice(null);
-              }}
-              disabled={busy}
-              className="text-[10px] text-primary hover:underline disabled:opacity-50"
-            >
-              {urls.length > 0 ? "Change" : "Set link"}
-            </button>
+            {!fixed && (
+              <button
+                onClick={() => {
+                  setDraft(urls[0] ?? "");
+                  setEditing(true);
+                  setNotice(null);
+                }}
+                disabled={busy}
+                className="text-[10px] text-primary hover:underline disabled:opacity-50"
+              >
+                {urls.length > 0 ? "Change" : "Set link"}
+              </button>
+            )}
             {mission.urlBackup && (
               <button
                 onClick={restore}
@@ -190,7 +195,10 @@ export function MissionUrlEditor({ profileId, mission, onUpdated, host }: Missio
         )}
       </div>
 
+      {!editing && fixed && <p className="text-[10px] text-muted-foreground">No link needed: {fixed}</p>}
+
       {!editing &&
+        (!fixed || mission.urlBackup) &&
         (urls.length > 0 ? (
           <ul className="space-y-0.5">
             {urls.map((u) => (
@@ -200,9 +208,11 @@ export function MissionUrlEditor({ profileId, mission, onUpdated, host }: Missio
             ))}
           </ul>
         ) : (
-          <p className="text-[10px] text-muted-foreground italic">
-            None. Players who lack this mission cannot download it from the server.
-          </p>
+          !fixed && (
+            <p className="text-[10px] text-muted-foreground italic">
+              None. Players who lack this mission cannot download it from the server.
+            </p>
+          )
         ))}
 
       {!editing && hostOn && (
@@ -262,7 +272,7 @@ export function MissionUrlEditor({ profileId, mission, onUpdated, host }: Missio
         </div>
       )}
 
-      {!editing && !hostOn && host && (
+      {!editing && !hostOn && !fixed && host && (
         <p className="text-[10px] text-muted-foreground">
           Not hosted by Pyrodeck. To serve missions from this machine, turn on Mission Downloads in the Launch panel.
         </p>

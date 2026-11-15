@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { useServerConnection } from "./useServerConnection.ts";
+import type { PlaylistDownloads } from "@/lib/playlistDownloads";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend PlaylistManager)
@@ -60,6 +61,8 @@ export interface PlaylistStatus {
   /** While holding: the mission the restart goes to, and when (epoch ms; null until the loop-back level is up). */
   holdEntry?: PlaylistEntry | null;
   holdEndsAt?: number | null;
+  /** The last time the active playlist's missions were pointed at the mission host (null while it is off). */
+  downloads?: PlaylistDownloads | null;
   rotationCheck?: RotationCheck;
 }
 
@@ -188,12 +191,14 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
         return null;
       }
       setPlaylists((prev) => prev.map((p) => (p.id === id ? data : p)));
+      // Saving the active playlist with other missions hosts them: the status carries the result.
+      void fetchStatus();
       return data;
     } catch {
       setError("Network error");
       return null;
     }
-  }, []);
+  }, [fetchStatus]);
 
   const deletePlaylist = useCallback(async (id: string): Promise<boolean> => {
     setError(null);

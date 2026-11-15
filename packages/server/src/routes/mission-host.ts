@@ -12,6 +12,16 @@ import {
   isServableMission,
   validateMissionHostSettings,
 } from "../gamefiles/missionHostSettings.js";
+import {
+  hostDirError,
+  hostPlaylistEntries,
+  playlistHostingTarget,
+  summarizeHosting,
+  type PlaylistHostingReport,
+} from "../gamefiles/missionHosting.js";
+import { playlistManager } from "../launcher/playlistInstance.js";
+import type { Playlist } from "../launcher/PlaylistManager.js";
+import { resolveRotationProfile } from "./rotation-profile.js";
 
 /** The directory the mission host serves: the global game path's missions/. */
 export function missionHostMissionsDir(): string | null {
@@ -29,14 +39,58 @@ export const missionHost = new MissionHost({ getMissionsDir: missionHostMissions
 export function hostedLinkFor(file: string, missionsDir: string): { hostUrl?: string; hostError?: string } {
   const settings = pyrodeckConfig.get().missionHost;
   if (!settings.enabled || !settings.publicBaseUrl) return {};
-  const hostDir = missionHostMissionsDir();
-  if (!hostDir || path.resolve(hostDir) !== path.resolve(missionsDir)) {
-    return {
-      hostError: `The mission host serves ${hostDir ?? "nothing (no game path set)"}, not this profile's missions directory.`,
-    };
-  }
+  const dirError = hostDirError(missionHostMissionsDir(), missionsDir);
+  if (dirError) return { hostError: dirError };
   const built = buildHostedMissionUrl(settings.publicBaseUrl, file);
   return "url" in built ? { hostUrl: built.url } : { hostError: built.error };
+}
+
+/**
+ * Point the download link of every mission in `playlist` at the mission host,
+ * when the host is on and serves the missions directory of the playlist's
+ * server (the profile `profileId`, else the most recently launched, as for
+ * rotation). Stock missions, missing files, links already hosted and links
+ * the operator set by hand are left alone; a mission that cannot be rewritten
+ * is an "error" result. Never throws. The report is logged and kept for the
+ * playlist status; null (and nothing kept) while the host is off.
+ * `formerBaseUrls`: public URLs the host had before, whose links are replaced.
+ */
+export async function hostPlaylistDownloads(
+  playlist: Playlist,
+  profileId?: string,
+  options: { formerBaseUrls?: string[] } = {},
+): Promise<PlaylistHostingReport | null> {
+  try {
+    const profile = await resolveRotationProfile(profileId);
+    const missionsDir = profile ? path.join(profile.gamePath, "missions") : null;
+    const target = playlistHostingTarget(pyrodeckConfig.get().missionHost, missionHostMissionsDir(), missionsDir);
+    if (!target) return null;
+    let report: PlaylistHostingReport;
+    if ("notice" in target) {
+      console.warn(`[Playlist] Downloads for "${playlist.name}" not hosted: ${target.notice}`);
+      report = { playlistId: playlist.id, at: Date.now(), summary: "", notice: target.notice, results: [] };
+    } else {
+      const results = await hostPlaylistEntries(target.missionsDir, playlist.entries, target.publicBaseUrl, {
+        keepCustom: true,
+        formerBaseUrls: options.formerBaseUrls,
+      });
+      report = { playlistId: playlist.id, at: Date.now(), summary: summarizeHosting(results), results };
+      console.log(`[Playlist] Downloads for "${playlist.name}": ${report.summary}`);
+      const logged = new Set<string>();
+      for (const r of results) {
+        if (logged.has(r.file)) continue;
+        logged.add(r.file);
+        if (r.outcome === "hosted") console.log(`[Playlist]   ${r.file}: hosted at ${r.url}`);
+        else if (r.outcome === "error") console.warn(`[Playlist]   ${r.file}: failed: ${r.message}`);
+        else if (r.outcome === "custom" || r.outcome === "missing") console.log(`[Playlist]   ${r.file}: ${r.message}`);
+      }
+    }
+    playlistManager.setDownloads(report);
+    return report;
+  } catch (err) {
+    console.warn(`[Playlist] Downloads for "${playlist.name}" not hosted: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -133,9 +187,24 @@ export async function missionHostRoutes(app: FastifyInstance): Promise<void> {
     if (check.settings.enabled && !missionHostMissionsDir()) {
       warnings.push("No game path is set, so there is nothing to serve yet.");
     }
+    const before = pyrodeckConfig.get().missionHost;
     await pyrodeckConfig.save({ missionHost: check.settings });
     const status = await missionHost.apply(check.settings);
-    return { settings: check.settings, status, warnings };
+
+    // Turned on, or moved to another public URL, while a playlist is active: point its missions at the host.
+    // Links the host set under its former URL count as its own and are replaced.
+    const { enabled, publicBaseUrl } = check.settings;
+    const active = playlistManager.getActivePlaylist();
+    let downloads: PlaylistHostingReport | null = null;
+    if (!enabled) {
+      playlistManager.setDownloads(null);
+    } else if (active && publicBaseUrl && (!before.enabled || before.publicBaseUrl !== publicBaseUrl)) {
+      const former = before.publicBaseUrl;
+      downloads = await hostPlaylistDownloads(active, undefined, {
+        formerBaseUrls: former && former !== publicBaseUrl ? [former] : [],
+      });
+    }
+    return { settings: check.settings, status, warnings, downloads };
   });
 
   /**

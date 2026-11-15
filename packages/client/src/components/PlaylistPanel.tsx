@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import type { Playlist, PlaylistStatus } from "../hooks/usePlaylist.ts";
+import { PlaylistDownloads } from "./PlaylistDownloads.tsx";
 
 interface PlaylistPanelProps {
   playlists: Playlist[];
@@ -189,6 +190,8 @@ export function PlaylistPanel({ playlists, status, onActivate, onDeactivate, onR
               ) : null;
             })()
           )}
+
+          {status.downloads && <PlaylistDownloads downloads={status.downloads} compact />}
 
           {/* Vote options */}
           {status.status === "voting" && status.voteOptions.length > 0 && (

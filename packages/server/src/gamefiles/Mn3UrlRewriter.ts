@@ -38,6 +38,8 @@ import path from "node:path";
  *   joining.
  * - The fork never offers links for the retail missions.
  *
+ * Pyrodeck sets no link for any mission that ships with the game (STOCK_MISSIONS): every player has those.
+ *
  * Every rewrite goes through a temp file and a rename, after verifying the new
  * archive reads back. The first rewrite keeps the untouched file as
  * "<name>.mn3.pyrodeck-orig" (never overwritten), which restore puts back.
@@ -64,6 +66,41 @@ const TEMP_SUFFIX = ".pyrodeck-tmp";
 
 /** Retail missions: the fork never advertises download links for these. */
 export const RETAIL_MISSIONS: ReadonlySet<string> = new Set(["d3.mn3", "d3_2.mn3", "training.mn3", "merc.mn3"]);
+
+/**
+ * Every mission that ships with the retail game, lower-cased. Every player already has these, so Pyrodeck never
+ * hosts them or sets a link for them. RETAIL_MISSIONS, a subset, stays the engine's own list.
+ */
+export const STOCK_MISSIONS: ReadonlySet<string> = new Set([
+  "bedlam.mn3",
+  "bluedev.mn3",
+  "bside.mn3",
+  "bsidectf.mn3",
+  "chaos.mn3",
+  "d3.mn3",
+  "d3_2.mn3",
+  "dementia.mn3",
+  "frenzy.mn3",
+  "fury.mn3",
+  "havoc.mn3",
+  "kata12.mn3",
+  "mayhem.mn3",
+  "merc.mn3",
+  "poe.mn3",
+  "stonecutter.mn3",
+  "training.mn3",
+  "tri-pod.mn3",
+]);
+
+/** Whether `file` (a mission file name, any case) ships with the retail game. */
+export function isStockMission(file: string): boolean {
+  return STOCK_MISSIONS.has(path.basename(file).toLowerCase());
+}
+
+/** Why a stock mission gets no download link. */
+export function stockMissionMessage(file: string): string {
+  return `${path.basename(file)} ships with Descent 3; every player already has it.`;
+}
 
 interface HogEntry {
   name: string;
@@ -277,6 +314,14 @@ export function checkMissionFilename(file: string): string | null {
   return null;
 }
 
+/**
+ * Whether a mission may be given a new download link: checkMissionFilename, and not a stock mission. Restoring the
+ * original takes checkMissionFilename alone, so a stock mission rewritten before stays restorable.
+ */
+export function checkLinkableMission(file: string): string | null {
+  return checkMissionFilename(file) ?? (isStockMission(file) ? stockMissionMessage(file) : null);
+}
+
 // ---------------------------------------------------------------------------
 // Archive rewrite / restore
 // ---------------------------------------------------------------------------
@@ -388,7 +433,7 @@ export interface UrlRewriteResult {
  * mission-level URL lines with `url`.
  */
 export async function setMissionUrl(filePath: string, rawUrl: string): Promise<UrlRewriteResult> {
-  const nameError = checkMissionFilename(path.basename(filePath));
+  const nameError = checkLinkableMission(path.basename(filePath));
   if (nameError) throw new Mn3Error(nameError);
   const validation = validateMissionUrl(rawUrl);
   if (!validation.valid) throw new Mn3Error(validation.errors.join(" "));

@@ -8,6 +8,7 @@ import type {
   PlaylistVoting,
 } from "../hooks/usePlaylist.ts";
 import { DEFAULT_HOLD_SECONDS, MAX_HOLD_SECONDS } from "../hooks/usePlaylist.ts";
+import { PlaylistDownloads } from "./PlaylistDownloads.tsx";
 import {
   missionSupports,
   scriptModeLabel,
@@ -159,6 +160,7 @@ function PlaylistDetail({
   onBack,
   selectedProfileId,
   hookError,
+  downloads,
 }: {
   playlist: Playlist;
   isActive: boolean;
@@ -170,6 +172,8 @@ function PlaylistDetail({
   selectedProfileId?: string;
   /** Hook-level error (e.g. activation rejected) — shown above the form. */
   hookError?: string | null;
+  /** While active: the result of pointing the missions at the mission host. */
+  downloads?: PlaylistStatus["downloads"];
 }) {
   const [name, setName] = useState(playlist.name);
   const [mode, setMode] = useState<PlaylistMode>(playlist.mode);
@@ -406,6 +410,12 @@ function PlaylistDetail({
             </div>
           )}
 
+          {isActive && downloads && (
+            <div className="mb-2">
+              <PlaylistDownloads downloads={downloads} />
+            </div>
+          )}
+
           {incompatibleCount > 0 && (
             <p className="text-[10px] text-red-400 mb-2">
               {incompatibleCount} entr{incompatibleCount === 1 ? "y is" : "ies are"} incompatible
@@ -631,6 +641,7 @@ export function PlaylistEditor({
         onBack={() => setSelectedId(null)}
         selectedProfileId={selectedProfileId}
         hookError={error}
+        downloads={status.activePlaylistId === selected.id ? status.downloads : null}
       />
     );
   }

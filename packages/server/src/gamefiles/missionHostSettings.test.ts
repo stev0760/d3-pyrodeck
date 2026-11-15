@@ -70,7 +70,9 @@ describe("buildHostedMissionUrl", () => {
   const base = "http://example.org:3002";
 
   it("builds <base>/missions/<file>, percent-encoding the name", () => {
-    expect(buildHostedMissionUrl(base, "bedlam.mn3")).toEqual({ url: "http://example.org:3002/missions/bedlam.mn3" });
+    expect(buildHostedMissionUrl(base, "mymission.mn3")).toEqual({
+      url: "http://example.org:3002/missions/mymission.mn3",
+    });
     expect(buildHostedMissionUrl(base, "My Map+1.mn3")).toEqual({
       url: "http://example.org:3002/missions/My%20Map%2B1.mn3",
     });
@@ -81,6 +83,14 @@ describe("buildHostedMissionUrl", () => {
     expect(buildHostedMissionUrl(base, "Training.MN3")).toEqual({ error: expect.stringMatching(/Retail/) });
     expect(buildHostedMissionUrl(base, "../x.mn3")).toHaveProperty("error");
     expect(buildHostedMissionUrl(base, "x.hog")).toHaveProperty("error");
+  });
+
+  it("refuses every mission that ships with the game, in any case", () => {
+    for (const stock of ["bedlam.mn3", "Chaos.MN3", "tri-pod.mn3", "bsidectf.mn3", "STONECUTTER.mn3"]) {
+      expect(buildHostedMissionUrl(base, stock)).toEqual({
+        error: expect.stringMatching(/ships with Descent 3; every player already has it/),
+      });
+    }
   });
 
   it("refuses a link longer than the client takes, naming the length", () => {
@@ -94,21 +104,30 @@ describe("buildHostedMissionUrl", () => {
 });
 
 describe("isServableMission", () => {
-  const entries = ["bedlam.mn3", "Fury.MN3", "d3.mn3", "bedlam.mn3.pyrodeck-orig", "readme.txt", "sub"];
+  const entries = [
+    "mymission.mn3",
+    "Other.MN3",
+    "d3.mn3",
+    "Havoc.mn3",
+    "mymission.mn3.pyrodeck-orig",
+    "readme.txt",
+    "sub",
+  ];
 
-  it("serves only listed, non-retail .mn3 names, case-exact", () => {
-    expect(isServableMission("bedlam.mn3", entries)).toBe(true);
-    expect(isServableMission("Fury.MN3", entries)).toBe(true);
-    expect(isServableMission("Bedlam.mn3", entries)).toBe(false);
-    expect(isServableMission("fury.mn3", entries)).toBe(false);
+  it("serves only listed .mn3 names that do not ship with the game, case-exact", () => {
+    expect(isServableMission("mymission.mn3", entries)).toBe(true);
+    expect(isServableMission("Other.MN3", entries)).toBe(true);
+    expect(isServableMission("Mymission.mn3", entries)).toBe(false);
+    expect(isServableMission("other.mn3", entries)).toBe(false);
     expect(isServableMission("d3.mn3", entries)).toBe(false);
-    expect(isServableMission("bedlam.mn3.pyrodeck-orig", entries)).toBe(false);
+    expect(isServableMission("Havoc.mn3", entries)).toBe(false);
+    expect(isServableMission("mymission.mn3.pyrodeck-orig", entries)).toBe(false);
     expect(isServableMission("readme.txt", entries)).toBe(false);
     expect(isServableMission("unknown.mn3", entries)).toBe(false);
   });
 
   it("refuses anything that is not a bare file name", () => {
-    for (const bad of ["../bedlam.mn3", "sub/bedlam.mn3", "..\\bedlam.mn3", "bedlam.mn3\0", "..", ".", ""]) {
+    for (const bad of ["../mine.mn3", "sub/mine.mn3", "..\\mine.mn3", "mine.mn3\0", "..", ".", ""]) {
       expect(isServableMission(bad, [...entries, bad])).toBe(false);
     }
   });

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import { sayToAll } from "../players/playerActions.js";
 import { isBotName, parseConsoleLine } from "../events/consoleLines.js";
+import type { PlaylistHostingReport } from "../gamefiles/missionHosting.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,8 +121,8 @@ const HOLD_ANNOUNCE_S = [20, 10, 5];
  *   timerUpdate(gameEndAt: number | null)  — epoch ms when current game ends, null if no timer
  *   levelChanged(level: string | null)      — a new level is loading (fires regardless of playlist state)
  *   serverInfoRaw(raw: string)              — raw $netgameinfo output from a server-side query (for client broadcast)
- *   statusChanged()                         — paused, resumed, or a hold began or ended (for a playlist_status
- *                                             broadcast)
+ *   statusChanged()                         — paused, resumed, a hold began or ended, or new download results
+ *                                             (for a playlist_status broadcast)
  */
 export class PlaylistManager extends EventEmitter {
   private configDir: string;
@@ -140,6 +141,12 @@ export class PlaylistManager extends EventEmitter {
    * Prevents the first "Ending level." from skipping entry[0].
    */
   private needsInitialSync = false;
+
+  /**
+   * The last time the active playlist's missions were pointed at the mission host (routes/mission-host.ts,
+   * hostPlaylistDownloads), for the status. Cleared on activation and deactivation; not saved.
+   */
+  private downloads: PlaylistHostingReport | null = null;
 
   /** Why rotation is paused, and since when (epoch ms). Null unless status is "paused". */
   private pausedReason: string | null = null;
@@ -334,6 +341,7 @@ export class PlaylistManager extends EventEmitter {
     this.pendingWinner = null;
     this.pausedReason = null;
     this.pausedAt = null;
+    this.downloads = null;
 
     if (playlist.mode === "shuffle") {
       this.buildShuffleOrder();
@@ -355,6 +363,7 @@ export class PlaylistManager extends EventEmitter {
   deactivate(): void {
     this.endHold(true);
     this.activePlaylist = null;
+    this.downloads = null;
     this.status = "inactive";
     this.needsInitialSync = false;
     this.pendingWinner = null;
@@ -368,6 +377,21 @@ export class PlaylistManager extends EventEmitter {
 
   isActive(): boolean {
     return this.status !== "inactive";
+  }
+
+  /** The active playlist (the saved copy, refreshed by update()), or null. */
+  getActivePlaylist(): Playlist | null {
+    return this.activePlaylist;
+  }
+
+  /**
+   * Keep the result of hosting the active playlist's missions for the status, or clear it (null). A report for a
+   * playlist that is no longer the active one is dropped.
+   */
+  setDownloads(report: PlaylistHostingReport | null): void {
+    if (report ? report.playlistId !== this.activePlaylist?.id : !this.downloads) return;
+    this.downloads = report;
+    this.emit("statusChanged");
   }
 
   /**
@@ -427,6 +451,7 @@ export class PlaylistManager extends EventEmitter {
     pausedAt: number | null;
     holdEntry: PlaylistEntry | null;
     holdEndsAt: number | null;
+    downloads: PlaylistHostingReport | null;
   } {
     return {
       status: this.status,
@@ -441,6 +466,7 @@ export class PlaylistManager extends EventEmitter {
       pausedAt: this.pausedAt,
       holdEntry: this.holdEntry,
       holdEndsAt: this.holdEndsAt,
+      downloads: this.downloads,
     };
   }
 

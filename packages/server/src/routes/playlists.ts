@@ -9,38 +9,9 @@ import type {
 } from "../launcher/PlaylistManager.js";
 import { MAX_HOLD_SECONDS } from "../launcher/PlaylistManager.js";
 import { findIncompatibleEntries } from "../gamefiles/playlistCompat.js";
-import { ServerProfileManager } from "../config/ServerProfile.js";
-import { pyrodeckConfig } from "./pyrodeck-config.js";
-
-const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
-
-/**
- * Resolve the profile a playlist would rotate against: an explicit profileId
- * if given, else the most recently launched (mirrors the rotate handler in
- * launcher.ts). Returns null when nothing is resolvable — validation is then
- * skipped rather than blocking activation.
- */
-async function resolveRotationProfile(
-  profileId?: string,
-): Promise<{ gamePath: string; configFile: string } | null> {
-  const globalGamePath = pyrodeckConfig.get().gamePath;
-  const metadataManager = new ServerProfileManager(CONFIG_DIR, "");
-  try {
-    const profiles = await metadataManager.list();
-    if (profiles.length === 0) return null;
-    const profile =
-      (profileId && profiles.find((p) => p.id === profileId)) ||
-      profiles
-        .filter((p) => p.lastLaunchedAt)
-        .sort((a, b) => (b.lastLaunchedAt ?? "").localeCompare(a.lastLaunchedAt ?? ""))[0] ||
-      profiles[0];
-    const gamePath = profile.gamePath ?? globalGamePath;
-    if (!gamePath) return null;
-    return { gamePath, configFile: profile.configFile };
-  } catch {
-    return null;
-  }
-}
+import { playlistMissionsChanged } from "../gamefiles/missionHosting.js";
+import { resolveRotationProfile } from "./rotation-profile.js";
+import { hostPlaylistDownloads } from "./mission-host.js";
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -146,14 +117,23 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
     return playlistManager.create(body.name.trim(), mode, toCreateEntries(body.entries));
   });
 
-  // Update a playlist (metadata + entries + voting config)
+  // Update a playlist (metadata + entries + voting config). Saving the active
+  // playlist with other missions points its missions' links at the mission
+  // host again (the result reaches the playlist status).
   app.put("/api/playlists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
     const updates = sanitizePlaylistUpdate(body);
 
     try {
-      return await playlistManager.update(id, updates);
+      const active = playlistManager.getActivePlaylist();
+      const before = active?.id === id ? active.entries : null;
+      const playlist = await playlistManager.update(id, updates);
+      const stillActive = playlistManager.getActivePlaylist()?.id === id;
+      if (before && stillActive && playlistMissionsChanged(before, playlist.entries)) {
+        await hostPlaylistDownloads(playlist);
+      }
+      return playlist;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.status(404).send({ error: message });
@@ -173,8 +153,11 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Activate a playlist. Body may carry { profileId } — the profile whose
-  // Scriptname the entries are validated against (falls back to the most
-  // recently launched profile, which is what rotation itself uses).
+  // Scriptname the entries are validated against and whose missions
+  // directory they are hosted from (falls back to the most recently launched
+  // profile, which is what rotation itself uses). With the mission host on,
+  // every entry's download link is pointed at it; a mission that cannot be
+  // rewritten is reported in `downloads`, never fails the activation.
   app.post("/api/playlists/:id/activate", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -200,7 +183,8 @@ export async function playlistRoutes(app: FastifyInstance): Promise<void> {
         }
       }
       await playlistManager.activate(id);
-      return { ok: true, status: playlistStatusPayload() };
+      const downloads = await hostPlaylistDownloads(playlist, profileId);
+      return { ok: true, status: playlistStatusPayload(), downloads };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.status(400).send({ error: message });

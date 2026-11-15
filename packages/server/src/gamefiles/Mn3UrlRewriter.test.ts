@@ -12,7 +12,11 @@ import {
   rewriteMsnUrls,
   setMissionUrl,
   validateMissionUrl,
+  checkLinkableMission,
   checkMissionFilename,
+  isStockMission,
+  RETAIL_MISSIONS,
+  STOCK_MISSIONS,
 } from "./Mn3UrlRewriter.js";
 import { parseMn3 } from "./Mn3Scanner.js";
 
@@ -136,6 +140,27 @@ describe("validateMissionUrl", () => {
   });
 });
 
+describe("stock missions", () => {
+  it("lists all 18 that ship with the game, the engine's four retail ones among them", () => {
+    expect(STOCK_MISSIONS.size).toBe(18);
+    for (const retail of RETAIL_MISSIONS) expect(STOCK_MISSIONS.has(retail)).toBe(true);
+  });
+
+  it("matches any case, and only whole names", () => {
+    expect(isStockMission("Tri-Pod.MN3")).toBe(true);
+    expect(isStockMission("KATA12.mn3")).toBe(true);
+    expect(isStockMission("bedlam2.mn3")).toBe(false);
+    expect(isStockMission("mymission.mn3")).toBe(false);
+  });
+
+  it("takes no new link, while checkMissionFilename (restore) still accepts it", () => {
+    expect(checkLinkableMission("Havoc.mn3")).toBe("Havoc.mn3 ships with Descent 3; every player already has it.");
+    expect(checkMissionFilename("Havoc.mn3")).toBeNull();
+    expect(checkLinkableMission("d3.mn3")).toMatch(/Retail/);
+    expect(checkLinkableMission("mymission.mn3")).toBeNull();
+  });
+});
+
 describe("setMissionUrl / restoreMissionUrl", () => {
   let dir: string;
   let file: string;
@@ -212,6 +237,21 @@ describe("setMissionUrl / restoreMissionUrl", () => {
     );
     await expect(restoreMissionUrl(file)).rejects.toThrow(/no longer matches/);
     await expect(fs.access(file + BACKUP_SUFFIX)).resolves.toBeUndefined();
+  });
+
+  it("refuses to set a link on a stock mission, and still restores one rewritten before", async () => {
+    const stock = path.join(dir, "chaos.mn3");
+    await fs.writeFile(stock, original);
+    await expect(setMissionUrl(stock, "http://example.org/chaos.mn3")).rejects.toThrow(/ships with Descent 3/);
+    expect(await fs.readFile(stock)).toEqual(original);
+    await expect(fs.access(stock + BACKUP_SUFFIX)).rejects.toThrow();
+
+    // A rewrite from before stock missions were refused: restore still puts the original back.
+    await setMissionUrl(file, "https://files.example.net/test.zip");
+    await fs.copyFile(stock, stock + BACKUP_SUFFIX);
+    await fs.copyFile(file, stock);
+    await restoreMissionUrl(stock);
+    expect(await fs.readFile(stock)).toEqual(original);
   });
 
   it("refuses a file that is not a HOG2 archive, without leaving files behind", async () => {
