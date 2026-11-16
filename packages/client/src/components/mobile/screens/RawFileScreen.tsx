@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { HashRouter } from "@/hooks/useHashRoute";
 import { useProfileFile } from "@/hooks/useProfileFile";
 import { Screen } from "../Screen.tsx";
+import { ShellStatus } from "../ShellStatus.tsx";
 import { BigButton } from "@/components/compact/BigButton";
 import { ConfirmDialog } from "@/components/compact/ConfirmDialog";
 import { EmptyState } from "@/components/compact/EmptyState";
@@ -23,14 +24,14 @@ export function RawFileScreen({ router, profileId, filename, hint, onSaved }: Ra
 
   if (!filename || !profileId) {
     return (
-      <Screen title="File" onBack={router.back}>
+      <Screen title="File" onBack={router.back} actions={<ShellStatus />}>
         <EmptyState title="No file chosen" />
       </Screen>
     );
   }
 
   return (
-    <Screen title={filename} onBack={router.back} scroll={false}>
+    <Screen title={filename} onBack={router.back} actions={<ShellStatus />} scroll={false}>
       {hint && <p className="px-4 pt-3 text-sm text-muted-foreground leading-snug shrink-0">{hint}</p>}
       {file.error && (
         <p className="mx-4 mt-3 text-sm text-destructive bg-destructive/10 border border-destructive/40 rounded-lg px-3 py-2 break-words shrink-0">

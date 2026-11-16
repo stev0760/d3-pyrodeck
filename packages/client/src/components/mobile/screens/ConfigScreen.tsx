@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { FileText, Bot, Ship, Terminal, FolderOpen } from "lucide-react";
 import { useSession } from "@/session/SessionProvider";
 import type { HashRouter } from "@/hooks/useHashRoute";
+import { DEFAULT_STARTUP_FILE } from "@/hooks/useLauncher";
 import { useCompanions, type ClassifiedGameFile } from "@/hooks/useCompanions";
 import { Screen } from "../Screen.tsx";
+import { ShellStatus } from "../ShellStatus.tsx";
 import { RawFileScreen } from "./RawFileScreen.tsx";
 import { SectionCard } from "@/components/compact/SectionCard";
 import { ListRow } from "@/components/compact/ListRow";
@@ -39,11 +41,11 @@ export function ConfigScreen({ router }: { router: HashRouter }) {
 
   if (!profile) {
     return (
-      <Screen title="Config" onBack={router.back}>
+      <Screen title="Config" onBack={router.back} actions={<ShellStatus />}>
         <EmptyState
           icon={<FileText />}
           title="No profile selected"
-          hint="Pick a profile on the Server tab; its files are edited here."
+          hint="Pick a profile's server on the Server tab; its files are edited here."
         />
       </Screen>
     );
@@ -61,7 +63,7 @@ export function ConfigScreen({ router }: { router: HashRouter }) {
           profileId={profile.id}
           filename={router.route.params.get("file") ?? undefined}
           hint={
-            router.route.params.get("file") === "autoexec.dmfc"
+            router.route.params.get("file") === (profile.startupFile ?? DEFAULT_STARTUP_FILE)
               ? "One DMFC command per line, e.g. $killmsgfilter simple. Applied at the next launch. The lines between # pyrodeck: begin and # pyrodeck: end are the profile's Teams and Hoard settings, rewritten at every launch."
               : undefined
           }
@@ -108,7 +110,7 @@ function ConfigIndex({
 
   const comp = c.companions;
   return (
-    <Screen title="Config" onBack={router.back}>
+    <Screen title="Config" onBack={router.back} actions={<ShellStatus />}>
       <div className="p-4 space-y-4">
         <p className="text-sm text-muted-foreground">
           <span className="text-foreground">{profileName}</span> · changes take effect after the server restarts.
@@ -163,20 +165,27 @@ function ConfigIndex({
             />
           )}
           {comp?.autoexec.exists ? (
-            <ListRow icon={<Terminal />} title="Startup commands" subtitle="autoexec.dmfc" chevron onClick={() => raw("autoexec.dmfc")} />
+            <ListRow
+              icon={<Terminal />}
+              title="Startup commands"
+              subtitle={comp.autoexec.filename}
+              chevron
+              onClick={() => raw(comp.autoexec.filename)}
+            />
           ) : (
             <ListRow
               icon={<Terminal />}
               title="Startup commands"
-              subtitle="DMFC commands applied at launch (-autoexec). Tap to create."
-              onClick={() =>
+              subtitle={`DMFC commands applied at launch (-autoexec), in ${comp?.autoexec.filename ?? DEFAULT_STARTUP_FILE}. Tap to create.`}
+              onClick={() => {
+                const file = comp?.autoexec.filename ?? DEFAULT_STARTUP_FILE;
                 setConfirm({
-                  title: "Create autoexec.dmfc?",
-                  description: "An empty startup command file in the game directory.",
+                  title: `Create ${file}?`,
+                  description: "An empty startup command file in the game directory, this profile's own.",
                   label: "Create",
-                  run: () => c.createCompanionFile("autoexec.dmfc", "", ""),
-                })
-              }
+                  run: () => c.createCompanionFile(file, "", ""),
+                });
+              }}
             />
           )}
         </SectionCard>
@@ -243,7 +252,7 @@ function ServerConfigScreen({ router, profileId, configFile }: { router: HashRou
     return <RawFileScreen router={{ ...router, back: () => setView("form") }} profileId={profileId} filename={configFile} />;
   }
   return (
-    <Screen title="Server config" onBack={router.back}>
+    <Screen title="Server config" onBack={router.back} actions={<ShellStatus />}>
       <div className="p-3 space-y-3">
         <SegmentedControl value={view} options={VIEWS} onChange={setView} aria-label="Editor" />
         <div className="@container flex flex-col min-h-0">
@@ -270,7 +279,7 @@ function RosterScreen({ router, profileId, configFile }: { router: HashRouter; p
   const ref = c.companions?.botConfig ?? null;
   if (c.companions && (!ref || !ref.exists)) {
     return (
-      <Screen title="Bot roster" onBack={router.back}>
+      <Screen title="Bot roster" onBack={router.back} actions={<ShellStatus />}>
         <div className="p-4 space-y-4">
           {ref && !ref.exists && (
             <p className="text-sm text-destructive">
@@ -328,7 +337,7 @@ function RosterScreen({ router, profileId, configFile }: { router: HashRouter; p
   }
 
   return (
-    <Screen title="Bot roster" onBack={router.back}>
+    <Screen title="Bot roster" onBack={router.back} actions={<ShellStatus />}>
       <div className="p-3 space-y-3">
         <SegmentedControl value={view} options={VIEWS} onChange={setView} aria-label="Editor" />
         {c.companions ? (
@@ -377,7 +386,7 @@ function GameFilesScreen({ router, profileId }: { router: HashRouter; profileId:
     .filter((g) => g.files.length > 0);
 
   return (
-    <Screen title="Game files" onBack={router.back}>
+    <Screen title="Game files" onBack={router.back} actions={<ShellStatus />}>
       <div className="p-4 space-y-4">
         {files === null && <p className="text-sm text-muted-foreground">Reading the game directory…</p>}
         {files !== null && groups.length === 0 && <EmptyState title="No config files" hint="Nothing ending in .cfg, .mps or .dmfc in the game directory." />}

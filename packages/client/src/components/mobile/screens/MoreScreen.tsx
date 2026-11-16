@@ -32,7 +32,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
   switch (sub) {
     case "profiles":
       return (
-        <Screen title="Profiles" onBack={back}>
+        <Screen title="Profiles" onBack={back} actions={<ShellStatus />}>
           <div className="p-3">
             <LaunchPanel launcher={launcher} />
           </div>
@@ -42,7 +42,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
       return <ConfigScreen router={router} />;
     case "playlists":
       return (
-        <Screen title="Playlists" onBack={back}>
+        <Screen title="Playlists" onBack={back} actions={<ShellStatus />}>
           <div className="p-3 min-h-full flex flex-col">
             <PlaylistEditor
               playlists={playlist.playlists}
@@ -64,7 +64,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
       );
     case "logs":
       return (
-        <Screen title="Logs" onBack={back}>
+        <Screen title="Logs" onBack={back} actions={<ShellStatus />}>
           <div className="p-3">
             <LogsPanel />
           </div>
@@ -80,7 +80,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
       );
     case "rules":
       return (
-        <Screen title="Rules" onBack={back}>
+        <Screen title="Rules" onBack={back} actions={<ShellStatus />}>
           <div className="p-3">
             <RulesPanel notify={toast.addToast} />
           </div>
@@ -113,7 +113,7 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
     <Screen root title="More" actions={<ShellStatus />}>
       <div className="p-4 space-y-4">
         {mode === "launch" && (
-          <SectionCard title="Server" flush>
+          <SectionCard title={serverName ?? "Server"} flush>
             <ListRow icon={<Rocket />} title="Profiles" subtitle="Edit, create, import; supervisor, autostart, mission downloads" chevron onClick={() => go("profiles")} />
             <ListRow icon={<FileText />} title="Config" subtitle="Server config, bot roster, startup commands" chevron onClick={() => go("config")} />
             <ListRow icon={<ListMusic />} title="Playlists" subtitle="Mission rotations and voting" chevron onClick={() => go("playlists")} />
@@ -121,11 +121,11 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
           </SectionCard>
         )}
         <SectionCard title="Moderation" flush>
-          <ListRow icon={<Ban />} title="Bans" subtitle="Addresses and names" chevron onClick={() => go("bans")} />
+          <ListRow icon={<Ban />} title="Bans" subtitle="Addresses and names, all servers" chevron onClick={() => go("bans")} />
           <ListRow icon={<BookOpen />} title="Rules" subtitle="Nicknames and the profanity monitor" chevron onClick={() => go("rules")} />
         </SectionCard>
         <SectionCard title="Pyrodeck" flush>
-          <ListRow icon={<Settings />} title="Settings" subtitle="Email alerts, priority, updates, layout" chevron onClick={() => go("settings")} />
+          <ListRow icon={<Settings />} title="Settings" subtitle="Email alerts, priority, updates, layout; all servers" chevron onClick={() => go("settings")} />
           {showLogout && <ListRow icon={<LogOut />} title="Log out" onClick={onLogout} />}
         </SectionCard>
         <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pb-2">

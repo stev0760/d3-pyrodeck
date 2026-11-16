@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "@/session/SessionProvider";
-import { useHashRoute } from "@/hooks/useHashRoute";
+import { replaceHash, useHashRoute } from "@/hooks/useHashRoute";
+import { serverOfRoute, withServer } from "@/lib/hashRoute";
+import { ServerPickerContext, ServerPickerSheet } from "./ServerPicker.tsx";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { UpdateBanner } from "../UpdateBanner.tsx";
 import { ToastContainer } from "../ToastContainer.tsx";
@@ -25,6 +27,19 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
   const session = useSession();
   const router = useHashRoute();
   const keyboard = useKeyboardInset();
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // The server on screen rides in the hash (`?s=`), so a reload or a shared
+  // link opens it. The selection is the truth: a history entry that names
+  // another server is rewritten, never followed into a silent switch.
+  const { selectedServerId } = session;
+  const hashServer = serverOfRoute(router.route);
+  useEffect(() => {
+    if (selectedServerId && hashServer !== selectedServerId) {
+      replaceHash(withServer(window.location.hash, selectedServerId));
+    }
+  }, [selectedServerId, hashServer]);
 
   // Lets global styles (the sheet scrim, say) know a phone shell is up; the
   // sheets render outside this tree.
@@ -56,6 +71,7 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
   const botsEnabled = session.isConnected && session.connection.hasFeature("bots");
 
   return (
+    <ServerPickerContext.Provider value={() => setPickerOpen(true)}>
     <div className="pd-mobile h-dvh flex flex-col bg-background text-foreground" style={keyboard ? { paddingBottom: keyboard } : undefined}>
       <UpdateBanner />
       {session.connection.wsReconnecting && (
@@ -63,7 +79,10 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
           Connection lost — Reconnecting...
         </div>
       )}
-      <main className="flex-1 min-h-0 flex flex-col">{screen}</main>
+      {/* Every screen is the server's on screen: a switch remounts it, so nothing of the last one stays. */}
+      <main key={session.serverId ?? "none"} className="flex-1 min-h-0 flex flex-col">
+        {screen}
+      </main>
       {keyboard === 0 && (
         <TabBar
           tab={router.tab}
@@ -76,6 +95,8 @@ export function MobileApp({ onLogout, showLogout }: ShellProps) {
         onDismiss={session.toast.dismissToast}
         className="bottom-auto left-3 right-3 top-[calc(env(safe-area-inset-top)+3.5rem)] max-w-none"
       />
+      <ServerPickerSheet open={pickerOpen} onOpenChange={setPickerOpen} />
     </div>
+    </ServerPickerContext.Provider>
   );
 }
