@@ -11,6 +11,7 @@ import {
   CONNECT_SERVER_ID,
   LAUNCH_SERVER_ID,
   chooseServer,
+  isActiveState,
   namedMessage,
   readStoredServer,
   writeStoredServer,
@@ -61,12 +62,13 @@ export interface Session {
 
 const SessionContext = createContext<Session | null>(null);
 
-function readMode(): AppMode {
+/** The mode this browser chose last, or null when it has never chosen. */
+function readStoredMode(): AppMode | null {
   try {
     const stored = localStorage.getItem(MODE_KEY);
-    return stored === "launch" || stored === "connect" ? stored : "connect";
+    return stored === "launch" || stored === "connect" ? stored : null;
   } catch {
-    return "connect";
+    return null;
   }
 }
 
@@ -97,8 +99,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const serversHook = useServers();
   const { list, servers, refresh: refreshList, refreshSoon, setRowState } = serversHook;
 
-  const [mode, setModeState] = useState<AppMode>(readMode);
+  const [mode, setModeState] = useState<AppMode>(() => readStoredMode() ?? "connect");
+  // A browser that has never chosen a mode opens on Launch when Pyrodeck is running a server it launched:
+  // those servers are what there is to see, and Connect would read "Not connected" beside them.
+  const modeChosen = useRef(readStoredMode() !== null);
+  useEffect(() => {
+    if (modeChosen.current || !list) return;
+    modeChosen.current = true;
+    if (servers.some((s) => s.id !== CONNECT_SERVER_ID && isActiveState(s.state))) setModeState("launch");
+  }, [list, servers]);
   const setMode = useCallback((next: AppMode) => {
+    modeChosen.current = true;
     setModeState(next);
     try {
       localStorage.setItem(MODE_KEY, next);
