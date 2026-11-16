@@ -1,4 +1,4 @@
-/** Autostart: the profile Pyrodeck launches when it starts (server: launcher/Autostart.ts, routes/launcher.ts). */
+/** Autostart: the profiles Pyrodeck launches when it starts (server: launcher/Autostart.ts, routes/launcher.ts). */
 
 export type AutostartState =
   | "off"
@@ -28,24 +28,40 @@ export interface AutostartRun {
   relaunchPending: boolean | null;
 }
 
-/** GET /api/launcher/autostart: which profile starts with Pyrodeck, and from where. */
+/** GET /api/servers/:serverId/autostart: which profiles start with Pyrodeck, from where, and what this server's did. */
 export interface AutostartInfo {
   /** PYRODECK_AUTOSTART_PROFILE, when set: it wins, and the UI setting is locked. */
   env: string | null;
-  /** The profile ticked "Start when Pyrodeck starts". */
+  /** PYRODECK_AUTOSTART_PROFILES (a comma list), when set: it wins too. */
+  envList?: string | null;
+  /** The first profile ticked "Start when Pyrodeck starts". */
   settingProfileId: string | null;
+  /** Every profile ticked "Start when Pyrodeck starts", in order. */
+  settingProfileIds?: string[];
+  /** The first of the profiles that start (for a reader that knows one). */
   effective: {
     source: "env" | "setting";
     profileId: string | null;
     profileName: string | null;
     error: string | null;
   } | null;
+  /** Every profile that starts with Pyrodeck, with what its autostart did this run. */
+  profiles?: { profileId: string; profileName: string; source: "env" | "setting" | null; run: AutostartRun | null }[];
+  /** Names in the environment that match no profile, and the like. */
+  errors?: string[];
+  /** This server's autostart this run. */
   run: AutostartRun;
 }
 
-export async function fetchAutostart(): Promise<AutostartInfo | null> {
+/** Whether the environment decides which profiles start (the UI setting is locked). */
+export function autostartLocked(info: AutostartInfo | null): boolean {
+  return !!info && (info.env !== null || !!info.envList);
+}
+
+export async function fetchAutostart(serverId?: string | null): Promise<AutostartInfo | null> {
   try {
-    const res = await fetch("/api/launcher/autostart", { credentials: "include" });
+    const url = serverId ? `/api/servers/${encodeURIComponent(serverId)}/autostart` : "/api/launcher/autostart";
+    const res = await fetch(url, { credentials: "include" });
     return res.ok ? ((await res.json()) as AutostartInfo) : null;
   } catch {
     return null;

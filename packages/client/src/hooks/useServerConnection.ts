@@ -1,5 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useSyncExternalStore } from "react";
 import { WS_SESSION_ENDED, notifySessionEnded, sessionIsGone } from "@/lib/session";
+import { CONNECT_SERVER_ID, routeMessage, type WsMessage } from "@/lib/servers";
+import { ServerViews, type ServerView } from "@/lib/serverViews";
 
 export type ConnectionState =
   | "disconnected"
@@ -14,36 +16,72 @@ export interface ServerCapabilities {
   features: string[];
 }
 
-interface WsMessage {
-  type: string;
-  payload: Record<string, unknown>;
+/** The WebSocket protocol this client speaks (server: ws/wsHub.ts). */
+const WS_PROTOCOL = 2;
+
+type Callback<A extends unknown[]> = (...args: A) => void;
+
+/** A set of callbacks with a subscribe function that returns its own unsubscribe. */
+function useCallbacks<A extends unknown[]>() {
+  const ref = useRef(new Set<Callback<A>>());
+  const subscribe = useCallback((cb: Callback<A>) => {
+    ref.current.add(cb);
+    return () => {
+      ref.current.delete(cb);
+    };
+  }, []);
+  const emit = useCallback((...args: A) => {
+    for (const cb of ref.current) cb(...args);
+  }, []);
+  return [subscribe, emit] as const;
 }
 
-export function useServerConnection() {
-  const [connectionState, setConnectionState] =
-    useState<ConnectionState>("disconnected");
-  const [capabilities, setCapabilities] = useState<ServerCapabilities | null>(
-    null,
-  );
+/**
+ * The one WebSocket to Pyrodeck, and the console of the server on screen.
+ *
+ * The socket says hello with protocol 2, so every server's messages arrive
+ * tagged with their server's id. Each lands on that server's view (state,
+ * capabilities, level, cached server info, playlist status, console and
+ * process text) whichever server is on screen; the `on...` subscriptions and
+ * the returned state are the selected server's only, so a switch of server
+ * never shows one server's replies or roster on another. `sendCommand` names
+ * the selected server; nothing goes to "whichever server is the default".
+ */
+export function useServerConnection(serverId: string | null) {
+  const viewsRef = useRef<ServerViews | null>(null);
+  if (!viewsRef.current) viewsRef.current = new ServerViews();
+  const views = viewsRef.current;
+
+  const selectedRef = useRef(serverId);
+  selectedRef.current = serverId;
+
   const [error, setError] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [wsReconnecting, setWsReconnecting] = useState(false);
+  /** Pyrodeck answered the hello: messages carry their server. */
+  const [helloDone, setHelloDone] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const outputCallbacksRef = useRef<Array<(data: string) => void>>([]);
-  const processOutputCallbacksRef = useRef<Array<(data: string, stream: string) => void>>([]);
-  const playersCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const botsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const botStatsCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const botModeCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const botPopulationCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const serverInfoCallbacksRef = useRef<Array<(data: unknown) => void>>([]);
-  const levelChangedCallbacksRef = useRef<Array<(level: string | null) => void>>([]);
-  const playlistCallbacksRef = useRef<Array<(type: string, data: unknown) => void>>([]);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
   const shouldReconnectRef = useRef(false);
   const lastPongRef = useRef<number>(0);
+
+  // The selected server's subscriptions.
+  const [onOutput, emitOutput] = useCallbacks<[string]>();
+  const [onProcessOutput, emitProcessOutput] = useCallbacks<[string, string]>();
+  const [onPlayers, emitPlayers] = useCallbacks<[unknown]>();
+  const [onBots, emitBots] = useCallbacks<[unknown]>();
+  const [onBotStats, emitBotStats] = useCallbacks<[unknown]>();
+  const [onBotMode, emitBotMode] = useCallbacks<[unknown]>();
+  const [onBotPopulation, emitBotPopulation] = useCallbacks<[unknown]>();
+  const [onServerInfo, emitServerInfo] = useCallbacks<[unknown]>();
+  const [onLevelChanged, emitLevelChanged] = useCallbacks<[string | null]>();
+  const [onPlaylistEvent, emitPlaylistEvent] = useCallbacks<[string, unknown]>();
+  // Every server's messages (toasts, the server list), and errors (null: of no server).
+  const [onServerMessage, emitServerMessage] = useCallbacks<[string, WsMessage]>();
+  const [onError, emitError] = useCallbacks<[string | null, string]>();
+  const [onHello, emitHello] = useCallbacks<[]>();
 
   // Cleanup WebSocket and reconnect timer on unmount
   useEffect(() => {
@@ -56,6 +94,91 @@ export function useServerConnection() {
     };
   }, []);
 
+  const handleMessage = useCallback(
+    (msg: WsMessage) => {
+      if (msg.type === "ping") {
+        lastPongRef.current = Date.now();
+        return;
+      }
+      if (msg.type === "hello") {
+        views.resetConsoles();
+        setHelloDone(true);
+        emitHello();
+        return;
+      }
+      const route = routeMessage(msg);
+      if (route.scope === "drop") return;
+      if (route.scope === "global") {
+        if (msg.type === "error") emitError(null, String((msg.payload as { message?: unknown }).message ?? ""));
+        return;
+      }
+      const id = route.serverId;
+      views.apply(id, msg);
+      emitServerMessage(id, msg);
+      if (msg.type === "error") {
+        emitError(id, String((msg.payload as { message?: unknown }).message ?? ""));
+        return;
+      }
+      if (id !== selectedRef.current) return;
+      const p = msg.payload;
+      switch (msg.type) {
+        case "output":
+          emitOutput(String((p as { raw?: unknown }).raw ?? ""));
+          break;
+        case "process_output": {
+          const { stream, data } = p as { stream: string; data: string };
+          emitProcessOutput(data, stream);
+          break;
+        }
+        case "players":
+          emitPlayers(p);
+          break;
+        case "bots":
+          emitBots(p);
+          break;
+        case "botstats":
+          emitBotStats(p);
+          break;
+        case "botmode":
+          emitBotMode(p);
+          break;
+        case "botpopulation":
+          emitBotPopulation(p);
+          break;
+        case "serverinfo":
+          emitServerInfo(p);
+          break;
+        case "level_changed":
+          emitLevelChanged((p as { level: string | null }).level);
+          break;
+        case "playlist_timer":
+        case "playlist_rotate":
+        case "playlist_status":
+        case "playlist_vote_announce":
+        case "playlist_vote_result":
+          emitPlaylistEvent(msg.type, p);
+          break;
+      }
+    },
+    [
+      views,
+      emitHello,
+      emitError,
+      emitServerMessage,
+      emitOutput,
+      emitProcessOutput,
+      emitPlayers,
+      emitBots,
+      emitBotStats,
+      emitBotMode,
+      emitBotPopulation,
+      emitServerInfo,
+      emitLevelChanged,
+      emitPlaylistEvent,
+    ],
+  );
+  const handleMessageRef = useRef(handleMessage);
+  handleMessageRef.current = handleMessage;
 
   const connectWs = useCallback(() => {
     // Close existing connection if any — clear handlers to prevent
@@ -73,9 +196,12 @@ export function useServerConnection() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
     wsRef.current = ws;
+    setHelloDone(false);
 
     ws.onopen = () => {
       console.log("[Pyrodeck] WebSocket connected");
+      // Every server's messages, tagged with their server, from here on.
+      ws.send(JSON.stringify({ type: "hello", payload: { protocol: WS_PROTOCOL } }));
       setWsConnected(true);
       setWsReconnecting(false);
       reconnectDelayRef.current = 1000; // Reset backoff on successful connect
@@ -83,82 +209,7 @@ export function useServerConnection() {
 
     ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as WsMessage;
-
-        switch (msg.type) {
-          case "ping":
-            lastPongRef.current = Date.now();
-            break;
-          case "output":
-            for (const cb of outputCallbacksRef.current) {
-              cb((msg.payload as { raw: string }).raw);
-            }
-            break;
-          case "process_output": {
-            const { stream, data } = msg.payload as { stream: string; data: string };
-            for (const cb of processOutputCallbacksRef.current) {
-              cb(data, stream);
-            }
-            break;
-          }
-          case "players":
-            for (const cb of playersCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "bots":
-            for (const cb of botsCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "botstats":
-            for (const cb of botStatsCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "botmode":
-            for (const cb of botModeCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "botpopulation":
-            for (const cb of botPopulationCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "serverinfo":
-            for (const cb of serverInfoCallbacksRef.current) {
-              cb(msg.payload);
-            }
-            break;
-          case "level_changed": {
-            const level = (msg.payload as { level: string | null }).level;
-            for (const cb of levelChangedCallbacksRef.current) {
-              cb(level);
-            }
-            break;
-          }
-          case "connection_state": {
-            const newState = (msg.payload as { state: ConnectionState }).state;
-            setConnectionState(newState);
-            break;
-          }
-          case "capabilities":
-            setCapabilities(msg.payload as unknown as ServerCapabilities);
-            break;
-          case "error":
-            setError((msg.payload as { message: string }).message);
-            break;
-          case "playlist_timer":
-          case "playlist_rotate":
-          case "playlist_status":
-          case "playlist_vote_announce":
-          case "playlist_vote_result":
-            for (const cb of playlistCallbacksRef.current) {
-              cb(msg.type, msg.payload);
-            }
-            break;
-        }
+        handleMessageRef.current(JSON.parse(event.data) as WsMessage);
       } catch {
         // Ignore malformed messages
       }
@@ -175,6 +226,7 @@ export function useServerConnection() {
       console.log("[Pyrodeck] WebSocket closed:", event.code, event.reason);
       wsRef.current = null;
       setWsConnected(false);
+      setHelloDone(false);
 
       // The login session behind this socket ended: no reconnect, log in again.
       if (event.code === WS_SESSION_ENDED) {
@@ -217,38 +269,42 @@ export function useServerConnection() {
     connectWs();
   }, [connectWs]);
 
-  // HTTP fallback: also fetch the current session state on mount.
-  // iOS Safari can miss the initial WS "connection_state" message due to
-  // bfcache restore or message-timing quirks, leaving the UI stuck in
-  // "disconnected" even though the server has an active session.
-  // Also re-runs on bfcache restore via the pageshow event.
-  useEffect(() => {
-    const syncStatus = async () => {
-      try {
-        const res = await fetch("/api/server/status", {
-          credentials: "include",
+  // HTTP fallback: the selected server's console state, on mount, on a
+  // switch of server and after a bfcache restore. iOS Safari can miss the
+  // WebSocket's greeting (bfcache restore, message-timing quirks), leaving
+  // the UI stuck in "disconnected" while the server has a console session.
+  const syncStatus = useCallback(async (id: string | null) => {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/servers/${encodeURIComponent(id)}/status`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { console?: ConnectionState; capabilities?: ServerCapabilities | null };
+      if (data.console) {
+        views.patch(id, {
+          connectionState: data.console,
+          ...(data.capabilities ? { capabilities: data.capabilities } : {}),
         });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.state) setConnectionState(data.state);
-        if (data.capabilities) setCapabilities(data.capabilities);
-      } catch {
-        // Ignore — WS will deliver state when it reconnects
       }
-    };
+    } catch {
+      // Ignore — WS will deliver state when it reconnects
+    }
+  }, [views]);
 
-    syncStatus();
+  useEffect(() => {
+    void syncStatus(serverId);
+  }, [serverId, syncStatus]);
 
+  useEffect(() => {
     const onPageShow = (event: PageTransitionEvent) => {
       if (event.persisted) {
         // Restored from bfcache — WS was likely closed, so reconnect and resync
-        syncStatus();
+        void syncStatus(selectedRef.current);
         connectWs();
       }
     };
     window.addEventListener("pageshow", onPageShow);
     return () => window.removeEventListener("pageshow", onPageShow);
-  }, [connectWs]);
+  }, [connectWs, syncStatus]);
 
   // Liveness check: iOS Safari silently kills WS connections when the app
   // is backgrounded without firing onclose. If we haven't received a ping
@@ -264,10 +320,11 @@ export function useServerConnection() {
     return () => clearInterval(checkInterval);
   }, [connectWs]);
 
+  /** Connect mode: log in to a server's console that Pyrodeck did not launch. */
   const connect = useCallback(
     async (host: string, port: number, password: string) => {
       setError(null);
-      setConnectionState("connecting");
+      views.patch(CONNECT_SERVER_ID, { connectionState: "connecting" });
 
       try {
         const res = await fetch("/api/server/connect", {
@@ -280,27 +337,27 @@ export function useServerConnection() {
         const data = await res.json();
 
         if (!res.ok) {
-          setConnectionState("disconnected");
+          views.patch(CONNECT_SERVER_ID, { connectionState: "disconnected" });
           setError(data.error || "Connection failed");
           return false;
         }
 
-        setConnectionState(data.state);
-        setCapabilities(data.capabilities);
+        views.patch(CONNECT_SERVER_ID, { connectionState: data.state, capabilities: data.capabilities });
         return true;
       } catch (err) {
-        setConnectionState("disconnected");
+        views.patch(CONNECT_SERVER_ID, { connectionState: "disconnected" });
         setError(err instanceof Error ? err.message : "Connection failed");
         return false;
       }
     },
-    [],
+    [views],
   );
 
   const reconnect = useCallback(() => {
     connectWs();
   }, [connectWs]);
 
+  /** Connect mode: close its console session. */
   const disconnect = useCallback(async () => {
     setWsReconnecting(false);
 
@@ -313,11 +370,11 @@ export function useServerConnection() {
       // Server may be unreachable
     }
 
-    setConnectionState("disconnected");
-    setCapabilities(null);
-  }, []);
+    views.patch(CONNECT_SERVER_ID, { connectionState: "disconnected", capabilities: null });
+  }, [views]);
 
-  const sendCommand = useCallback((command: string) => {
+  /** One console command to a named server; its parsed reply comes back tagged with that server. */
+  const sendCommandTo = useCallback((id: string, command: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn(
@@ -326,90 +383,28 @@ export function useServerConnection() {
       );
       return;
     }
-    ws.send(JSON.stringify({ type: "command", payload: { command } }));
+    ws.send(JSON.stringify({ type: "command", payload: { command, serverId: id } }));
   }, []);
 
-  const onOutput = useCallback((callback: (data: string) => void) => {
-    outputCallbacksRef.current.push(callback);
-    return () => {
-      outputCallbacksRef.current = outputCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
+  /** One console command to the selected server (never to "the default"). */
+  const sendCommand = useCallback(
+    (command: string) => {
+      const id = selectedRef.current;
+      if (!id) {
+        console.warn("[Pyrodeck] Cannot send command — no server selected");
+        return;
+      }
+      sendCommandTo(id, command);
+    },
+    [sendCommandTo],
+  );
 
-  const onProcessOutput = useCallback((callback: (data: string, stream: string) => void) => {
-    processOutputCallbacksRef.current.push(callback);
-    return () => {
-      processOutputCallbacksRef.current = processOutputCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onPlayers = useCallback((callback: (data: unknown) => void) => {
-    playersCallbacksRef.current.push(callback);
-    return () => {
-      playersCallbacksRef.current = playersCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onBots = useCallback((callback: (data: unknown) => void) => {
-    botsCallbacksRef.current.push(callback);
-    return () => {
-      botsCallbacksRef.current = botsCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onBotStats = useCallback((callback: (data: unknown) => void) => {
-    botStatsCallbacksRef.current.push(callback);
-    return () => {
-      botStatsCallbacksRef.current = botStatsCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onBotMode = useCallback((callback: (data: unknown) => void) => {
-    botModeCallbacksRef.current.push(callback);
-    return () => {
-      botModeCallbacksRef.current = botModeCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  /** Parsed `$botpopulation` status lines (servers with the `population` feature). */
-  const onBotPopulation = useCallback((callback: (data: unknown) => void) => {
-    botPopulationCallbacksRef.current.push(callback);
-    return () => {
-      botPopulationCallbacksRef.current = botPopulationCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onServerInfo = useCallback((callback: (data: unknown) => void) => {
-    serverInfoCallbacksRef.current.push(callback);
-    return () => {
-      serverInfoCallbacksRef.current = serverInfoCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
-  const onLevelChanged = useCallback((callback: (level: string | null) => void) => {
-    levelChangedCallbacksRef.current.push(callback);
-    return () => {
-      levelChangedCallbacksRef.current = levelChangedCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
+  const view: ServerView | null = useSyncExternalStore(
+    useCallback((cb: () => void) => views.subscribe(cb), [views]),
+    () => (serverId ? views.get(serverId) : null),
+  );
+  const connectionState: ConnectionState = view?.connectionState ?? "disconnected";
+  const capabilities = view?.capabilities ?? null;
 
   const hasFeature = useCallback(
     (feature: string): boolean => {
@@ -418,16 +413,12 @@ export function useServerConnection() {
     [capabilities],
   );
 
-  const onPlaylistEvent = useCallback((callback: (type: string, data: unknown) => void) => {
-    playlistCallbacksRef.current.push(callback);
-    return () => {
-      playlistCallbacksRef.current = playlistCallbacksRef.current.filter(
-        (cb) => cb !== callback,
-      );
-    };
-  }, []);
-
   return {
+    /** The server this connection's state, subscriptions and commands are about. */
+    serverId,
+    views,
+    view,
+    helloDone,
     connectionState,
     capabilities,
     error,
@@ -437,6 +428,7 @@ export function useServerConnection() {
     reconnect,
     disconnect,
     sendCommand,
+    sendCommandTo,
     onOutput,
     onProcessOutput,
     onPlayers,
@@ -447,6 +439,9 @@ export function useServerConnection() {
     onServerInfo,
     onLevelChanged,
     onPlaylistEvent,
+    onServerMessage,
+    onError,
+    onHello,
     hasFeature,
   };
 }

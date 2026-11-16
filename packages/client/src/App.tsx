@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "./hooks/useAuth.ts";
 import { useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { useIsMobile } from "./hooks/useIsMobile.ts";
@@ -24,6 +24,7 @@ import { PlaylistEditor } from "./components/PlaylistEditor.tsx";
 import { LogsPanel } from "./components/LogsPanel.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
+import { ServerChip } from "./components/ServerChip.tsx";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -54,6 +55,10 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     hasProcess,
     consoleBuffer,
     processBuffer,
+    servers,
+    serverId,
+    serverName,
+    selectedServerId,
   } = useSession();
   const {
     connectionState,
@@ -75,12 +80,17 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
   } = connection;
   const { toasts, addToast, dismissToast } = toast;
 
-  // A command typed at the console goes into the shared buffer too, so it is
-  // there when the console is opened again (or on a phone).
-  const typedCommand = (command: string) => {
-    consoleBuffer.line(command, "cmd");
-    sendCommand(command);
-  };
+  // A command typed at the console goes into the server's buffer too, so it
+  // is there when the console is opened again (or on a phone).
+  const typedCommand = useCallback(
+    (command: string) => {
+      consoleBuffer.line(command, "cmd");
+      sendCommand(command);
+    },
+    [consoleBuffer, sendCommand],
+  );
+  /** Panels holding one server's state remount on a switch of server: nothing of the last one stays. */
+  const serverKey = serverId ?? "none";
 
   // The left panel is inline from lg up and the server sidebar from md up;
   // below that each lives in a Sheet. Render each in one place only, or the
@@ -118,7 +128,8 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
   // "primary" tabs stay inline; "more" tabs (Launch-only management screens)
   // collapse into a dropdown so the bar stays short and responsive.
-  const tabs: { id: Tab; label: string; show: boolean; group: "primary" | "more" }[] = [
+  // Bans and Settings are every server's, the rest the selected server's.
+  const tabs: { id: Tab; label: string; show: boolean; group: "primary" | "more"; note?: string }[] = [
     { id: "server-output", label: "Output", show: mode === "launch", group: "primary" },
     { id: "console", label: "Console", show: true, group: "primary" },
     { id: "players", label: "Players", show: true, group: "primary" },
@@ -126,9 +137,9 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     { id: "config", label: "Config", show: mode === "launch", group: "more" },
     { id: "playlists", label: "Playlists", show: mode === "launch", group: "more" },
     { id: "logs", label: "Logs", show: mode === "launch", group: "more" },
-    { id: "bans", label: "Bans", show: true, group: "more" },
+    { id: "bans", label: "Bans", show: true, group: "more", note: "all servers" },
     { id: "rules", label: "Rules", show: true, group: "more" },
-    { id: "settings", label: "Settings", show: true, group: "more" },
+    { id: "settings", label: "Settings", show: true, group: "more", note: "all servers" },
   ];
 
   const handleServerSelect = (host: string, port: number) => {
@@ -156,14 +167,15 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
       // knows the exit is intentional (state → "stopped" not "crashed").
       // In Connect mode, send raw quit since we don't own the process.
       quitServer: mode === "launch"
-        ? () => { launcher.stop(); }
+        ? () => { void launcher.stop(selectedServerId); }
         : serverInfoHook.quitServer,
     },
+    serverName,
     playlists: playlistHook.playlists,
     playlistStatus: playlistHook.status,
-    onActivatePlaylist: (id: string) => playlistHook.activatePlaylist(id, launcher.selectedProfileId || undefined),
-    onDeactivatePlaylist: playlistHook.deactivatePlaylist,
-    onResumePlaylist: playlistHook.resumePlaylist,
+    onActivatePlaylist: (id: string) => void playlistHook.activatePlaylist(id),
+    onDeactivatePlaylist: () => void playlistHook.deactivatePlaylist(),
+    onResumePlaylist: () => void playlistHook.resumePlaylist(),
   };
 
   const leftSidebarContent = (
@@ -192,7 +204,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
     <div className="h-dvh bg-background text-foreground flex flex-col">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           {/* Hamburger — phone only (<md) */}
           <Button
             variant="ghost"
@@ -203,8 +215,9 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             <Menu />
             <span className="sr-only">Open panel</span>
           </Button>
-          <h1 className="text-2xl font-logo tracking-wide text-primary">D3 Pyrodeck</h1>
-          <span className="hidden sm:inline text-[10px] text-muted-foreground">v{__APP_VERSION__}</span>
+          <h1 className="text-2xl font-logo tracking-wide text-primary shrink-0">D3 Pyrodeck</h1>
+          <span className="hidden sm:inline text-[10px] text-muted-foreground shrink-0">v{__APP_VERSION__}</span>
+          <ServerChip className="max-w-[16rem]" />
           {capabilities && capabilities.version > 0 && (
             <Badge variant="secondary" className="hidden sm:inline-flex">
               {capabilities.fork} v{capabilities.forkVersion}
@@ -317,6 +330,9 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
                       className="font-score tracking-wide"
                     >
                       {tab.label}
+                      {tab.note && (
+                        <span className="ml-auto pl-3 text-[10px] font-sans tracking-normal text-muted-foreground">{tab.note}</span>
+                      )}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
@@ -326,11 +342,11 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
 
           <TabsContent value="server-output" className="p-3 min-h-0">
             {hasProcess ? (
-              <ServerConsole onProcessOutput={onProcessOutput} replay={processBuffer.lines()} />
+              <ServerConsole key={serverKey} onProcessOutput={onProcessOutput} replay={processBuffer.lines()} />
             ) : (
               <div className="h-full flex items-center justify-center">
                 <p className="text-muted-foreground text-lg font-score tracking-wide">
-                  Launch a Descent 3 server to see output here
+                  {serverName ? `Start ${serverName} to see its output here` : "Launch a Descent 3 server to see output here"}
                 </p>
               </div>
             )}
@@ -340,7 +356,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
             {isConnected ? (
               <div className="h-full flex flex-col">
                 <div className="flex-1 min-h-0">
-                  <Console onCommand={typedCommand} onOutput={onOutput} replay={consoleBuffer.lines()} />
+                  <Console key={serverKey} onCommand={typedCommand} onOutput={onOutput} replay={consoleBuffer.lines()} />
                 </div>
                 <CommandReference
                   sendCommand={sendCommand}
@@ -352,19 +368,22 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
                 <p className="text-muted-foreground text-lg font-score tracking-wide">
                   {mode === "connect"
                     ? "Connect to a Descent 3 server to get started"
-                    : "Launch a Descent 3 server to get started"}
+                    : serverName
+                      ? `${serverName}: no console yet. Start it from the server list.`
+                      : "Launch a Descent 3 server to get started"}
                 </p>
               </div>
             )}
           </TabsContent>
 
           <TabsContent value="players" className="p-3 min-h-0">
-            <PlayersPanel connected={isConnected} sendCommand={sendCommand} onPlayers={onPlayers} notify={addToast} />
+            <PlayersPanel key={serverKey} connected={isConnected} sendCommand={sendCommand} onPlayers={onPlayers} notify={addToast} />
           </TabsContent>
 
           <TabsContent value="bots" className="p-3 min-h-0">
             {isConnected && (
               <BotPanel
+                key={serverKey}
                 sendCommand={sendCommand}
                 onBots={onBots}
                 onBotStats={onBotStats}
@@ -395,9 +414,12 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
               onCreatePlaylist={playlistHook.createPlaylist}
               onUpdatePlaylist={playlistHook.updatePlaylist}
               onDeletePlaylist={playlistHook.deletePlaylist}
-              onActivate={(id) => playlistHook.activatePlaylist(id, launcher.selectedProfileId || undefined)}
-              onDeactivate={playlistHook.deactivatePlaylist}
+              onActivate={(id) => void playlistHook.activatePlaylist(id)}
+              onDeactivate={() => void playlistHook.deactivatePlaylist()}
               selectedProfileId={launcher.selectedProfileId || undefined}
+              servers={servers}
+              selectedServerId={serverId}
+              serverName={serverName}
             />
           </TabsContent>
 
@@ -410,7 +432,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           </TabsContent>
 
           <TabsContent value="rules" className="p-3 min-h-0">
-            <RulesPanel notify={addToast} />
+            <RulesPanel key={serverKey} notify={addToast} />
           </TabsContent>
 
           <TabsContent value="settings" className="p-3 min-h-0">
@@ -421,6 +443,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
         {/* Right sidebar — tablet+ inline (md and lg+) */}
         {isConnected && isMd && (
           <ServerSidebar
+            key={serverKey}
             {...serverSidebarProps}
             className="hidden md:flex flex-col md:w-48 lg:w-64 shrink-0 border-l border-border bg-sidebar overflow-y-auto"
           />
@@ -443,6 +466,7 @@ function Dashboard({ onLogout, showLogout }: { onLogout: () => void; showLogout:
           <SheetContent side="right" className="w-80 p-0 bg-sidebar overflow-y-auto">
             <SheetTitle className="sr-only">Server Controls</SheetTitle>
             <ServerSidebar
+              key={serverKey}
               {...serverSidebarProps}
               className="w-full border-l-0 shrink-0 flex flex-col"
             />

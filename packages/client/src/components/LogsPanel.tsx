@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSession } from "@/session/SessionProvider";
+import { isActiveState } from "@/lib/servers";
 import { Button } from "@/components/ui/button";
 interface LogFile {
   name: string;
@@ -177,6 +179,12 @@ function formatTime(ms: number): string {
 }
 
 export function LogsPanel() {
+  // Every server's live log is marked with its server; the selected server's first.
+  const { servers, serverId } = useSession();
+  const liveLogs = new Map<string, { id: string; name: string }>();
+  for (const s of servers) {
+    if (s.log && isActiveState(s.state)) liveLogs.set(s.log.split(/[\\/]/).pop() ?? s.log, { id: s.id, name: s.name });
+  }
   const [data, setData] = useState<LogsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [dirEdit, setDirEdit] = useState("");
@@ -388,15 +396,24 @@ export function LogsPanel() {
         </p>
       ) : (
         <ul className="space-y-1">
-          {data.files.map((f) => (
+          {[...data.files]
+            .sort((a, b) => Number(liveLogs.get(b.name)?.id === serverId) - Number(liveLogs.get(a.name)?.id === serverId))
+            .map((f) => {
+              const live = liveLogs.get(f.name);
+              return (
             <li
               key={f.name}
-              className="flex items-center gap-2 bg-muted/50 border border-border rounded-md px-2.5 py-1.5"
+              className={`flex items-center gap-2 border rounded-md px-2.5 py-1.5 ${
+                live && live.id === serverId ? "bg-primary/10 border-primary/50" : "bg-muted/50 border-border"
+              }`}
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground font-mono truncate">
                   {f.name}
                 </p>
+                {live && (
+                  <p className="text-[10px] text-emerald-400">Live log of {live.name}</p>
+                )}
                 <p className="text-[10px] text-muted-foreground">
                   {formatBytes(f.size)}
                   {f.compressed ? " compressed" : ""} · {formatTime(f.mtimeMs)}
@@ -431,7 +448,8 @@ export function LogsPanel() {
                 {confirmDelete === f.name ? "Confirm?" : "Delete"}
               </Button>
             </li>
-          ))}
+              );
+            })}
         </ul>
       )}
       {deleteError && (

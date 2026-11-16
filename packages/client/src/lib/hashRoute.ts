@@ -1,6 +1,7 @@
 /**
  * The phone shell's routes live in the URL hash: `#/players/history`,
- * `#/more/config/raw?file=bots.cfg`. A hash needs nothing from the server or
+ * `#/more/config/raw?file=bots.cfg`, with the server on screen as `s`:
+ * `#/console?s=<server id>`. A hash needs nothing from the server or
  * a reverse proxy, never collides with `/api`, `/ws` or the mission host, and
  * gives the phone's back button, reload and deep links something to work with.
  *
@@ -54,4 +55,25 @@ export function isRoot(route: Route): boolean {
 
 export function sameRoute(a: Route, b: Route): boolean {
   return a.path.join("/") === b.path.join("/") && a.params.toString() === b.params.toString();
+}
+
+/** The query parameter naming the server on screen (a profile's id, or "launch"). */
+export const SERVER_PARAM = "s";
+
+/** The server a route names, or null. */
+export function serverOfRoute(route: Route): string | null {
+  return route.params.get(SERVER_PARAM) || null;
+}
+
+/**
+ * The same hash naming `serverId` as the server on screen (null: naming
+ * none), every other parameter kept. Every phone route carries it, so a
+ * reload, a bookmark or a link shared to another phone opens that server.
+ */
+export function withServer(hash: string, serverId: string | null): string {
+  const route = parseHash(hash);
+  const params = new URLSearchParams(route.params);
+  if (serverId) params.set(SERVER_PARAM, serverId);
+  else params.delete(SERVER_PARAM);
+  return buildHash(route.path, params);
 }

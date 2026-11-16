@@ -50,9 +50,9 @@ export function ServerScreen({ router }: { router: HashRouter }) {
     },
     playlists: playlist.playlists,
     playlistStatus: playlist.status,
-    onActivatePlaylist: (id: string) => playlist.activatePlaylist(id, launcher.selectedProfileId || undefined),
-    onDeactivatePlaylist: playlist.deactivatePlaylist,
-    onResumePlaylist: playlist.resumePlaylist,
+    onActivatePlaylist: (id: string) => void playlist.activatePlaylist(id),
+    onDeactivatePlaylist: () => void playlist.deactivatePlaylist(),
+    onResumePlaylist: () => void playlist.resumePlaylist(),
     className: "w-full border-l-0 border border-border rounded-xl bg-card",
   };
 

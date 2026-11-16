@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { CONNECT_SERVER_ID } from "@/lib/servers";
 import type { MissionHostStatus } from "@/lib/missionHost";
 import type { SupervisorState } from "@/lib/supervisor";
 import type { AutostartRun } from "@/lib/autostart";
@@ -59,6 +60,8 @@ export interface LaunchOptions {
   noMultiBmp?: boolean;
   gameSpyPort?: number;
   gameSpyFile?: string;
+  /** -tempdir: an absolute path of at most 99 bytes; unset, Pyrodeck gives each server its own. */
+  tempDir?: string;
 }
 
 export type TeamKey = "red" | "blue" | "green" | "yellow";
@@ -107,6 +110,8 @@ export interface ServerProfile {
   schedule?: ProfileSchedule;
   /** Launch flags from an imported script that the profile does not apply. */
   importedArgs?: string[];
+  /** The Startup Commands file in the game directory (-autoexec); unset: autoexec.dmfc. */
+  startupFile?: string;
   createdAt: string;
   lastLaunchedAt?: string;
 }
@@ -120,8 +125,10 @@ export interface ProfileSettingsPayload {
   respawnScaling?: Record<string, unknown> | null;
   schedule?: ProfileSchedule | null;
   importedArgs?: string[] | null;
-  /** "Start when Pyrodeck starts": true makes this the one autostart profile, false clears it. */
+  /** "Start when Pyrodeck starts": true adds this profile to the ones that start with Pyrodeck, false removes it. */
   autostart?: boolean;
+  /** The Startup Commands file (a .dmfc name); null or "" goes back to autoexec.dmfc. */
+  startupFile?: string | null;
 }
 
 /** A saved profile with the save's non-blocking warnings (shared ports and the like). */
@@ -139,16 +146,45 @@ export interface GamePathValidation {
   missionFiles: string[];
 }
 
-export function useLauncher() {
+/** The Startup Commands file a profile without one of its own uses. */
+export const DEFAULT_STARTUP_FILE = "autoexec.dmfc";
+
+interface UseLauncherOptions {
+  /** The selected server: its status is polled, and Start and Stop act on it by default. */
+  serverId: string | null;
+  /** The selected server's profile ("" for the server without one, or Connect mode). */
+  selectedProfileId: string;
+  /** Select a server (a profile's server has the profile's id). */
+  onSelect: (serverId: string) => void;
+  /** A server was started or stopped: the server list shows it. */
+  onChanged?: () => void;
+}
+
+/** A start or stop that was refused, and the server it was for. */
+export interface ServerActionError {
+  serverId: string;
+  message: string;
+}
+
+/**
+ * Pyrodeck's settings, the profiles, and the selected server's launcher
+ * status (GET /api/servers/:serverId/status). Start and Stop name their
+ * server (POST /api/servers/:serverId/start, /stop): several servers run at
+ * once, and a launch that would clash with another is refused with a message
+ * naming it.
+ */
+export function useLauncher({ serverId, selectedProfileId, onSelect, onChanged }: UseLauncherOptions) {
   const [config, setConfig] = useState<PyrodeckConfig | null>(null);
-  const [processStatus, setProcessStatus] = useState<ProcessStatus | null>(
-    null,
-  );
+  /** The last status fetched, and the server it is of: another server's is never shown. */
+  const [status, setStatus] = useState<{ serverId: string; status: ProcessStatus } | null>(null);
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [detectResult, setDetectResult] = useState<DetectResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ServerActionError | null>(null);
+  /** Servers with a start or stop request in flight. */
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const processStatus = status && status.serverId === serverId ? status.status : null;
 
   // Fetch pyrodeck config on mount
   useEffect(() => {
@@ -163,31 +199,33 @@ export function useLauncher() {
       });
   }, []);
 
-  // Auto-select the first profile when the list is first populated.
-  // Keep the selection if the previously-selected profile is still present.
-  useEffect(() => {
-    if (profiles.length === 0) return;
-    if (selectedProfileId && profiles.some((p) => p.id === selectedProfileId)) return;
-    setSelectedProfileId(profiles[0].id);
-  }, [profiles, selectedProfileId]);
+  const serverIdRef = useRef(serverId);
+  serverIdRef.current = serverId;
 
   const refreshStatus = useCallback(() => {
-    fetch("/api/launcher/status", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => setProcessStatus(data))
+    const id = serverIdRef.current;
+    if (!id || id === CONNECT_SERVER_ID) return;
+    fetch(`/api/servers/${encodeURIComponent(id)}/status`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && serverIdRef.current === id) setStatus({ serverId: id, status: data as ProcessStatus });
+      })
       .catch(() => {});
   }, []);
 
-  // Poll process status: every 2 s while a server is up, every 5 s while it
-  // is down (the supervisor can relaunch it, or a scheduler start it).
+  // The selected server's status at once, then every 2 s while it is up and
+  // every 5 s while it is down (the supervisor can relaunch it, or a
+  // scheduler start it).
+  useEffect(() => {
+    refreshStatus();
+  }, [serverId, refreshStatus]);
   const pollMs =
     processStatus && (processStatus.state === "stopped" || processStatus.state === "crashed") ? 5000 : 2000;
-  const hasStatus = processStatus !== null;
   useEffect(() => {
-    if (!hasStatus) return;
+    if (!serverId || serverId === CONNECT_SERVER_ID) return;
     const interval = setInterval(refreshStatus, pollMs);
     return () => clearInterval(interval);
-  }, [hasStatus, pollMs, refreshStatus]);
+  }, [serverId, pollMs, refreshStatus]);
 
   const updateConfig = useCallback(
     async (updates: Partial<PyrodeckConfig>): Promise<boolean> => {
@@ -373,55 +411,73 @@ export function useLauncher() {
     [fetchProfiles],
   );
 
+  const markBusy = (id: string, on: boolean) =>
+    setBusy((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  /** Start a server (default: the selected one) beside any others it shares nothing with. */
   const launch = useCallback(
-    async (profileId?: string): Promise<boolean> => {
-      setError(null);
+    async (id: string | null = serverIdRef.current): Promise<boolean> => {
+      if (!id || id === CONNECT_SERVER_ID) return false;
+      setActionError(null);
+      markBusy(id, true);
       try {
-        const res = await fetch("/api/launcher/start", {
+        const res = await fetch(`/api/servers/${encodeURIComponent(id)}/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ profileId }),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(data.error || "Failed to launch");
+          setActionError({ serverId: id, message: data.error || "Failed to launch" });
           return false;
         }
-        setProcessStatus(data.status);
+        if (serverIdRef.current === id && data.status) setStatus({ serverId: id, status: data.status });
         return true;
       } catch {
-        setError("Failed to launch server");
+        setActionError({ serverId: id, message: "Failed to launch server" });
         return false;
+      } finally {
+        markBusy(id, false);
+        onChanged?.();
       }
     },
-    [],
+    [onChanged],
   );
 
-  const stop = useCallback(async (): Promise<boolean> => {
-    setError(null);
-    try {
-      const res = await fetch("/api/launcher/stop", {
-        method: "POST",
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to stop");
+  /** Stop a server (default: the selected one). */
+  const stop = useCallback(
+    async (id: string | null = serverIdRef.current): Promise<boolean> => {
+      if (!id || id === CONNECT_SERVER_ID) return false;
+      setActionError(null);
+      markBusy(id, true);
+      try {
+        const res = await fetch(`/api/servers/${encodeURIComponent(id)}/stop`, {
+          method: "POST",
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setActionError({ serverId: id, message: data.error || "Failed to stop" });
+          return false;
+        }
+        if (serverIdRef.current === id && data.status) setStatus({ serverId: id, status: data.status });
+        return true;
+      } catch {
+        setActionError({ serverId: id, message: "Failed to stop server" });
         return false;
+      } finally {
+        markBusy(id, false);
+        onChanged?.();
       }
-      setProcessStatus(data.status);
-      return true;
-    } catch {
-      setError("Failed to stop server");
-      return false;
-    }
-  }, []);
+    },
+    [onChanged],
+  );
 
-  // Fetch initial process status
-  useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+  const setSelectedProfileId = onSelect;
 
   return {
     config,
@@ -442,6 +498,9 @@ export function useLauncher() {
     duplicateProfile,
     launch,
     stop,
+    busy,
+    actionError,
+    clearActionError: () => setActionError(null),
     refreshStatus,
   };
 }

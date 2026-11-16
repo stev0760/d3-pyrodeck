@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseHash, buildHash, tabOf, isRoot, sameRoute } from "./hashRoute.ts";
+import { parseHash, buildHash, tabOf, isRoot, sameRoute, serverOfRoute, withServer } from "./hashRoute.ts";
 
 describe("parseHash", () => {
   it("parses segments and query parameters", () => {
@@ -54,5 +54,37 @@ describe("tabOf / isRoot / sameRoute", () => {
     expect(sameRoute(parseHash("#/a?x=1"), parseHash("#/a?x=1"))).toBe(true);
     expect(sameRoute(parseHash("#/a?x=1"), parseHash("#/a?x=2"))).toBe(false);
     expect(sameRoute(parseHash("#/a"), parseHash("#/a/b"))).toBe(false);
+  });
+});
+
+describe("the server on screen (?s=)", () => {
+  it("reads the server a route names", () => {
+    expect(serverOfRoute(parseHash("#/console?s=ctf-1"))).toBe("ctf-1");
+    expect(serverOfRoute(parseHash("#/more/config/raw?file=bots.cfg&s=launch"))).toBe("launch");
+    expect(serverOfRoute(parseHash("#/console"))).toBeNull();
+    expect(serverOfRoute(parseHash("#/console?s="))).toBeNull();
+  });
+
+  it("names a server and keeps the path and the other parameters", () => {
+    const hash = withServer("#/more/config/raw?file=bots.cfg", "ctf-1");
+    const r = parseHash(hash);
+    expect(r.path).toEqual(["more", "config", "raw"]);
+    expect(r.params.get("file")).toBe("bots.cfg");
+    expect(serverOfRoute(r)).toBe("ctf-1");
+  });
+
+  it("replaces the server named before, and drops it for null", () => {
+    expect(serverOfRoute(parseHash(withServer("#/players?s=a", "b")))).toBe("b");
+    expect(withServer("#/players?s=a", null)).toBe("#/players");
+  });
+
+  it("names a server on an empty hash (the Server tab)", () => {
+    expect(withServer("", "anarchy")).toBe("#/server?s=anarchy");
+  });
+
+  it("does not change what tab or screen a route is", () => {
+    const r = parseHash(withServer("#/players/history", "x"));
+    expect(tabOf(r)).toBe("players");
+    expect(isRoot(r)).toBe(false);
   });
 });

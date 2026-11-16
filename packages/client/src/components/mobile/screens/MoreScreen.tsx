@@ -24,7 +24,7 @@ interface MoreScreenProps {
 
 /** Everything that is not a tab of its own, and the screens behind it. */
 export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
-  const { mode, launcher, playlist, toast, connection } = useSession();
+  const { mode, launcher, playlist, toast, connection, servers, serverId, serverName } = useSession();
   const sub = router.route.path[1];
   const back = () => router.back();
   const go = (...path: string[]) => router.navigate(["more", ...path]);
@@ -52,9 +52,12 @@ export function MoreScreen({ router, onLogout, showLogout }: MoreScreenProps) {
               onCreatePlaylist={playlist.createPlaylist}
               onUpdatePlaylist={playlist.updatePlaylist}
               onDeletePlaylist={playlist.deletePlaylist}
-              onActivate={(id) => playlist.activatePlaylist(id, launcher.selectedProfileId || undefined)}
-              onDeactivate={playlist.deactivatePlaylist}
+              onActivate={(id) => void playlist.activatePlaylist(id)}
+              onDeactivate={() => void playlist.deactivatePlaylist()}
               selectedProfileId={launcher.selectedProfileId || undefined}
+              servers={servers}
+              selectedServerId={serverId}
+              serverName={serverName}
             />
           </div>
         </Screen>

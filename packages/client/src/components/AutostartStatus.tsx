@@ -1,36 +1,50 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { autostartSummary, sentence, type AutostartInfo, type AutostartRun } from "@/lib/autostart";
+import { autostartLocked, autostartSummary, sentence, type AutostartInfo, type AutostartRun } from "@/lib/autostart";
 import { formatTime, TONE_DOT } from "@/lib/supervisor";
 
+/** "A", "A and B", "A, B and C". */
+function listNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 /**
- * Launch panel: which profile starts with Pyrodeck, and what its autostart did
- * this run, crash-loop guard included. Hidden while no profile is set and
- * nothing happened. `run` comes with the launcher status poll; `info` (where
- * the choice comes from) is fetched by the panel.
+ * Launch panel: which profiles start with Pyrodeck (several may), and what
+ * the selected server's autostart did this run, crash-loop guard included.
+ * Hidden while no profile starts with Pyrodeck and nothing happened. `run`
+ * comes with the selected server's status poll; `info` (where the choice
+ * comes from) is fetched by the panel.
  */
 export function AutostartStatus({
   info,
   run,
+  serverId,
   onChanged,
 }: {
   info: AutostartInfo | null;
   run: AutostartRun | null;
+  /** The selected server: its run is shown, and Cancel drops its retry. */
+  serverId: string | null;
   onChanged: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const r = run ?? info?.run ?? null;
   const effective = info?.effective ?? null;
-  if (!r || (r.state === "off" && !effective)) return null;
+  const starting = info?.profiles ?? [];
+  if (!r || (r.state === "off" && !effective && starting.length === 0)) return null;
 
   const summary = autostartSummary(r);
   const name = r.profileName ? `"${r.profileName}"` : "the profile";
   const count = `failure ${r.failures} of ${r.maxFailures}`;
+  const fromEnv = info?.env !== null && info?.env !== undefined ? "PYRODECK_AUTOSTART_PROFILE" : info?.envList ? "PYRODECK_AUTOSTART_PROFILES" : null;
+  const listedHere = starting.some((p) => p.profileId === serverId);
 
   const cancelRetry = async () => {
     setError(null);
-    const res = await fetch("/api/launcher/autostart/cancel", { method: "POST", credentials: "include" });
+    if (!serverId) return;
+    const res = await fetch(`/api/servers/${encodeURIComponent(serverId)}/autostart/cancel`, { method: "POST", credentials: "include" });
     if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? "Failed to cancel");
     onChanged();
   };
@@ -114,24 +128,29 @@ export function AutostartStatus({
           </span>
         </div>
         <div className="text-[11px] text-muted-foreground space-y-0.5">
-          {effective?.error ? (
-            <p className="text-destructive break-words">{sentence(effective.error)}.</p>
-          ) : effective ? (
+          {starting.length > 0 ? (
             <p>
-              Starts <span className="font-medium text-foreground/80">{effective.profileName}</span> when Pyrodeck starts
-              {effective.source === "env" ? (
+              Starts{" "}
+              <span className="font-medium text-foreground/80">{listNames(starting.map((p) => p.profileName))}</span>{" "}
+              when Pyrodeck starts
+              {fromEnv ? (
                 <>
-                  {" "}(set by <span className="font-mono">PYRODECK_AUTOSTART_PROFILE</span>)
+                  {" "}(set by <span className="font-mono">{fromEnv}</span>)
                 </>
               ) : (
                 " (Edit → Start when Pyrodeck starts)"
               )}
-              .
+              .{!listedHere && r.state === "off" ? " Not this server." : ""}
             </p>
-          ) : (
+          ) : effective?.error ? null : (
             <p>No profile starts with Pyrodeck now; this is what happened at startup.</p>
           )}
-          {line}
+          {(info?.errors ?? (effective?.error ? [effective.error] : [])).map((e) => (
+            <p key={e} className="text-destructive break-words">
+              {sentence(e)}.
+            </p>
+          ))}
+          {r.state !== "off" && line}
         </div>
         {error && <p className="text-[11px] text-destructive break-words">{error}</p>}
       </div>
@@ -140,9 +159,9 @@ export function AutostartStatus({
 }
 
 /**
- * Profile edit form: "Start when Pyrodeck starts". One profile at a time
- * (ticking this one replaces another); locked while PYRODECK_AUTOSTART_PROFILE
- * is set, since the environment wins.
+ * Profile edit form: "Start when Pyrodeck starts". Several profiles may
+ * start with Pyrodeck; locked while PYRODECK_AUTOSTART_PROFILE or
+ * PYRODECK_AUTOSTART_PROFILES is set, since the environment wins.
  */
 export function AutostartField({
   checked,
@@ -158,12 +177,12 @@ export function AutostartField({
   profileNames: ReadonlyMap<string, string>;
 }) {
   const env = info?.env ?? null;
-  const locked = env !== null;
-  const shown = locked ? info?.effective?.source === "env" && info.effective.profileId === profileId : checked;
-  const replaced =
-    !locked && checked && info?.settingProfileId && info.settingProfileId !== profileId
-      ? profileNames.get(info.settingProfileId) ?? null
-      : null;
+  const envList = info?.envList ?? null;
+  const locked = autostartLocked(info);
+  const shown = locked ? (info?.profiles ?? []).some((p) => p.profileId === profileId) : checked;
+  const others = (info?.settingProfileIds ?? (info?.settingProfileId ? [info.settingProfileId] : []))
+    .filter((id) => id !== profileId)
+    .map((id) => profileNames.get(id) ?? id);
   return (
     <div className="space-y-1 border-t border-border pt-2">
       <label className="flex items-center gap-2 text-xs text-foreground/80">
@@ -178,14 +197,16 @@ export function AutostartField({
       <p className="text-[10px] text-muted-foreground leading-snug">
         {locked ? (
           <>
-            Locked: <span className="font-mono">PYRODECK_AUTOSTART_PROFILE</span> is set to "{env}" and wins over this
-            setting{info?.effective?.error ? ` (${info.effective.error})` : ""}.
+            Locked: <span className="font-mono">{env !== null ? "PYRODECK_AUTOSTART_PROFILE" : "PYRODECK_AUTOSTART_PROFILES"}</span>{" "}
+            is set to "{env ?? envList}" and wins over this setting{info?.effective?.error ? ` (${info.effective.error})` : ""}.
           </>
         ) : (
           <>
-            Launches this profile when Pyrodeck starts, as the Launch button does, unless a server is already
-            running. With Pyrodeck as a service, the game comes back after a reboot. One profile at a time
-            {replaced ? `: this replaces "${replaced}"` : ""}. Takes effect the next time Pyrodeck starts.
+            Launches this profile's server when Pyrodeck starts, as its Start button does, unless it is already
+            running. With Pyrodeck as a service, the game comes back after a reboot. Several profiles can start
+            with Pyrodeck
+            {others.length > 0 ? ` (also ticked: ${others.join(", ")})` : ""}. Takes effect the next time Pyrodeck
+            starts.
           </>
         )}
       </p>

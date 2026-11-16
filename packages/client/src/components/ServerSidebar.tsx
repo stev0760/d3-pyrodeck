@@ -12,6 +12,8 @@ interface ServerSidebarProps {
   serverInfo: NetGameInfo | null;
   actions: ServerInfoActions;
   mode: "launch" | "connect";
+  /** The server this is about, named in the header. */
+  serverName?: string | null;
   playlists?: Playlist[];
   playlistStatus?: PlaylistStatus;
   onActivatePlaylist?: (id: string) => void;
@@ -89,6 +91,7 @@ export function ServerSidebar({
   serverInfo,
   actions,
   mode,
+  serverName,
   playlists = [],
   playlistStatus,
   onActivatePlaylist,
@@ -110,8 +113,8 @@ export function ServerSidebar({
     <aside className={cn("w-64 shrink-0 border-l border-border bg-sidebar flex flex-col overflow-y-auto", className)}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <h2 className="text-xs font-score text-muted-foreground tracking-wide">
-          Server
+        <h2 className="min-w-0 truncate text-xs font-score text-muted-foreground tracking-wide" title={serverName ?? undefined}>
+          {serverName ?? "Server"}
         </h2>
         <Button variant="ghost" size="xs" onClick={actions.refresh} className="text-[10px]">
           Refresh

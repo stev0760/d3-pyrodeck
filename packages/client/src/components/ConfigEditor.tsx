@@ -671,19 +671,19 @@ function ProfileEditor({
               </div>
             )}
 
-            {/* Startup Commands (autoexec.dmfc) */}
+            {/* Startup Commands: the profile's own file (startupFile), autoexec.dmfc by default */}
             {companions.autoexec.exists ? (
               <CompanionEntry
                 label="Startup Commands"
-                filename="autoexec.dmfc"
+                filename={companions.autoexec.filename}
                 exists={true}
-                isActive={editingFile === "autoexec.dmfc"}
-                onEdit={() => setEditingFile("autoexec.dmfc")}
+                isActive={editingFile === companions.autoexec.filename}
+                onEdit={() => setEditingFile(companions.autoexec.filename)}
                 onUnlink={async () => {
                   if (!selectedProfile) return;
                   try {
                     await fetch(
-                      `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/autoexec.dmfc`,
+                      `/api/profiles/${encodeURIComponent(selectedProfile.id)}/files/${encodeURIComponent(companions.autoexec.filename)}`,
                       { method: "DELETE", credentials: "include" },
                     );
                     await fetchCompanions(selectedProfile.id);
@@ -697,9 +697,9 @@ function ProfileEditor({
             ) : (
               <CompanionCreateButton
                 label="Startup Commands"
-                description="DMFC commands applied at launch (-autoexec)"
+                description={`DMFC commands applied at launch (-autoexec), in ${companions.autoexec.filename}`}
                 onClick={() =>
-                  createCompanionFile("autoexec.dmfc", "", "")
+                  createCompanionFile(companions.autoexec.filename, "", "")
                 }
               />
             )}
@@ -835,11 +835,12 @@ function ProfileEditor({
               />
             ) : (
               <>
-                {editingFile === "autoexec.dmfc" && (
+                {companions && editingFile === companions.autoexec.filename && (
                   <p className="text-[11px] text-muted-foreground mb-2 shrink-0">
                     One DMFC command per line, e.g. <code>$killmsgfilter simple</code>. The file lives in the game
                     directory and Pyrodeck passes it to the server with <code>-autoexec</code>, so changes apply at the
-                    next launch. The lines between <code># pyrodeck: begin</code> and <code># pyrodeck: end</code> are
+                    next launch. The profile names its file (Launch panel → Edit → Startup Commands File); servers that
+                    run at once from one game directory each need their own. The lines between <code># pyrodeck: begin</code> and <code># pyrodeck: end</code> are
                     the launched profile's Teams and Hoard settings (Launch panel → Edit), rewritten at every launch.
                   </p>
                 )}

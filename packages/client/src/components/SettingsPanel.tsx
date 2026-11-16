@@ -412,6 +412,7 @@ export function SettingsPanel({ notify, showSessions = true }: { notify: Notify;
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-xl space-y-3">
+        <p className="text-[11px] text-muted-foreground">These settings are Pyrodeck's and apply to all servers.</p>
         <LayoutSetting />
         <section className={SECTION_CLASS}>
           <h3 className="text-sm font-score tracking-wide text-muted-foreground">Email Alerts</h3>

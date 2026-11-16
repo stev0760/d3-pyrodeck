@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { buildHash, parseHash, tabOf, type Route, type Tab } from "../lib/hashRoute.ts";
+import { buildHash, parseHash, serverOfRoute, tabOf, withServer, type Route, type Tab } from "../lib/hashRoute.ts";
 
 /**
  * How deep the current history entry sits above its tab root, kept in
@@ -39,6 +39,13 @@ export interface HashRouter {
   back: () => void;
 }
 
+/** Write the hash without a history entry (the server on screen changed), and tell the store. */
+export function replaceHash(hash: string): void {
+  if (hash === window.location.hash) return;
+  window.history.replaceState(window.history.state, "", hash);
+  emit();
+}
+
 /**
  * The hash as a React external store. Tab taps `replace` (so back from a
  * root leaves the app, like a native app), stacked screens push, and `back()`
@@ -56,7 +63,10 @@ export function useHashRoute(): HashRouter {
 
   const navigate = useCallback(
     (path: readonly string[] | string, params?: Record<string, string>, options?: NavigateOptions) => {
-      const target = typeof path === "string" ? (path.startsWith("#") ? path : `#${path}`) : buildHash(path, params);
+      let target = typeof path === "string" ? (path.startsWith("#") ? path : `#${path}`) : buildHash(path, params);
+      // Every screen stays on the server on screen: carry its `s` along.
+      const server = serverOfRoute(parseHash(window.location.hash));
+      if (server && !serverOfRoute(parseHash(target))) target = withServer(target, server);
       if (target === window.location.hash) return;
       if (options?.replace) {
         window.history.replaceState({ pyrodeckDepth: 0 }, "", target);

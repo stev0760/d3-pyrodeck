@@ -79,9 +79,10 @@ export function describeHang(s: SupervisorState): string | null {
   return `${quiet} (probe at ${s.settings.hangProbeAfterSec} s)`;
 }
 
-export async function fetchSupervisor(): Promise<SupervisorState | null> {
+export async function fetchSupervisor(serverId?: string | null): Promise<SupervisorState | null> {
   try {
-    const res = await fetch("/api/launcher/supervisor", { credentials: "include" });
+    const url = serverId ? `/api/servers/${encodeURIComponent(serverId)}/supervisor` : "/api/launcher/supervisor";
+    const res = await fetch(url, { credentials: "include" });
     return res.ok ? ((await res.json()) as SupervisorState) : null;
   } catch {
     return null;

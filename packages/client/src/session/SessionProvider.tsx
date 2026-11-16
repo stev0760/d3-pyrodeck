@@ -4,15 +4,23 @@ import { useLauncher, type ProcessStatus } from "../hooks/useLauncher.ts";
 import { useToast } from "../hooks/useToast.ts";
 import { usePlaylist } from "../hooks/usePlaylist.ts";
 import { useServerInfo } from "../hooks/useServerInfo.ts";
+import { useServers } from "../hooks/useServers.ts";
 import { LineBuffer } from "../lib/lineBuffer.ts";
+import { parseHash, SERVER_PARAM } from "../lib/hashRoute.ts";
+import {
+  CONNECT_SERVER_ID,
+  LAUNCH_SERVER_ID,
+  chooseServer,
+  namedMessage,
+  readStoredServer,
+  writeStoredServer,
+  type ServerList,
+  type ServerRow,
+  type ServerState,
+} from "../lib/servers.ts";
 import type { AppMode } from "../components/ModeToggle.tsx";
 
 const MODE_KEY = "pyrodeck-mode";
-
-/** Console lines kept for the telnet console (replies and typed commands). */
-const CONSOLE_LINES = 2000;
-/** Lines kept of the game process's stdout and stderr. */
-const PROCESS_LINES = 5000;
 
 export interface Session {
   connection: ReturnType<typeof useServerConnection>;
@@ -23,14 +31,31 @@ export interface Session {
   /** Connect to a running server, or launch one from a profile. Persisted. */
   mode: AppMode;
   setMode: (mode: AppMode) => void;
+  /** Every server Pyrodeck runs (GET /api/servers), refreshed while the panel is open. */
+  servers: ServerRow[];
+  serverList: ServerList | null;
+  refreshServers: () => void;
+  /** The server Launch mode shows (persisted; the phone's `?s=`); null before there is one. */
+  selectedServerId: string | null;
+  selectServer: (serverId: string) => void;
+  /** The server every screen is about: the selected one, or Connect mode's session. */
+  serverId: string | null;
+  /** Its row in the server list (null until listed, or Connect mode before a login). */
+  server: ServerRow | null;
+  /** Its name, for the header and the toasts. */
+  serverName: string | null;
+  /** A server's name by id (null when unknown). */
+  nameOf: (serverId: string) => string | null;
+  /** The profile id its events carry: player history, kick, ban and rules use it. */
+  eventProfileId: string | null;
   /** The console is ready and the WebSocket is live. */
   isConnected: boolean;
   processState: ProcessStatus["state"] | undefined;
   /** Launch mode with a game process to show output for. */
   hasProcess: boolean;
-  /** Telnet console text, oldest first; survives screen changes. */
+  /** The server's telnet console text, oldest first; survives screen changes and switches of server. */
   consoleBuffer: LineBuffer;
-  /** Game process stdout (`out`) and stderr (`err`). */
+  /** The server's game process stdout (`out`) and stderr (`err`). */
   processBuffer: LineBuffer;
 }
 
@@ -45,48 +70,116 @@ function readMode(): AppMode {
   }
 }
 
+/** The server a page load asks for: the phone's `#/...?s=<id>`, else the one this browser chose last. */
+function initialServer(): string | null {
+  const fromHash = typeof window === "undefined" ? null : parseHash(window.location.hash).params.get(SERVER_PARAM);
+  return fromHash || readStoredServer();
+}
+
+/** Buffers for a moment with no server selected (nothing writes to them). */
+const NO_SERVER_CONSOLE = new LineBuffer(1);
+const NO_SERVER_PROCESS = new LineBuffer(1);
+
 /**
  * One instance of every connection, launcher and playlist hook, shared by
  * whichever shell is on screen. Switching between the desktop and the phone
  * layout must not reopen the WebSocket or lose console text, so the state
  * lives here, above both.
+ *
+ * Pyrodeck runs several servers; the panel shows one at a time, the selected
+ * server, and every screen is about it: its console and output, roster,
+ * playlist, server info, launcher status. Each server's state and text are
+ * kept apart (lib/serverViews.ts), so a switch shows that server's own.
  */
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const connection = useServerConnection();
-  const launcher = useLauncher();
   const toast = useToast();
-  const { onPlaylistEvent, onServerInfo, onLevelChanged, onOutput, onProcessOutput, sendCommand, connectionState, wsConnected } =
-    connection;
   const { addToast } = toast;
-  const playlist = usePlaylist({ onPlaylistEvent, notify: addToast });
-  const serverInfo = useServerInfo({
-    sendCommand,
-    onServerInfo,
-    onLevelChanged,
-    connected: connectionState === "ready",
-  });
+  const serversHook = useServers();
+  const { list, servers, refresh: refreshList, refreshSoon, setRowState } = serversHook;
 
-  const buffersRef = useRef<{ console: LineBuffer; process: LineBuffer } | null>(null);
-  if (!buffersRef.current) {
-    buffersRef.current = { console: new LineBuffer(CONSOLE_LINES), process: new LineBuffer(PROCESS_LINES) };
-  }
-  const consoleBuffer = buffersRef.current.console;
-  const processBuffer = buffersRef.current.process;
+  const [mode, setModeState] = useState<AppMode>(readMode);
+  const setMode = useCallback((next: AppMode) => {
+    setModeState(next);
+    try {
+      localStorage.setItem(MODE_KEY, next);
+    } catch {
+      // storage unavailable: the mode still changes for this page
+    }
+  }, []);
+
+  // Which server: the one asked for while it exists, else the default server.
+  const [wanted, setWanted] = useState<string | null>(initialServer);
+  const selectedServerId = list ? chooseServer({ wanted: [wanted], list }) : wanted;
+  const selectServer = useCallback((id: string) => {
+    setWanted(id);
+    writeStoredServer(id);
+  }, []);
+  const serverId = mode === "connect" ? CONNECT_SERVER_ID : selectedServerId;
+  const server = servers.find((s) => s.id === serverId) ?? null;
+
+  const namesRef = useRef(new Map<string, string>());
+  namesRef.current = new Map(servers.map((s) => [s.id, s.name]));
+  const nameOf = useCallback(
+    (id: string) => namesRef.current.get(id) ?? (id === CONNECT_SERVER_ID ? "Connect mode" : null),
+    [],
+  );
+  const serverName = serverId ? nameOf(serverId) : null;
+
+  const connection = useServerConnection(serverId);
+  const { views, view, sendCommand, onServerMessage, onError, onHello, connectionState, wsConnected, helloDone } =
+    connection;
+
+  const launcher = useLauncher({
+    serverId: mode === "launch" ? selectedServerId : null,
+    selectedProfileId: server?.kind === "profile" && mode === "launch" ? server.id : "",
+    onSelect: selectServer,
+    onChanged: refreshSoon,
+  });
+  const { refreshStatus } = launcher;
+
+  const playlist = usePlaylist({
+    serverId,
+    view,
+    views,
+    onServerMessage,
+    nameOf,
+    notify: addToast,
+    onChanged: refreshSoon,
+  });
+  const serverInfo = useServerInfo({ serverId, view, views, sendCommand, canSend: wsConnected && helloDone });
 
   // Profiles are needed by every shell (the desktop Launch panel used to be
-  // the only thing that loaded them).
+  // the only thing that loaded them). The server list follows them.
   const { fetchProfiles } = launcher;
   useEffect(() => {
     void fetchProfiles();
   }, [fetchProfiles]);
+  useEffect(() => {
+    refreshSoon();
+  }, [launcher.profiles, refreshSoon]);
 
-  useEffect(() => onOutput((data) => consoleBuffer.push(data, "out")), [onOutput, consoleBuffer]);
+  // Any server's process or console changing state: the list shows it soon,
+  // the selected server's launcher status at once.
+  const serverIdRef = useRef(serverId);
+  serverIdRef.current = serverId;
   useEffect(
-    () => onProcessOutput((data, stream) => processBuffer.push(data, stream === "stderr" ? "err" : "out")),
-    [onProcessOutput, processBuffer],
+    () =>
+      onServerMessage((id, msg) => {
+        if (msg.type === "process_state") {
+          setRowState(id, ((msg.payload as { state?: ServerState }).state ?? null) as ServerState | null);
+          refreshSoon();
+          if (id === serverIdRef.current) refreshStatus();
+        } else if (msg.type === "connection_state" || msg.type === "level_changed") {
+          refreshSoon();
+        }
+      }),
+    [onServerMessage, setRowState, refreshSoon, refreshStatus],
   );
+  useEffect(() => onHello(() => void refreshList()), [onHello, refreshList]);
 
-  // Surface server and launcher errors as toasts
+  // Errors as toasts, named by their server.
+  useEffect(() => onError((id, message) => addToast(namedMessage(id ? nameOf(id) : null, message))), [onError, addToast, nameOf]);
+
   const prevErrorRef = useRef<string | null>(null);
   useEffect(() => {
     if (connection.error && connection.error !== prevErrorRef.current) {
@@ -103,24 +196,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     prevLauncherErrorRef.current = launcher.error;
   }, [launcher.error, addToast]);
 
-  const [mode, setModeState] = useState<AppMode>(readMode);
-  const setMode = useCallback((next: AppMode) => {
-    setModeState(next);
-    try {
-      localStorage.setItem(MODE_KEY, next);
-    } catch {
-      // storage unavailable: the mode still changes for this page
-    }
-  }, []);
+  const { actionError } = launcher;
+  useEffect(() => {
+    if (actionError) addToast(namedMessage(nameOf(actionError.serverId), actionError.message));
+  }, [actionError, addToast, nameOf]);
 
   const isConnected = connectionState === "ready" && wsConnected;
-  const processState = launcher.processStatus?.state;
+  const processState = mode === "launch" ? (launcher.processStatus?.state ?? server?.state ?? undefined) : undefined;
   const hasProcess =
     mode === "launch" &&
     (processState === "starting" ||
       processState === "running" ||
       processState === "stopping" ||
       processState === "crashed");
+
+  let eventProfileId: string | null = null;
+  if (serverId === CONNECT_SERVER_ID) {
+    // Connect mode's events carry "connect:<host>:<port>"; its row is named "<host>:<port>".
+    eventProfileId = server ? `connect:${server.name}` : null;
+  } else if (serverId) {
+    eventProfileId = server?.kind === "launch" || serverId === LAUNCH_SERVER_ID ? LAUNCH_SERVER_ID : serverId;
+  }
+
+  const consoleBuffer = view?.console ?? NO_SERVER_CONSOLE;
+  const processBuffer = view?.process ?? NO_SERVER_PROCESS;
 
   const value = useMemo<Session>(
     () => ({
@@ -131,13 +230,46 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       serverInfo,
       mode,
       setMode,
+      servers,
+      serverList: list,
+      refreshServers: refreshSoon,
+      selectedServerId,
+      selectServer,
+      serverId,
+      server,
+      serverName,
+      nameOf,
+      eventProfileId,
       isConnected,
       processState,
       hasProcess,
       consoleBuffer,
       processBuffer,
     }),
-    [connection, launcher, toast, playlist, serverInfo, mode, setMode, isConnected, processState, hasProcess, consoleBuffer, processBuffer],
+    [
+      connection,
+      launcher,
+      toast,
+      playlist,
+      serverInfo,
+      mode,
+      setMode,
+      servers,
+      list,
+      refreshSoon,
+      selectedServerId,
+      selectServer,
+      serverId,
+      server,
+      serverName,
+      nameOf,
+      eventProfileId,
+      isConnected,
+      processState,
+      hasProcess,
+      consoleBuffer,
+      processBuffer,
+    ],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

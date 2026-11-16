@@ -11,6 +11,7 @@ import {
   type NameIpEntry,
   type PlayerSession,
 } from "@/lib/players";
+import { useSession } from "@/session/SessionProvider";
 
 type View = "history" | "who" | "addresses";
 
@@ -22,6 +23,8 @@ const inputClass =
  * the name/address index (server: routes/players.ts).
  */
 export function PlayerHistory({ notify }: { notify: (message: string, type?: "error" | "info") => void }) {
+  // Opens on the selected server's history; any server's can be picked.
+  const { eventProfileId } = useSession();
   const [view, setView] = useState<View>("history");
   const [profiles, setProfiles] = useState<HistoryProfile[]>([]);
   const [profileId, setProfileId] = useState<string>("");
@@ -38,10 +41,11 @@ export function PlayerHistory({ notify }: { notify: (message: string, type?: "er
     getJson<{ active: string | null; profiles: HistoryProfile[] }>("/api/players/profiles")
       .then((d) => {
         setProfiles(d.profiles);
-        setProfileId((cur) => cur || d.active || d.profiles[0]?.profileId || "");
+        const own = d.profiles.find((p) => p.profileId === eventProfileId)?.profileId;
+        setProfileId((cur) => cur || own || d.active || d.profiles[0]?.profileId || "");
       })
       .catch((err) => notify(err instanceof Error ? err.message : String(err)));
-  }, [notify]);
+  }, [notify, eventProfileId]);
 
   const load = useCallback(async () => {
     if (!profileId) return;

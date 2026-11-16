@@ -83,6 +83,7 @@ export interface LaunchOptionsForm {
   noMultiBmp: boolean;
   gameSpyPort: string;
   gameSpyFile: string;
+  tempDir: string;
 }
 
 export function launchOptionsToForm(o: LaunchOptions | undefined): LaunchOptionsForm {
@@ -93,13 +94,14 @@ export function launchOptionsToForm(o: LaunchOptions | undefined): LaunchOptions
     noMultiBmp: o?.noMultiBmp ?? false,
     gameSpyPort: o?.gameSpyPort !== undefined ? String(o.gameSpyPort) : "",
     gameSpyFile: o?.gameSpyFile ?? "",
+    tempDir: o?.tempDir ?? "",
   };
 }
 
 /** The PATCH value: null when nothing is set. */
 export function launchOptionsPayload(f: LaunchOptionsForm): Record<string, string | boolean> | null {
   const out: Record<string, string | boolean> = {};
-  for (const key of ["bindIp", "gamePort", "frameCap", "gameSpyPort", "gameSpyFile"] as const) {
+  for (const key of ["bindIp", "gamePort", "frameCap", "gameSpyPort", "gameSpyFile", "tempDir"] as const) {
     if (f[key].trim()) out[key] = f[key].trim();
   }
   if (f.noMultiBmp) out.noMultiBmp = true;
@@ -113,6 +115,7 @@ function launchSummary(f: LaunchOptionsForm): string {
   if (f.frameCap.trim()) parts.push(`${f.frameCap.trim()} fps`);
   if (f.noMultiBmp) parts.push("no logos");
   if (f.gameSpyPort.trim() || f.gameSpyFile.trim()) parts.push("GameSpy");
+  if (f.tempDir.trim()) parts.push("temp dir");
   return parts.length > 0 ? parts.join(", ") : "Engine defaults";
 }
 
@@ -163,6 +166,12 @@ export function LaunchOptionsFields({
           placeholder="gamespy.cfg"
         />
       </div>
+      <TextField
+        label="Temp directory (-tempdir)"
+        value={values.tempDir}
+        onChange={(tempDir) => set({ tempDir })}
+        placeholder="Pyrodeck's own, per server"
+      />
       <label className="flex items-center gap-2 text-xs text-foreground/80">
         <input type="checkbox" checked={values.noMultiBmp} onChange={(e) => set({ noMultiBmp: e.target.checked })} />
         No pilot logos (-nomultibmp)
@@ -171,6 +180,11 @@ export function LaunchOptionsFields({
         The bind address must be an IPv4 address of this machine; the server binds its game, console and GameSpy
         sockets there only, and Pyrodeck connects to the console at that address. The frame cap is the server's
         frames per second (1-999). Without logos the server neither collects nor relays pilot logos.
+      </p>
+      <p className="text-[10px] text-muted-foreground leading-snug">
+        Servers running at once each need their own game, console and GameSpy ports. Left empty, the GameSpy port
+        moves to a free one when another server holds 20142, and the temp directory is Pyrodeck's own for this
+        server (an absolute path of at most 99 bytes if you set one).
       </p>
     </SettingsSection>
   );

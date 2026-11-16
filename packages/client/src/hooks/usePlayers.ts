@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getJson, sendJson, type PresentPlayer } from "@/lib/players";
+import { useSession } from "@/session/SessionProvider";
 
 export interface PlayerScore {
   name: string;
@@ -26,22 +27,32 @@ interface UsePlayersOptions {
 }
 
 /**
- * The scoreboard and who is behind each name: `$scores` every 5 s while
- * auto-refresh is on, plus `/api/players/present` for addresses. Kick and ban
- * go through the server, which looks the player's slot up by name (`$scores`
- * is sorted by score, so its row order is not the slot).
+ * The selected server's scoreboard and who is behind each name: `$scores`
+ * every 5 s while auto-refresh is on, plus `GET /api/servers/:serverId/players`
+ * for addresses. Kick and ban name the server (its events' profile id) and go
+ * through Pyrodeck, which looks the player's slot up by name (`$scores` is
+ * sorted by score, so its row order is not the slot).
  */
 export function usePlayers({ sendCommand, onPlayers }: UsePlayersOptions) {
+  const { serverId, eventProfileId } = useSession();
   const [players, setPlayers] = useState<PlayerScore[]>([]);
   const [present, setPresent] = useState<PresentPlayer[]>([]);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const refresh = useCallback(() => {
     sendCommand("$scores");
-    getJson<{ players: PresentPlayer[] }>("/api/players/present")
-      .then((d) => setPresent(d.players))
+    if (!serverId) return;
+    getJson<{ profileId: string | null; players: PresentPlayer[] }>(`/api/servers/${encodeURIComponent(serverId)}/players`)
+      .then((d) => {
+        setPresent(d.players);
+        setProfileId(d.profileId);
+      })
       .catch(() => {});
-  }, [sendCommand]);
+  }, [sendCommand, serverId]);
+
+  /** The server a kick or ban is for, named: never "whichever console is open". */
+  const target = profileId ?? eventProfileId;
 
   const addressOf = useCallback(
     (name: string) => present.find((p) => p.name === name)?.ip,
@@ -50,14 +61,18 @@ export function usePlayers({ sendCommand, onPlayers }: UsePlayersOptions) {
 
   const kick = useCallback(
     (name: string, reason: string) =>
-      sendJson<{ message: string }>("POST", "/api/players/kick", { name, reason }),
-    [],
+      target
+        ? sendJson<{ message: string }>("POST", "/api/players/kick", { name, reason, profileId: target })
+        : Promise.reject(new Error("No server selected")),
+    [target],
   );
 
   const ban = useCallback(
     (name: string, options: BanOptions) =>
-      sendJson<{ message: string }>("POST", "/api/players/ban", { name, ...options }),
-    [],
+      target
+        ? sendJson<{ message: string }>("POST", "/api/players/ban", { name, ...options, profileId: target })
+        : Promise.reject(new Error("No server selected")),
+    [target],
   );
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import type { useServerConnection } from "./useServerConnection.ts";
+import type { ServerView, ServerViews } from "@/lib/serverViews";
+import { CONNECT_SERVER_ID, namedMessage, type WsMessage } from "@/lib/servers";
 import type { PlaylistDownloads } from "@/lib/playlistDownloads";
 
 // ---------------------------------------------------------------------------
@@ -66,56 +67,82 @@ export interface PlaylistStatus {
   rotationCheck?: RotationCheck;
 }
 
-type OnPlaylistEvent = ReturnType<typeof useServerConnection>["onPlaylistEvent"];
+/** A server's status before Pyrodeck has said anything about its playlist. */
+export const INACTIVE_STATUS: PlaylistStatus = {
+  status: "inactive",
+  activePlaylistId: null,
+  currentIndex: 0,
+  currentEntry: null,
+  gameEndAt: null,
+  voteOptions: [],
+  voteDeadline: null,
+};
 
 interface UsePlaylistOptions {
-  onPlaylistEvent: OnPlaylistEvent;
+  /** The selected server, its view and the store of every server's. */
+  serverId: string | null;
+  view: ServerView | null;
+  views: ServerViews;
+  /** Every server's WebSocket messages (useServerConnection's onServerMessage). */
+  onServerMessage: (cb: (serverId: string, msg: WsMessage) => void) => () => void;
+  /** A server's name, for the toasts. */
+  nameOf: (serverId: string) => string | null;
   notify?: (message: string, type?: "error" | "info") => void;
+  /** A playlist was activated or deactivated somewhere: the server list shows where. */
+  onChanged?: () => void;
 }
 
-export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
+/**
+ * The playlist library (shared by every server) and the selected server's
+ * playlist: each server has its own active playlist, position, vote and hold,
+ * kept in its view. Activation, deactivation and resume name their server
+ * (POST /api/servers/:serverId/playlist/...). Rotations and votes on any
+ * server are toasted with that server's name.
+ */
+export function usePlaylist({ serverId, view, views, onServerMessage, nameOf, notify, onChanged }: UsePlaylistOptions) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [status, setStatus] = useState<PlaylistStatus>({
-    status: "inactive",
-    activePlaylistId: null,
-    currentIndex: 0,
-    currentEntry: null,
-    gameEndAt: null,
-    voteOptions: [],
-    voteDeadline: null,
-  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const status = view?.playlist ?? INACTIVE_STATUS;
+  /** Connect mode's session has no playlist. */
+  const hasPlaylist = !!serverId && serverId !== CONNECT_SERVER_ID;
 
-  // Subscribe to WS playlist events
+  const fetchStatus = useCallback(
+    async (id: string | null = serverId) => {
+      if (!id || id === CONNECT_SERVER_ID) return;
+      try {
+        const res = await fetch(`/api/servers/${encodeURIComponent(id)}/playlist`, { credentials: "include" });
+        if (res.ok) views.patch(id, { playlist: (await res.json()) as PlaylistStatus });
+      } catch {
+        // ignore
+      }
+    },
+    [serverId, views],
+  );
+
+  // Every server's rotations and votes, named.
   useEffect(() => {
-    const unsub = onPlaylistEvent((type, data) => {
-      if (type === "playlist_timer") {
-        const { gameEndAt } = data as { gameEndAt: number | null };
-        setStatus((prev) => ({ ...prev, gameEndAt }));
-      } else if (type === "playlist_rotate") {
+    return onServerMessage((id, msg) => {
+      const named = (text: string) => namedMessage(nameOf(id), text);
+      if (msg.type === "playlist_rotate") {
         // The server stays "restarting" until the restart passes its health
         // check; playlist_status says when.
-        const { entry } = data as { entry: PlaylistEntry };
-        setStatus((prev) => ({ ...prev, currentEntry: entry }));
-        notify?.(`Rotating to: ${entry.label}`, "info");
-        // Re-fetch status after rotation
-        fetchStatus();
-      } else if (type === "playlist_status") {
-        setStatus(data as PlaylistStatus);
-      } else if (type === "playlist_vote_announce") {
-        const { options, deadline } = data as { options: PlaylistEntry[]; deadline: number };
-        setStatus((prev) => ({ ...prev, status: "voting", voteOptions: options, voteDeadline: deadline }));
-        notify?.(`Vote open: ${options.map((o, i) => `${i + 1}. ${o.label}`).join("  ")}`, "info");
-      } else if (type === "playlist_vote_result") {
-        const { winner, counts } = data as { winner: PlaylistEntry; counts: number[] };
-        setStatus((prev) => ({ ...prev, status: "active", voteOptions: [], voteDeadline: null }));
+        const { entry } = msg.payload as { entry: PlaylistEntry };
+        notify?.(named(`Rotating to: ${entry.label}`), "info");
+        void fetchStatus(id);
+        onChanged?.();
+      } else if (msg.type === "playlist_vote_announce") {
+        const { options } = msg.payload as { options: PlaylistEntry[] };
+        notify?.(named(`Vote open: ${options.map((o, i) => `${i + 1}. ${o.label}`).join("  ")}`), "info");
+      } else if (msg.type === "playlist_vote_result") {
+        const { winner, counts } = msg.payload as { winner: PlaylistEntry; counts: number[] };
         const total = counts?.reduce((a, b) => a + b, 0) ?? 0;
-        notify?.(`Vote winner: ${winner.label} (${total} vote${total === 1 ? "" : "s"})`, "info");
+        notify?.(named(`Vote winner: ${winner.label} (${total} vote${total === 1 ? "" : "s"})`), "info");
+      } else if (msg.type === "playlist_status") {
+        onChanged?.();
       }
     });
-    return unsub;
-  }, [onPlaylistEvent, notify]);
+  }, [onServerMessage, nameOf, notify, fetchStatus, onChanged]);
 
   const fetchPlaylists = useCallback(async () => {
     setLoading(true);
@@ -130,22 +157,17 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
     setLoading(false);
   }, []);
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/playlists/status", { credentials: "include" });
-      if (res.ok) {
-        setStatus(await res.json());
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // Load on mount
   useEffect(() => {
-    fetchPlaylists();
-    fetchStatus();
-  }, [fetchPlaylists, fetchStatus]);
+    void fetchPlaylists();
+  }, [fetchPlaylists]);
+
+  // The selected server's status, when it is shown.
+  useEffect(() => {
+    void fetchStatus(serverId);
+  }, [serverId, fetchStatus]);
+
+  // An error is about the server it happened on.
+  useEffect(() => setError(null), [serverId]);
 
   const createPlaylist = useCallback(async (
     name: string,
@@ -191,7 +213,7 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
         return null;
       }
       setPlaylists((prev) => prev.map((p) => (p.id === id ? data : p)));
-      // Saving the active playlist with other missions hosts them: the status carries the result.
+      // Saving an active playlist with other missions hosts them: the status carries the result.
       void fetchStatus();
       return data;
     } catch {
@@ -213,79 +235,96 @@ export function usePlaylist({ onPlaylistEvent, notify }: UsePlaylistOptions) {
         return false;
       }
       setPlaylists((prev) => prev.filter((p) => p.id !== id));
-      if (status.activePlaylistId === id) {
-        setStatus((prev) => ({ ...prev, activePlaylistId: null, status: "inactive" }));
+      // Deleting deactivates it on every server it was active on.
+      for (const sid of views.ids()) {
+        const st = views.get(sid).playlist;
+        if (st?.activePlaylistId === id) views.patch(sid, { playlist: { ...st, activePlaylistId: null, status: "inactive" } });
       }
+      onChanged?.();
       return true;
     } catch {
       setError("Network error");
       return false;
     }
-  }, [status.activePlaylistId]);
+  }, [views, onChanged]);
 
-  const activatePlaylist = useCallback(async (id: string, profileId?: string): Promise<boolean> => {
+  /** Activate a playlist on a server (default: the selected one); its entries are checked against that server's profile. */
+  const activatePlaylist = useCallback(async (id: string, target: string | null = serverId): Promise<boolean> => {
     setError(null);
+    if (!target || target === CONNECT_SERVER_ID) return false;
     try {
-      const res = await fetch(`/api/playlists/${encodeURIComponent(id)}/activate`, {
+      const res = await fetch(`/api/servers/${encodeURIComponent(target)}/playlist/activate`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        // profileId lets the server validate mission/game-mode compatibility
-        // against the profile that will actually be rotated.
-        body: JSON.stringify(profileId ? { profileId } : {}),
+        body: JSON.stringify({ playlistId: id }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Failed to activate playlist");
         return false;
       }
-      setStatus(data.status);
+      views.patch(target, { playlist: data.status as PlaylistStatus });
+      onChanged?.();
       return true;
     } catch {
       setError("Network error");
       return false;
-    }
-  }, []);
+    } 
+  }, [serverId, views, onChanged]);
 
-  const deactivatePlaylist = useCallback(async (): Promise<void> => {
+  const deactivatePlaylist = useCallback(async (target: string | null = serverId): Promise<void> => {
+    if (!target || target === CONNECT_SERVER_ID) return;
     try {
-      await fetch("/api/playlists/deactivate", {
+      const res = await fetch(`/api/servers/${encodeURIComponent(target)}/playlist/deactivate`, {
         method: "POST",
         credentials: "include",
       });
-      setStatus((prev) => ({
-        ...prev,
-        activePlaylistId: null,
-        status: "inactive",
-        gameEndAt: null,
-        voteOptions: [],
-        voteDeadline: null,
-      }));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify?.(namedMessage(nameOf(target), data.error ?? "Failed to deactivate playlist"));
+        return;
+      }
+      const prev = views.get(target).playlist ?? INACTIVE_STATUS;
+      views.patch(target, {
+        playlist: {
+          ...prev,
+          activePlaylistId: null,
+          status: "inactive",
+          gameEndAt: null,
+          voteOptions: [],
+          voteDeadline: null,
+        },
+      });
+      onChanged?.();
     } catch {
       // ignore
     }
-  }, []);
+  }, [serverId, views, notify, nameOf, onChanged]);
 
-  const resumePlaylist = useCallback(async (): Promise<void> => {
+  const resumePlaylist = useCallback(async (target: string | null = serverId): Promise<void> => {
+    if (!target || target === CONNECT_SERVER_ID) return;
     try {
-      const res = await fetch("/api/playlists/resume", {
+      const res = await fetch(`/api/servers/${encodeURIComponent(target)}/playlist/resume`, {
         method: "POST",
         credentials: "include",
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setStatus(data.status);
+        views.patch(target, { playlist: data.status as PlaylistStatus });
+        onChanged?.();
       } else {
-        notify?.(data.error ?? "Failed to resume playlist");
+        notify?.(namedMessage(nameOf(target), data.error ?? "Failed to resume playlist"));
       }
     } catch {
-      notify?.("Failed to resume playlist");
+      notify?.(namedMessage(nameOf(target), "Failed to resume playlist"));
     }
-  }, [notify]);
+  }, [serverId, views, notify, nameOf, onChanged]);
 
   return {
     playlists,
     status,
+    hasPlaylist,
     loading,
     error,
     fetchPlaylists,

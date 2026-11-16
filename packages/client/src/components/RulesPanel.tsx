@@ -7,7 +7,9 @@ import {
   type PlayerRules,
   type PlayerSettings,
   type RulesState,
+  query,
 } from "@/lib/players";
+import { useSession } from "@/session/SessionProvider";
 
 const inputClass =
   "bg-input border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
@@ -47,9 +49,12 @@ function NumberField({
 
 /**
  * Nickname rules, the profanity monitor and the address lookup setting
- * (server: routes/playerRules.ts, routes/players.ts).
+ * (server: routes/playerRules.ts, routes/players.ts). The rules are every
+ * server's; the lookup count, the offenders and Forgive are the selected
+ * server's.
  */
 export function RulesPanel({ notify }: { notify: (message: string, type?: "error" | "info") => void }) {
+  const { eventProfileId, serverName } = useSession();
   const [state, setState] = useState<RulesState | null>(null);
   const [draft, setDraft] = useState<PlayerRules | null>(null);
   const [words, setWords] = useState("");
@@ -59,8 +64,8 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
   const load = useCallback(async () => {
     try {
       const [rules, players] = await Promise.all([
-        getJson<RulesState>("/api/players/rules"),
-        getJson<LookupState>("/api/players/settings"),
+        getJson<RulesState>(`/api/players/rules${query({ profileId: eventProfileId })}`),
+        getJson<LookupState>(`/api/players/settings${query({ profileId: eventProfileId })}`),
       ]);
       setState(rules);
       setDraft(rules.rules);
@@ -69,7 +74,7 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err));
     }
-  }, [notify]);
+  }, [notify, eventProfileId]);
 
   useEffect(() => {
     void load();
@@ -97,6 +102,7 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
   };
 
   if (!state || !draft || !lookup) return <p className="text-sm text-muted-foreground font-score">Loading rules...</p>;
+  const recent = state.recent.filter((a) => !eventProfileId || a.profileId === eventProfileId);
   const nick = draft.nickname;
   const prof = draft.profanity;
   const setNick = (patch: Partial<typeof nick>) => setDraft({ ...draft, nickname: { ...nick, ...patch } });
@@ -106,6 +112,10 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
 
   return (
     <div className="h-full overflow-auto space-y-5 pr-1">
+      <p className="text-[11px] text-muted-foreground">
+        The rules apply to all servers. Lookups used, rule actions and profanity counts below are{" "}
+        {serverName ? <span className="text-foreground/80">{serverName}</span> : "the selected server"}'s.
+      </p>
       <section className="space-y-2">
         <h2 className="text-sm font-score tracking-wide">Nickname rules</h2>
         <label className="flex items-center gap-2 text-xs">
@@ -216,9 +226,9 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
           $netgameinfo crash servers); about 40 queries crash a retail server. Matcen 0.9.3 and later clear it every
           frame.{" "}
           {lookup.lookup.unlimited === true
-            ? "The open server does: no limit applies."
+            ? "This server does: no limit applies."
             : lookup.lookup.profileId
-              ? `The open server does not: ${lookup.lookup.used} of ${lookup.settings.ipLookupBudget} used this run.`
+              ? `This server does not: ${lookup.lookup.used} of ${lookup.settings.ipLookupBudget} used this run.`
               : ""}
         </p>
       </section>
@@ -227,12 +237,12 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
         {saving ? "Saving..." : "Save rules"}
       </Button>
 
-      {(state.recent.length > 0 || state.offenders.length > 0) && (
+      {(recent.length > 0 || state.offenders.length > 0) && (
         <section className="space-y-2">
           <h2 className="text-sm font-score tracking-wide">Recent rule actions</h2>
           <table className="w-full text-sm">
             <tbody>
-              {state.recent.map((a, i) => (
+              {recent.map((a, i) => (
                 <tr key={i} className="border-b border-border/50">
                   <td className="py-1 font-mono text-xs whitespace-nowrap">{shortTime(a.time)}</td>
                   <td className="py-1 text-xs">{a.name}</td>
@@ -260,7 +270,7 @@ export function RulesPanel({ notify }: { notify: (message: string, type?: "error
                     variant="ghost"
                     size="xs"
                     onClick={() =>
-                      void sendJson("POST", "/api/players/rules/forgive", { name: o.name }).then(load, (err) =>
+                      void sendJson("POST", "/api/players/rules/forgive", { name: o.name, profileId: eventProfileId }).then(load, (err) =>
                         notify(err instanceof Error ? err.message : String(err)),
                       )
                     }

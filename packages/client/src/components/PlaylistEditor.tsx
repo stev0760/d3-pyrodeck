@@ -9,6 +9,7 @@ import type {
 } from "../hooks/usePlaylist.ts";
 import { DEFAULT_HOLD_SECONDS, MAX_HOLD_SECONDS } from "../hooks/usePlaylist.ts";
 import { PlaylistDownloads } from "./PlaylistDownloads.tsx";
+import { launchRows, type ServerRow } from "@/lib/servers";
 import {
   missionSupports,
   scriptModeLabel,
@@ -29,8 +30,38 @@ interface PlaylistEditorProps {
   onDeletePlaylist: (id: string) => Promise<boolean>;
   onActivate: (id: string) => void;
   onDeactivate: () => void;
-  /** Profile whose Scriptname entries are compat-checked against (Launch panel selection). */
+  /** Profile whose Scriptname entries are compat-checked against (the selected server's). */
   selectedProfileId?: string;
+  /** Every server, to show where each playlist is active (the library is shared; each server has one active). */
+  servers?: readonly ServerRow[];
+  /** The selected server: Activate and Deactivate act on it. */
+  selectedServerId?: string | null;
+  serverName?: string | null;
+}
+
+/** The servers a playlist is active on, by name. */
+function activeOn(servers: readonly ServerRow[], playlistId: string): ServerRow[] {
+  return launchRows(servers).filter((s) => s.playlist?.id === playlistId);
+}
+
+function ActiveOnBadges({ rows, selectedServerId }: { rows: ServerRow[]; selectedServerId?: string | null }) {
+  if (rows.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {rows.map((r) => (
+        <span
+          key={r.id}
+          className={`text-[10px] rounded px-1.5 py-0.5 font-medium border ${
+            r.id === selectedServerId
+              ? "bg-green-500/20 text-green-400 border-green-500/30"
+              : "bg-muted/40 text-muted-foreground border-border"
+          }`}
+        >
+          Active on {r.name}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +192,10 @@ function PlaylistDetail({
   selectedProfileId,
   hookError,
   downloads,
+  activeRows,
+  selectedServerId,
+  serverName,
+  otherActiveName,
 }: {
   playlist: Playlist;
   isActive: boolean;
@@ -174,6 +209,12 @@ function PlaylistDetail({
   hookError?: string | null;
   /** While active: the result of pointing the missions at the mission host. */
   downloads?: PlaylistStatus["downloads"];
+  /** The servers it is active on. */
+  activeRows: ServerRow[];
+  selectedServerId?: string | null;
+  serverName?: string | null;
+  /** Another playlist active on the selected server, which activating this one replaces. */
+  otherActiveName?: string | null;
 }) {
   const [name, setName] = useState(playlist.name);
   const [mode, setMode] = useState<PlaylistMode>(playlist.mode);
@@ -303,26 +344,28 @@ function PlaylistDetail({
           </button>
           <span className="text-muted-foreground text-xs">/</span>
           <span className="text-sm font-medium text-foreground">{playlist.name}</span>
-          {isActive && (
-            <span className="text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 rounded px-1.5 py-0.5 font-medium">
-              Active
-            </span>
-          )}
+          <ActiveOnBadges rows={activeRows} selectedServerId={selectedServerId} />
         </div>
         <div className="flex items-center gap-1.5">
           {isActive ? (
             <Button variant="secondary" size="xs" onClick={onDeactivate}>
-              Deactivate
+              {serverName ? `Deactivate on ${serverName}` : "Deactivate"}
             </Button>
           ) : (
             <Button
               variant="secondary"
               size="xs"
               onClick={onActivate}
-              disabled={entries.length === 0}
-              title={entries.length === 0 ? "Add missions first" : undefined}
+              disabled={entries.length === 0 || !selectedServerId}
+              title={
+                entries.length === 0
+                  ? "Add missions first"
+                  : otherActiveName
+                    ? `Replaces "${otherActiveName}" on ${serverName ?? "this server"}`
+                    : undefined
+              }
             >
-              Activate
+              {serverName ? `Activate on ${serverName}` : "Activate"}
             </Button>
           )}
           <Button
@@ -600,6 +643,9 @@ export function PlaylistEditor({
   onActivate,
   onDeactivate,
   selectedProfileId,
+  servers = [],
+  selectedServerId,
+  serverName,
 }: PlaylistEditorProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -642,6 +688,14 @@ export function PlaylistEditor({
         selectedProfileId={selectedProfileId}
         hookError={error}
         downloads={status.activePlaylistId === selected.id ? status.downloads : null}
+        activeRows={activeOn(servers, selected.id)}
+        selectedServerId={selectedServerId}
+        serverName={serverName}
+        otherActiveName={
+          status.activePlaylistId && status.activePlaylistId !== selected.id
+            ? (playlists.find((p) => p.id === status.activePlaylistId)?.name ?? null)
+            : null
+        }
       />
     );
   }
@@ -650,7 +704,13 @@ export function PlaylistEditor({
     <div className="@container flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <h2 className="text-sm font-semibold text-foreground">Playlists</h2>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">Playlists</h2>
+          <p className="text-[10px] text-muted-foreground">
+            Shared by all servers; each server rotates one. Activate and Deactivate act on{" "}
+            {serverName ? <span className="text-foreground/80">{serverName}</span> : "the selected server"}.
+          </p>
+        </div>
         <Button size="xs" onClick={() => setCreating(true)} disabled={creating}>
           New Playlist
         </Button>
@@ -706,6 +766,7 @@ export function PlaylistEditor({
         <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
           {playlists.map((pl) => {
             const isActive = status.activePlaylistId === pl.id;
+            const rows = activeOn(servers, pl.id);
             return (
               <button
                 key={pl.id}
@@ -726,6 +787,11 @@ export function PlaylistEditor({
                       <ModeLabel mode={pl.mode} /> · {pl.entries.length} mission{pl.entries.length !== 1 ? "s" : ""}
                       {pl.voting.enabled && " · voting on"}
                     </p>
+                    {rows.length > 0 && (
+                      <div className="mt-0.5">
+                        <ActiveOnBadges rows={rows} selectedServerId={selectedServerId} />
+                      </div>
+                    )}
                   </div>
                 </div>
                 <span className="text-muted-foreground text-xs shrink-0 ml-2">›</span>

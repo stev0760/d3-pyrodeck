@@ -74,6 +74,10 @@ export function BansPanel({ notify }: { notify: (message: string, type?: "error"
 
   return (
     <div className="@container h-full overflow-auto space-y-5 pr-1">
+      <p className="text-[11px] text-muted-foreground">
+        Bans apply to all servers: the name bans are checked on every server's joins, and after an edit of hosts.deny
+        every server's console gets <span className="font-mono">$rehash</span>.
+      </p>
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-score tracking-wide">Address bans (hosts.deny)</h2>

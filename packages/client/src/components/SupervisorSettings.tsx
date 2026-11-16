@@ -28,10 +28,20 @@ const toForm = (s: Settings): Form => ({
 
 /**
  * Launch panel: the supervisor's three rules (relaunch after a crash, restart
- * a hung server, restart when empty) and what it has done. `state` comes with
- * the launcher status poll; `onChanged` asks for a fresh one.
+ * a hung server, restart when empty), which apply to every server, and what
+ * it has done on the selected server. `state` comes with that server's status
+ * poll; `onChanged` asks for a fresh one.
  */
-export function SupervisorSettings({ state, onChanged }: { state: SupervisorState | null; onChanged: () => void }) {
+export function SupervisorSettings({
+  state,
+  serverId,
+  onChanged,
+}: {
+  state: SupervisorState | null;
+  /** The selected server: its counters are shown, and Cancel drops its relaunch. */
+  serverId: string | null;
+  onChanged: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
@@ -40,8 +50,8 @@ export function SupervisorSettings({ state, onChanged }: { state: SupervisorStat
 
   // The status poll carries the state; fetch it once in case the poll has not run yet.
   useEffect(() => {
-    if (!state) fetchSupervisor().then(setFallback);
-  }, [state]);
+    if (!state) fetchSupervisor(serverId).then(setFallback);
+  }, [state, serverId]);
 
   const s = state ?? fallback;
 
@@ -88,7 +98,11 @@ export function SupervisorSettings({ state, onChanged }: { state: SupervisorStat
 
   const cancelRelaunch = async () => {
     setError(null);
-    const res = await fetch("/api/launcher/supervisor/cancel-relaunch", { method: "POST", credentials: "include" });
+    if (!serverId) return;
+    const res = await fetch(`/api/servers/${encodeURIComponent(serverId)}/supervisor/cancel-relaunch`, {
+      method: "POST",
+      credentials: "include",
+    });
     if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? "Failed to cancel");
     onChanged();
   };
@@ -219,10 +233,11 @@ export function SupervisorSettings({ state, onChanged }: { state: SupervisorStat
           </div>
 
           <Button size="xs" onClick={() => void save()} disabled={saving} className="w-full font-score tracking-wide">
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : "Save for all servers"}
           </Button>
           <p className="text-[10px] text-muted-foreground leading-snug">
-            A quiet console gets <span className="font-mono">$players</span>; no answer at all by the restart time
+            These rules apply to every server; each server's supervisor keeps its own counters. A quiet console gets{" "}
+            <span className="font-mono">$players</span>; no answer at all by the restart time
             means the server is hung. Level loads get 2 minutes. Bots never count as players, and Pyrodeck asks the
             server who is on before an empty restart. A server you stop stays down; a crash during a playlist restart
             is left to the playlist's retry.
