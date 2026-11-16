@@ -52,12 +52,28 @@ export interface Playlist {
 export const DEFAULT_HOLD_SECONDS = 30;
 export const MAX_HOLD_SECONDS = 120;
 
+/**
+ * Why the entry at currentIndex is not yet the one the server runs: the playlist was activated and has not loaded
+ * it ("activation"), the players are held before the restart into it ("hold"), or that restart was handed to the
+ * launcher and has not come healthy ("restart").
+ */
+export type PendingKind = "activation" | "hold" | "restart";
+const PENDING_KINDS: readonly PendingKind[] = ["activation", "hold", "restart"];
+
 export interface PlaylistState {
   activePlaylistId: string | null;
+  /** The entry the server runs; with `pending`, the entry it runs next. */
   currentIndex: number;
+  /** Shuffle mode: the entries still to come in this round, in order. */
   shuffleOrder: number[] | null;
   /** Set while rotation is paused (e.g. a restart never came healthy). */
   paused?: { reason: string; at: number } | null;
+  /**
+   * Set while the entry at currentIndex is not the server's yet, since `since` (epoch ms; for a restart, when it was
+   * handed to the launcher). Lets a restarted Pyrodeck tell what a server it re-attaches to runs (reattached()).
+   * Absent in state saved by older versions.
+   */
+  pending?: { kind: PendingKind; since: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +157,21 @@ export class PlaylistManager extends EventEmitter {
    * Prevents the first "Ending level." from skipping entry[0].
    */
   private needsInitialSync = false;
+
+  /**
+   * When the entry at currentIndex stopped being the one the server runs (epoch ms): set on activation, at a
+   * rotation's hold and again when its restart is handed to the launcher. Saved with the state's `pending`.
+   */
+  private pendingSince: number | null = null;
+
+  /**
+   * A hold or restart the last Pyrodeck run saved as under way (PlaylistState.pending), until the re-attached
+   * server's console settles it (reattached()) or a launch loads the entry (consumeInitialSync()).
+   */
+  private restoredRotation: "hold" | "restart" | null = null;
+
+  /** The state writes in order: each waits for the one before, so the last change is the one left on disk. */
+  private stateWrites: Promise<void> = Promise.resolve();
 
   /**
    * The last time the active playlist's missions were pointed at the mission host (routes/mission-host.ts,
@@ -359,6 +390,8 @@ export class PlaylistManager extends EventEmitter {
     this.status = "active";
     this.shuffleOrder = null;
     this.needsInitialSync = true;
+    this.pendingSince = Date.now();
+    this.restoredRotation = null;
     this.pendingWinner = null;
     this.pausedReason = null;
     this.pausedAt = null;
@@ -387,6 +420,8 @@ export class PlaylistManager extends EventEmitter {
     this.downloads = null;
     this.status = "inactive";
     this.needsInitialSync = false;
+    this.pendingSince = null;
+    this.restoredRotation = null;
     this.pendingWinner = null;
     this.pausedReason = null;
     this.pausedAt = null;
@@ -424,6 +459,7 @@ export class PlaylistManager extends EventEmitter {
     this.waitSent = false;
     if (this.status === "restarting") {
       this.status = "active";
+      this.saveState().catch(() => {}); // the server runs the entry now
       this.emitTimerUpdate();
     }
   }
@@ -438,6 +474,7 @@ export class PlaylistManager extends EventEmitter {
     if (!this.activePlaylist) return;
     this.endHold(true);
     this.status = "paused";
+    this.restoredRotation = null;
     this.pausedReason = reason;
     this.pausedAt = Date.now();
     this.pendingWinner = null;
@@ -821,12 +858,15 @@ export class PlaylistManager extends EventEmitter {
       next = entry;
     } else if (this.needsInitialSync) {
       // First rotation after activate-while-running: load entry[0] instead of
-      // advancing past it.
+      // advancing past it. (After a Pyrodeck restart: the entry saved as not
+      // loaded yet.)
       next = this.activePlaylist.entries[this.currentIndex];
     } else {
       next = this.advanceAndGetEntry();
     }
     this.needsInitialSync = false;
+    this.restoredRotation = null;
+    this.pendingSince = Date.now();
 
     const hold = this.holdSecondsOf(this.activePlaylist);
     if (hold > 0 && this.humansOn()) {
@@ -836,9 +876,14 @@ export class PlaylistManager extends EventEmitter {
     this.rotateTo(next);
   }
 
-  /** Hand the rotation to the launcher (stop, swap the mission, restart). */
+  /**
+   * Hand the rotation to the launcher (stop, swap the mission, restart). The new position is saved first, marked as
+   * a restart since now: a server started after this runs the entry (reattached()).
+   */
   private rotateTo(next: PlaylistEntry): void {
     this.status = "restarting";
+    this.pendingSince = Date.now();
+    this.saveState().catch(() => {});
     // The next mission may change time limit/goal — refresh the cache once when
     // its first level opens.
     this.requeryOnNextLevel = true;
@@ -876,6 +921,7 @@ export class PlaylistManager extends EventEmitter {
     this.holdAwaitingLevel = true;
     this.holdTimers.push(setTimeout(() => this.beginHoldFreeze(), HOLD_LEVEL_WAIT_MS));
     console.log(`[Playlist] Mission over: holding ${seconds}s before the restart into "${entry.label}"`);
+    this.saveState().catch(() => {});
     this.emit("statusChanged");
   }
 
@@ -994,6 +1040,7 @@ export class PlaylistManager extends EventEmitter {
     console.log(`[Playlist] Hold before "${this.holdEntry?.label}" called off`);
     this.endHold(true);
     this.status = "active";
+    this.saveState().catch(() => {});
     this.emit("statusChanged");
   }
 
@@ -1014,7 +1061,38 @@ export class PlaylistManager extends EventEmitter {
   consumeInitialSync(): PlaylistEntry | null {
     if (!this.needsInitialSync || !this.activePlaylist) return null;
     this.needsInitialSync = false;
+    this.restoredRotation = null;
+    this.saveState().catch(() => {});
     return this.activePlaylist.entries[this.currentIndex] ?? null;
+  }
+
+  /**
+   * Pyrodeck has logged in to a server it re-attached to at startup, one started at `startedAt`. Settles an entry
+   * the last run saved as not yet the server's (PlaylistState.pending):
+   * - a restart handed to the launcher before this server started: this is the restarted server, and it runs the
+   *   entry. The next mission end goes past it.
+   * - a hold, or a restart handed over after this server started: this is the old server, its mission is over and it
+   *   may be held, so the restart into the entry happens now, without a second hold. Returns true then.
+   * - an activation: nothing to do; the server's mission end loads the entry, as without the restart.
+   */
+  reattached(startedAt: Date): boolean {
+    const kind = this.restoredRotation;
+    if (!kind || !this.activePlaylist || !this.needsInitialSync || this.pendingSince === null) return false;
+    this.restoredRotation = null;
+    if (kind === "restart" && startedAt.getTime() >= this.pendingSince) {
+      this.needsInitialSync = false;
+      this.saveState().catch(() => {});
+      return false;
+    }
+    const entry = this.activePlaylist.entries[this.currentIndex];
+    if (this.status !== "active" || !entry) return false;
+    console.log(`[Playlist] The restart into "${entry.label}" was under way when Pyrodeck stopped; restarting now`);
+    this.needsInitialSync = false;
+    this.clearTimers();
+    // The hold may have held this server (`$wait on`): a rotation the launcher calls off must let the players go.
+    this.waitSent = true;
+    this.rotateTo(entry);
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1304,19 +1382,43 @@ export class PlaylistManager extends EventEmitter {
   // Persistence
   // ---------------------------------------------------------------------------
 
-  private async saveState(): Promise<void> {
+  /** Why the entry at currentIndex is not the server's yet, or null when it is. See PlaylistState.pending. */
+  private pendingState(): PlaylistState["pending"] {
+    if (!this.activePlaylist || this.pendingSince === null) return null;
+    let kind: PendingKind | null = null;
+    if (this.status === "holding") kind = "hold";
+    else if (this.status === "restarting") kind = "restart";
+    else if (this.needsInitialSync) kind = this.restoredRotation ?? "activation";
+    return kind ? { kind, since: this.pendingSince } : null;
+  }
+
+  /**
+   * Save the state as it is now. Called at every change of position: activation, a rotation's hold and its hand-off
+   * to the launcher, the healthy restart, a launch that loads the entry.
+   */
+  private saveState(): Promise<void> {
+    const state: PlaylistState = {
+      activePlaylistId: this.activePlaylist?.id ?? null,
+      currentIndex: this.currentIndex,
+      shuffleOrder: this.shuffleOrder,
+      paused:
+        this.status === "paused" && this.pausedReason
+          ? { reason: this.pausedReason, at: this.pausedAt ?? Date.now() }
+          : null,
+      pending: this.pendingState(),
+    };
+    const write = this.stateWrites.then(() => this.writeState(state));
+    this.stateWrites = write;
+    return write;
+  }
+
+  private async writeState(state: PlaylistState): Promise<void> {
     try {
-      const state: PlaylistState = {
-        activePlaylistId: this.activePlaylist?.id ?? null,
-        currentIndex: this.currentIndex,
-        shuffleOrder: this.shuffleOrder,
-        paused:
-          this.status === "paused" && this.pausedReason
-            ? { reason: this.pausedReason, at: this.pausedAt ?? Date.now() }
-            : null,
-      };
       await fs.mkdir(path.dirname(this.statePath), { recursive: true });
-      await fs.writeFile(this.statePath, JSON.stringify(state, null, 2));
+      // Written whole, then renamed over the old file: a Pyrodeck stopped mid-write leaves the last state.
+      const tmp = `${this.statePath}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(state, null, 2));
+      await fs.rename(tmp, this.statePath);
     } catch {
       // State persistence is best-effort
     }
@@ -1329,10 +1431,20 @@ export class PlaylistManager extends EventEmitter {
       if (state.activePlaylistId) {
         try {
           const playlist = await this.read(state.activePlaylistId);
+          const n = playlist.entries.length;
+          const isIndex = (i: unknown): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < n;
           this.activePlaylist = playlist;
           this.status = "active";
-          this.currentIndex = state.currentIndex ?? 0;
-          this.shuffleOrder = state.shuffleOrder ?? null;
+          this.currentIndex = isIndex(state.currentIndex) ? state.currentIndex : 0;
+          this.shuffleOrder =
+            Array.isArray(state.shuffleOrder) && state.shuffleOrder.every(isIndex) ? state.shuffleOrder : null;
+          const pending = state.pending;
+          if (pending && PENDING_KINDS.includes(pending.kind) && Number.isFinite(pending.since)) {
+            // The entry is not the server's yet: it comes next (reattached(), consumeInitialSync()).
+            this.needsInitialSync = true;
+            this.pendingSince = pending.since;
+            this.restoredRotation = pending.kind === "activation" ? null : pending.kind;
+          }
           if (state.paused) {
             this.status = "paused";
             this.pausedReason = state.paused.reason;

@@ -343,6 +343,11 @@ export class ServerInstance {
    * onto its ports.
    */
   private reattachBlock: string | null = null;
+  /**
+   * When the server re-attached at startup was started, until Pyrodeck first logs in to its console: that login
+   * settles a playlist rotation the last Pyrodeck left under way (PlaylistManager.reattached).
+   */
+  private reattachedStartedAt: Date | null = null;
   private consoleReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingOutput: { stream: "stdout" | "stderr"; data: string }[] = [];
   private outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1052,6 +1057,12 @@ export class ServerInstance {
         this.rotationHealth.healthy(healthToken);
       }
 
+      // The first login to a server re-attached at startup settles a rotation the last Pyrodeck left under way. A
+      // restart that begins now needs no timer anchor.
+      const reattachedAt = this.reattachedStartedAt;
+      this.reattachedStartedAt = null;
+      const restartingNow = reattachedAt !== null && this.playlist.reattached(reattachedAt);
+
       // Per-profile DMFC settings dedicated.cfg can't hold. The console runs
       // one command at a time, so these never interleave with other replies.
       if (!again) void this.applyPostStartSettings(connection);
@@ -1064,7 +1075,7 @@ export class ServerInstance {
       this.watchConsole(connection, host, port, telnetPassword);
 
       // Anchor playlist timer if a playlist is active
-      if (this.playlist.isActive() && anchorPlaylist) {
+      if (this.playlist.isActive() && anchorPlaylist && !restartingNow) {
         this.playlist.anchorTimer().catch(() => {});
       }
 
@@ -1531,6 +1542,7 @@ export class ServerInstance {
     }
     if (state === "stopped" || state === "crashed") {
       this.stopConsoleReconnect();
+      this.reattachedStartedAt = null;
       this.queueRunRecord(() => this.clearOwnRunRecord());
       const { exitCode, exitSignal, stopReason } = this.process.getStatus();
       const down: ProcessDown = {
@@ -1594,6 +1606,8 @@ export class ServerInstance {
    * as this server's own record from then on.
    */
   private async reattachToRunningServer(others: RunRecord[]): Promise<string | null> {
+    // The playlist's saved position is read before a re-attached console can log in and settle it.
+    await this.playlistRestored;
     const own = await readRunRecord(this.runRecordDir, this.runRecordName);
     const seen = new Set<number>();
     const candidates = [own, ...others]
@@ -1685,7 +1699,9 @@ export class ServerInstance {
         this.scheduleConsoleReconnect(host, port, password);
       });
     });
-    this.process.adopt({ pid: record.pid, startedAt: new Date(record.startedAt), config, args: record.args, isAlive });
+    const startedAt = new Date(record.startedAt);
+    this.reattachedStartedAt = Number.isNaN(startedAt.getTime()) ? null : startedAt;
+    this.process.adopt({ pid: record.pid, startedAt, config, args: record.args, isAlive });
     console.log(`[Pyrodeck] Re-attached to the server Pyrodeck launched before it restarted (PID ${record.pid})`);
     return "adopted";
   }

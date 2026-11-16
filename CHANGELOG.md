@@ -42,6 +42,14 @@ used through the API; the panel shows one server (the default) until the next re
   `$rehash` after a hosts.deny edit goes to every server's console. Kick and ban take the server's `profileId` when
   several consoles are open.
 
+### Fixed
+- **A playlist no longer skips an entry after Pyrodeck restarts.** The position was saved only at activation, so a
+  restarted Pyrodeck came back at the first entry and the next mission change skipped ahead (0.5.7 and earlier do
+  the same). The position is now saved at every mission change, and the next one goes to the entry after the one the
+  server runs; a shuffle round goes on where it was. A mission change that was under way is finished: a server held
+  before its restart, or one not yet stopped, is restarted into the next mission once Pyrodeck has logged in to it
+  again; a server already restarted into it is left alone; with no server left, the next launch starts it.
+
 ### Upgrade
 - The first start upgrades the config directory in place: `servers.json` (the autostart list) and `servers/<id>/`
   (each server's run record and playlist state) are added; nothing else is moved. A running server is re-attached
