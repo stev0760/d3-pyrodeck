@@ -1585,9 +1585,9 @@ emails, service mode and priority class). No `$` command or console output chang
   the spring gap moves forward by the gap and an end in the autumn repeat ends at its first occurrence. Overlapping or
   touching windows merge into one run.
 - A 30 s tick (the first 10 s after Pyrodeck starts), edge-triggered on runs: at a run's start, the profile is
-  started through the Launch panel's own path (`ServerInstance.start`; `server.started{reason:"schedule"}`) if nothing
-  is running; another profile's server or a playlist restart in progress skips it (`schedule.skipped` event, error
-  toast). At the run's end, if the profile's
+  started through the Launch panel's own path (`ServerInstance.start`; `server.started{reason:"schedule"}`) if its
+  server is not running; a launch refused for a clash with another running server (H.3) or a playlist restart in
+  progress skips it (`schedule.skipped` event, error toast). At the run's end, if the profile's
   server is running, it is stopped (`ServerInstance.stop`: SIGTERM, no `quit`; `server.stopped{reason:"schedule"}`) as soon as `$players` lists no
   human (slot 0 and `[BOT]` callsigns excluded), and at `end + stopWaitMinutes` regardless; without a console session the
   count is unknown and the stop waits for the deadline. One `say` when the wait begins.
@@ -1870,7 +1870,8 @@ replay the buffer on mount, so scrollback survives leaving a tab. `App` picks th
 The phone shell lives in the URL hash (`lib/hashRoute.ts`, `hooks/useHashRoute.ts`): `#/server`, `#/console`,
 `#/console/output`, `#/players`, `#/players/history`, `#/bots`, `#/more`, `#/more/profiles`, `#/more/config`,
 `#/more/config/server`, `#/more/config/roster`, `#/more/config/raw?file=`, `#/more/config/files`,
-`#/more/playlists`, `#/more/logs`, `#/more/bans`, `#/more/rules`, `#/more/settings`. A tab tap replaces the history
+`#/more/playlists`, `#/more/logs`, `#/more/bans`, `#/more/rules`, `#/more/settings`; since v0.6.0 every route also
+carries the server on screen as `?s=<id>` (H.9). A tab tap replaces the history
 entry (back from a root leaves the app), a stacked screen pushes with its depth in `history.state`, and `back()` walks
 history when there is somewhere to go, else replaces with the tab root. Sheets do not enter history.
 
@@ -1922,10 +1923,10 @@ idle desktop and tablet screen after it (the Logs tab and the live screens carry
 the roster round-trip, the population parser and the backups; client vitest covers the line buffer, the hash routes
 and the command table.
 
-## Addendum H — Several servers at once (2026-11-15, unreleased, branch `feature/multi-server`)
+## Addendum H — Several servers at once (2026-11-15, v0.6.0, branches `feature/multi-server`, `feature/multi-server-ui`)
 
 One Pyrodeck runs several Descent 3 dedicated servers side by side, each with its own profile, ports, console,
-supervisor and playlist. This addendum covers the server side; the panel still shows one server (the default, H.7).
+supervisor and playlist, and one panel manages them all (H.9).
 
 ### H.1 Servers and ids
 
@@ -2084,7 +2085,50 @@ messages (`ping`, errors of no server: schedule, process priority) go to every s
 payload: { command, serverId? } }` runs on the named server's console (protocol 2), else on the default server's; the
 parsed reply (`players`, `bots`, ...) comes back to that socket, tagged for protocol 2.
 
-### H.9 Verified, and not yet
+### H.9 The panel (client)
+
+`useSession()` keeps its shape and is the selected server's view. `session/SessionProvider.tsx` adds the server list
+(`hooks/useServers.ts`: `GET /api/servers` every 2 s while a server is up, 5 s otherwise, and 250 ms after a
+`process_state`, `connection_state` or `level_changed`), `selectedServerId` and `selectServer()`, `serverId` (the
+selected server, or `connect` in Connect mode), the server's row and name, `nameOf(id)`, and `eventProfileId` (the
+`profileId` its events carry: the profile's id, `launch`, or `connect:<host>:<port>`).
+
+Selection (`lib/servers.ts` `chooseServer`): the server asked for while it is listed (the hash's `s`, then
+`localStorage["pyrodeck-server"]`), else `defaultServerId`, else the first row; Connect mode's session is never
+selected. Choosing a server stores it.
+
+WebSocket (`hooks/useServerConnection.ts`): the socket sends `hello` with protocol 2 on open. `routeMessage()` gives a
+tagged message to its server, drops an untagged message of a server's kind (the greeting before the hello; it is sent
+again tagged), and keeps the rest global (ping, hello, errors of no server). Every tagged message is applied to its
+server's view (`lib/serverViews.ts`, one per server: console login, capabilities, process state, level, the cached
+`serverinfo` and its countdown anchor, playlist status, and two line buffers, 2000 console and 5000 process lines);
+the `on...` subscriptions fire for the selected server only. A view is replaced on a change, so it is a stable
+`useSyncExternalStore` snapshot. After a reconnect's hello every console reads as logged out until its greeting.
+Commands carry the selected server's id. `$netgameinfo` is sent once per console login of a server, when it is first
+shown (`infoAsked` in its view), never on a switch back.
+
+Routes: Start, Stop, the selected server's status, playlist status, activate, deactivate and resume, supervisor and
+autostart cancels go to `/api/servers/:serverId/...`; players and addresses come from `/api/servers/:serverId/players`;
+kick, ban, rules, forgive and player settings send the server's `profileId`. Nothing relies on a flat route's default
+server. Errors and toasts carry the server's name (`namedMessage`, unless the message names it already).
+
+Desktop: the Launch panel's server list (`components/ServerList.tsx`): per row the state dot and label
+(`rowStateLabel`: restarting or holding during a rotation, "holding ports" for a held server), game type, mission and
+level, humans of max, playlist, ports, Start or Stop, and under the row a refusal split into its reasons
+(`refusalLines`). The header's `ServerChip`, the right sidebar's title and the Launch and Stop buttons name the server.
+Panels holding one server's state (consoles, Players, Bots, Rules, the sidebar) are keyed by `serverId`. The playlist
+editor shows "Active on <server>" from the rows and activates on the selected server. Logs mark each running server's
+live log. The profile form edits `startupFile` (warning when another profile in the same game directory uses the same
+file) and `launchOptions.tempDir`; the config editor uses the companions' `autoexec.filename`. The Autostart block
+lists every profile that starts with Pyrodeck and shows the selected server's run; the form's box adds or removes its
+profile (F.4's "replaces" is gone) and is locked by either variable. Bans and Settings say they apply to all servers.
+
+Phone: the Server screen lists the servers (`ServerListRow`) above the selected server's card; every screen's
+`ShellStatus` names the server and opens `ServerPickerSheet`; `<main>` is keyed by `serverId`. `hooks/useHashRoute.ts`
+carries `s` through `navigate()`; `MobileApp` rewrites a hash whose `s` is not the selection (`replaceHash`), so the
+back button never switches servers.
+
+### H.10 Verified, and not yet
 
 Server vitest runs three servers on one bus with stand-in processes and consoles (`servers/testing/fakeGames.ts`):
 launches side by side, a crash and relaunch of one, a human on one and the restart-when-empty of another, two
@@ -2094,9 +2138,16 @@ downgrade then upgrade, idempotent); the API, the aliases and the hello over Fas
 against a scratch config directory with a stand-in game executable: three servers launched, logged in and listed;
 two rotations at the same moment; Pyrodeck restarted and re-attached to all three; two profiles autostarted.
 
+Client vitest covers the message routing by `serverId`, the per-server views, the selection and its fallbacks, the
+refusal lines and the hash's `s`. The built panel was driven with Playwright against stand-in servers (desktop 1440x900
+and phone 390x844): the server list with two and three running, consoles and rosters following a switch and back,
+Start and Stop per row, a refused launch naming the server holding the game port, a playlist active on two servers, a
+reload keeping the server on screen.
+
 Only real servers can show: two games on one machine with clients on both; `-tempdir` on retail 1.4 and PiccuEngine;
 a separate `-autoexec` file per profile read by DMFC; `systemctl restart` with `KillMode=process` re-attaching
-several; the CPU of several bot servers on one VPS; a downgrade to 0.5.7 on a copy of a config directory.
+several; the CPU of several bot servers on one VPS; a downgrade to 0.5.7 on a copy of a config directory; the panel
+against real servers' console traffic.
 
 ---
 

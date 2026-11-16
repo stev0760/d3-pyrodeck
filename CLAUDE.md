@@ -27,6 +27,7 @@ pnpm monorepo:
 - `$kick` works on bots from Matcen 0.8.4 (`MultiDisconnectPlayer` hands a bot to `BotRemove`); `$removebot` is still the bot command. Never `$ban` a bot: DMFC would ban its address, which is the server's own (Pyrodeck refuses).
 - Web admin auth exists (scrypt hash + cookie session) but is skipped automatically on localhost when no password is set — dev workflow needs no login
 - Each launched server's process, console login and watchers (supervisor, autostart, playlist rotation, run record) are one `ServerInstance` (`packages/server/src/servers/`), one per profile plus `launch`; `serverRegistry` holds them, checks launches against each other and picks the default server for the old flat routes. An instance only touches its own console session and hears only its own events (scoped bus). Spec §3.5 gives the order of effects on a process state change, Addendum H the multi-server rules
+- The panel shows one server at a time, the selected one (`session/SessionProvider.tsx`; persisted, `?s=` on the phone). It speaks WebSocket protocol 2: `lib/serverViews.ts` keeps each server's console text, state and playlist apart by `serverId`, and anything that changes a server goes to `/api/servers/:serverId/...`, never a flat route's default server (spec H.9)
 
 ## UI Testing Pipeline
 

@@ -6,6 +6,8 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 
 ## Current Status
 
+**v0.6.0** — Several servers from one panel. One Pyrodeck runs several Descent 3 servers at once, an Anarchy and a CTF server side by side, each from its own profile with its own console, supervisor, playlist, schedule and run record. The Launch panel opens on a list of the servers with their state, mission and level, players, game type, playlist and ports, and a Start or Stop on each; the server you click is the one every tab shows, named in the header, with its own console text and roster. A phone gets a server picker in every screen's header. A launch that would share a port, a config file, a Startup Commands file or a temp directory with a running server is refused with a message naming that server; each server gets its own temp directory and, when 20142 is taken, a free GameSpy port. Playlists are shared and each server rotates its own; autostart can start several profiles. Upgrading from 0.5.x is automatic; see [Several servers](#several-servers).
+
 **v0.5.7** — Playlists host their missions. With the mission host on, activating a playlist points the download link of every mission in it at the host, with no click per mission; so do saving the active playlist with new missions and turning the host on while a playlist is active. Missions that ship with the game are never hosted or rewritten, and a link you typed for a mission yourself is kept. One mission that cannot be rewritten never stops the activation: the playlist shows a summary line ("Downloads: 9 hosted, 3 ship with the game, 1 failed") and the reason for each failure. The new links take effect the next time the server loads each mission.
 
 **v0.5.6** — A hold before every mission change. When a playlist's mission ends, the players are held in place with a countdown in chat (DMFC's `$wait`) so they see the scores and can quit before the restart; then Pyrodeck quits the server through its console, which tells every player still on that the server has gone, instead of killing it and leaving their clients to hang until they time out. The hold is per playlist (default 30 s, 0 off) and skipped when no human is on; a manual Stop quits the same way. Works with any Descent 3 dedicated server.
@@ -43,7 +45,7 @@ Companion project to the [Matcen fork](https://github.com/stev0760/Descent3/tree
 Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelopers/Descent3) engine, and the Matcen fork v0.8.4+ (protocol synced to the fork's contract as of 0.9.17; newer fork-only commands are harmless no-ops on older builds). Two operating modes:
 
 - **Connect mode:** Remote admin — connect to any running D3 server via its TCP console (port 2092)
-- **Launch mode:** Full server manager — configure, launch, and manage a local D3 dedicated server process
+- **Launch mode:** Full server manager — configure, launch, and manage local D3 dedicated servers, several at once
 
 ## Features
 
@@ -109,8 +111,8 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - **Mission hosting**: Pyrodeck can serve the missions itself, so the link points at this machine; see [Hosting mission downloads](#hosting-mission-downloads)
 - Bot Roster: per-bot name, ship, difficulty, and team assignment (1-4 or auto-balance); roster count vs max-players warnings; default difficulty
 - Ship bans and powerup allow/disallow lists written to the linked `.mps` file
-- Create, link, and unlink companion files (`.mps`, `bots.cfg`, `autoexec.dmfc`)
-- Startup Commands (`autoexec.dmfc` in the game directory) reach the server at launch through `-autoexec`
+- Create, link, and unlink companion files (`.mps`, `bots.cfg`, the Startup Commands file)
+- Startup Commands (a `.dmfc` file in the game directory: `autoexec.dmfc`, or the profile's own, Launch panel → Edit → Startup Commands File) reach the server at launch through `-autoexec`
 - Per-profile team settings and Hoard orb count (Launch panel → Edit → Teams and Hoard): allow team changes, auto balance, the four team names, orbs needed to score. Pyrodeck writes them into the Startup Commands file at each launch, between `# pyrodeck: begin` and `# pyrodeck: end`, and leaves every other line alone
 - Companion file management auto-updates CVars (`BotConfig=`, `MultiSettingsFile=`) in the server config
 - Raw textarea fallback always available via structured/raw toggle
@@ -139,7 +141,7 @@ Works with vanilla D3 1.4, the [open-source D3](https://github.com/DescentDevelo
 - Graceful shutdown sequence: `quit` command → SIGTERM → SIGKILL
 - Supervisor: relaunches a crashed server, restarts a hung one, and can restart an empty server after an uptime limit (see [Keeping a server up](#keeping-a-server-up))
 - Weekly schedule per profile: start and stop windows by weekday and time (see Operations)
-- Autostart: one profile launched whenever Pyrodeck starts, after re-attach, with a crash-loop guard (see Operations)
+- Autostart: the profiles you choose launched whenever Pyrodeck starts, after re-attach, each with a crash-loop guard (see Operations)
 - Import a profile from the `.bat`/`.sh` that launched an old server (see Operations)
 
 ### Phone layout
@@ -205,17 +207,50 @@ ConsolePassword=yourpassword
 
 Point Pyrodeck at your D3 installation directory, select or create a server profile, and click Launch. Pyrodeck spawns the D3 process and auto-connects to it. The config needs a `ConsolePassword`; with `AllowRemoteConsole=0`, the default for configs Pyrodeck creates, Pyrodeck logs in on 127.0.0.1 and the console stays off the network. `AllowRemoteConsole=1` is needed only to connect from Pyrodeck on another machine, and Pyrodeck's log warns at each launch that the console is then reachable from the network.
 
+## Several servers
+
+One Pyrodeck runs several servers at once, each from its own profile. The Launch panel lists them, every profile's
+server with its state, mission and level, humans, game type, playlist and ports, and each has its own **Start** or
+**Stop**. Click a server to show it: every tab (Output, Console, Players, Bots, the server card, Playlists, Logs,
+Rules, Config) is then about that server, and its name stays in the header. On a phone, tap the server's name at the
+top of any screen to pick another.
+
+To run a second server beside the first:
+
+1. **+ New Profile** in the Launch panel, or import its launch script.
+2. Give it its own ports. Each server needs its own game port (Edit → Launch Options → Game port, `-useport`; 2092 is
+   the default) and console port (Config tab → Remote Console → Port). The GameSpy port moves to a free one by itself
+   when another server holds 20142, unless the profile sets one.
+3. A shared game directory is fine. Each profile has its own server config file, and a profile created where another
+   already runs from gets its own Startup Commands file (Edit → Startup Commands File). Each server gets its own temp
+   directory.
+4. Open each server's UDP game port in the firewall, as for the first.
+
+Pyrodeck refuses a launch that would clash with a running server, and says which server and what to change: the same
+game, GameSpy or console port, the same server config, the same Startup Commands file (while it exists or the profile
+has team settings to write into it), or the same temp directory. Nothing you set is changed for you.
+
+Playlists are shared by all servers: open one in the Playlists tab and **Activate on** the server on screen; each
+server rotates its own, and the list shows where each playlist is active. Supervisor settings, bans, join rules and the
+Settings tab apply to all servers. To start several servers with Pyrodeck, see Autostart under
+[Operations](#operations).
+
+**Upgrading from 0.5.x** needs nothing: the first start adds `servers/` to the config directory and re-attaches to the
+running server. **Going back to 0.5.x**, stop every server but one first: an older Pyrodeck knows one server and
+re-attaches to it; the others would keep running unseen.
+
 ## Operations
 
 Settings that keep an unattended server running. The schedule lives in each profile; the rest are in the **Settings**
 tab.
 
 - **Weekly schedule.** Edit a profile and add windows (day, start, end, in the Pyrodeck machine's local time; an end at
-  or before the start runs past midnight). At a window's start Pyrodeck launches the profile if no server is running. At
-  its end it stops the server as soon as no player is on (bots don't count, Pyrodeck asks with `$players`), and after
-  the wait you set at the latest; players get one warning in chat. A server you stop by hand during a window stays
-  stopped until the next window. The Launch panel shows the next scheduled start or stop. Only one server runs at a
-  time, so a window whose start finds another profile's server running is skipped, with a toast.
+  or before the start runs past midnight). At a window's start Pyrodeck launches the profile's server if it is not
+  running. At its end it stops that server as soon as no player is on (bots don't count, Pyrodeck asks with
+  `$players`), and after the wait you set at the latest; players get one warning in chat. A server you stop by hand
+  during a window stays stopped until the next window. The Launch panel shows the next scheduled start or stop. A
+  start that would clash with another running server (see [Several servers](#several-servers)) is skipped, with a
+  toast.
 - **Email alerts.** SMTP host, port, security (STARTTLS, TLS or none), login, From, up to ten recipients, and a
   checklist: server started, stopped, crashed, hung or relaunched; player kicked or banned; profanity bans; schedule
   actions. Off by default. Events that arrive together go out in one mail, at most one mail a minute. **Send test mail**
@@ -235,12 +270,13 @@ tab.
   the game directory.
 - **Sessions.** The Settings tab lists the browsers logged in (address, browser, login and last use) and logs them all
   out with one button, this one included. Every open console of those sessions closes at once.
-- **Autostart.** Edit a profile and tick **Start when Pyrodeck starts**, or set `PYRODECK_AUTOSTART_PROFILE` to the
-  profile's name (it wins, and locks the box). Pyrodeck then launches that profile each time it starts, once it has
-  tried to re-attach to a server that kept running: a server still running is left alone. The launch is the Launch
-  button's, so an active playlist carries on from the mission its last rotation wrote into the config, and a paused
-  one stays paused. One profile at a time; the change applies at the next start of Pyrodeck. The Launch panel's
-  **Autostart** block shows what happened. An unknown profile name is logged as an error and starts nothing.
+- **Autostart.** Edit a profile and tick **Start when Pyrodeck starts** (several profiles can), or set
+  `PYRODECK_AUTOSTART_PROFILE` to a profile's name, or `PYRODECK_AUTOSTART_PROFILES` to several separated by commas
+  (they win, and lock the box). Pyrodeck then launches those profiles each time it starts, once it has re-attached to
+  the servers that kept running: a server still running is left alone. Each launch is its Start button's, so an
+  active playlist carries on from the mission its last rotation wrote into the config, and a paused one stays paused.
+  The change applies at the next start of Pyrodeck. The Launch panel's **Autostart** block lists the profiles and
+  shows what happened to the selected server's. An unknown profile name is logged as an error; the others start.
 - **Running as a service.** [docs/running-as-a-service.md](docs/running-as-a-service.md): NSSM, `schtasks` and a
   systemd user unit, with the working directory and log location each one needs. With autostart, the machine can
   reboot for updates unattended.
@@ -271,7 +307,7 @@ Limits that come from the game client:
 
 ## Keeping a server up
 
-In Launch mode Pyrodeck watches the server it started, as D3Server3 did:
+In Launch mode Pyrodeck watches each server it started, as D3Server3 did:
 
 - **Crash:** when the game exits without being asked to, Pyrodeck starts it again with the same profile after 5 s. Each further crash doubles the wait, up to 2 minutes. After seven crashes in 30 minutes it stops trying and says so; the next launch by hand starts the count over.
 - **Hang:** when the server's console has been quiet for 59 s, Pyrodeck sends `$players`. If nothing at all comes back by 120 s, it kills the server and starts it again. A level that is loading gets 2 minutes before this applies.
@@ -389,7 +425,7 @@ For internet-facing deployments, put Pyrodeck behind a reverse proxy (nginx, Cad
 ## Known Limitations
 
 - Playlist rotation is **best-effort**: D3 has no native mission rotation, so every transition is a full server stop → config swap → relaunch. Players must manually reconnect after each rotation (D3 clients cannot be told to reconnect), and the restart can occasionally fail. Treat rotation as a convenience feature, not a guaranteed-uptime mechanism
-- Single server connection only (multi-server support planned)
+- Connect mode logs in to one remote console at a time; the servers Pyrodeck launches run beside it
 - Player history and rules see only what the server prints on its console: team and private chat are invisible, and a player who drops during a level change is recorded as gone two minutes into the next level
 - On the open-source engine and Matcen (0.9.16 tested), console text containing `%` is formatted twice by the server itself, and a `%s` in a bot name crashed it. A player whose name or chat contains `%` may crash such a server before the nickname rule can kick them; that is an engine fix, not something Pyrodeck can prevent
 - Bot team choice in the add-bot form appears only when the server advertises `teams` in `$servercaps` and the game has teams; otherwise use the Bot Roster config editor before launch

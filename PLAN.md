@@ -433,10 +433,15 @@ Launch mode works wherever the target D3 build runs. See DEVLOG for engine compa
       one-entry playlist with a starting level (a server restart per level). Skipped in the D3Server3 parity wave
 - [x] Scheduled auto-commands (D3Server3-style: run command every N minutes) — per-profile Periodic Commands (start lines + every N minutes; in order, random or all)
 - [ ] Dark/light theme toggle
-- [x] Several servers at once, server side (unreleased; spec Addendum H): a server per profile with its own console,
+- [x] Several servers at once, server side (v0.6.0; spec Addendum H): a server per profile with its own console,
       supervisor, playlist and run record; launch checks, per-server `-tempdir` and GameSpy port; `GET /api/servers`
       and `/api/servers/:serverId/...`; WebSocket protocol 2; re-attach and autostart of several
-- [ ] Multi-server UI (tabs or sidebar, multiple D3 instances)
+- [x] Multi-server UI (v0.6.0; spec H.9): the Launch panel's server list with live state and Start/Stop per server,
+      every tab following the selected server (named in the header), per-server consoles and rosters, playlists
+      active per server, the Startup Commands file per profile, refusals under their row; on a phone a server picker
+      in every header and `?s=` in the hash
+- [ ] Several servers, later: an all-servers dashboard, stop all, per-server supervisor settings, several Connect-mode
+      remotes, a next-free-port planner when duplicating a profile (a duplicate keeps the source's ports)
 - [ ] Player list sorting/filtering
 - [ ] CodeMirror for raw config editor
 - [ ] Windows code signing (SignPath OSS or Azure Trusted Signing) — deferred, needs public repo

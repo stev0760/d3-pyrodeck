@@ -29,41 +29,48 @@ same applies to a dev checkout if you replace the binary with `node packages/ser
 - **Sessions end on restart.** Logins are kept in memory, so a restart of the service logs every browser out. A
   session also ends 12 hours after login and after 2 hours unused (`PYRODECK_SESSION_TTL_HOURS`,
   `PYRODECK_SESSION_IDLE_MINUTES`).
-- **Autostart, for a machine that reboots.** Set `PYRODECK_AUTOSTART_PROFILE` to the name of the profile to run (or
-  tick **Start when Pyrodeck starts** on it), or the game stays down after a reboot until someone presses Launch. See
-  [After a reboot](#after-a-reboot).
+- **Autostart, for a machine that reboots.** Set `PYRODECK_AUTOSTART_PROFILE` to the name of the profile to run, or
+  `PYRODECK_AUTOSTART_PROFILES` to several (or tick **Start when Pyrodeck starts** on each), or the game stays down
+  after a reboot until someone presses Start. See [After a reboot](#after-a-reboot).
 - **Secrets stay with Pyrodeck.** The game server Pyrodeck launches gets a short list of variables from Pyrodeck's
   environment (`PATH`, `HOME`, the locale, `XDG_*`, `SDL_*`, `D3_*`, `LD_LIBRARY_PATH`, and the Windows system
   variables) and no `PYRODECK_*` one, so the password in the unit or the environment file never reaches it.
 
 ## What happens when Pyrodeck restarts
 
-The game server is a child process of Pyrodeck. Whether it survives a Pyrodeck restart depends on the service manager:
-by default systemd and NSSM stop the whole process tree, game server included. The settings below
-(`KillMode=process`, `AppKillProcessTree 0`) leave the game server running instead, so an upgrade of Pyrodeck does not
-drop the players. A Pyrodeck build that can re-attach to a running server then picks it up again when it comes back;
-without that, the server keeps running on its own until it is stopped from the console or the system, and Pyrodeck
-shows it as stopped. Choose the default if you would rather have Pyrodeck and the game stop together.
+Each game server is a child process of Pyrodeck. Whether they survive a Pyrodeck restart depends on the service
+manager: by default systemd and NSSM stop the whole process tree, game servers included. The settings below
+(`KillMode=process`, `AppKillProcessTree 0`) leave the game servers running instead, so an upgrade of Pyrodeck does not
+drop the players. Pyrodeck re-attaches to every server still running when it comes back; a server it cannot log in to
+keeps its ports, so no other server is launched onto them. Choose the default if you would rather have Pyrodeck and the
+game stop together.
+
+Upgrading from 0.5.x to 0.6.0 needs nothing: the first start adds `servers/` to the config directory and re-attaches to
+the running server. Going back to 0.5.x, stop every server but one first: an older Pyrodeck knows one server, re-attaches
+to it, and does not see the others, which keep running until they are stopped from their consoles or the system.
 
 Pyrodeck keeps nothing about the schedule except the settings, so after a restart it works out the schedule again: inside
-a window it starts the server if none is running; outside one it stops nothing.
+a profile's window it starts that profile's server if it is not running; outside one it stops nothing.
 
 ## After a reboot
 
-A reboot stops the game server along with everything else, so there is nothing to re-attach to when Pyrodeck comes
-back. With autostart Pyrodeck launches a profile itself when it starts:
+A reboot stops the game servers along with everything else, so there is nothing to re-attach to when Pyrodeck comes
+back. With autostart Pyrodeck launches profiles itself when it starts:
 
 - `PYRODECK_AUTOSTART_PROFILE=<profile name>` in the service's environment, the name exactly as the Launch panel shows
   it (a profile's id also works). It wins over the UI setting, which then shows as locked. Unset or blank leaves the
   choice to the UI.
-- Or, in the panel, Edit the profile and tick **Start when Pyrodeck starts**.
-- Several servers: `PYRODECK_AUTOSTART_PROFILES=<name>,<name>` names several profiles, and the setting can be on for
-  several (through the API for now; the panel shows one); each starts with its own crash-loop guard.
+- `PYRODECK_AUTOSTART_PROFILES=<name>,<name>` names several profiles (names or ids, separated by commas). With either
+  variable set, the variables decide and the UI setting is locked.
+- Or, in the panel, Edit each profile and tick **Start when Pyrodeck starts**; several can be ticked, and the Launch
+  panel's Autostart block lists them.
 
-At startup Pyrodeck first tries to re-attach. A server that is running is left alone, whether it was re-attached or
-not: autostart applies only when no server runs. Otherwise the profile is launched exactly as the Launch button
-launches it, so an active playlist carries on from the mission its last rotation wrote into the profile's config, and
-a paused playlist stays paused. Without either setting nothing is launched, as in earlier versions.
+At startup Pyrodeck first re-attaches to the servers still running. A server that is running is left alone, whether
+it was re-attached or not; autostart starts each listed profile whose server does not run, each with its own
+crash-loop guard. A profile is launched exactly as its Start button launches it, so an active playlist carries on from
+the mission its last rotation wrote into the profile's config, and a paused playlist stays paused. A launch that would
+clash with another server (the same port or files) is refused like any other and logged. Without either setting
+nothing is launched, as in earlier versions.
 
 A crash-loop guard keeps a broken install from restarting forever. A launch that fails, or a server that exits within
 60 s of starting, is a failure. Autostart retries a failed launch after 5, 10, 20 and 40 s (useful when the game
@@ -84,7 +91,7 @@ name is logged as an error at startup, and Pyrodeck runs without starting anythi
 
 With the service enabled at boot and autostart set, the machine can reboot for kernel and security updates
 unattended (`dnf-automatic` with `reboot = when-needed` on Rocky Linux and RHEL, `unattended-upgrades` with
-`Automatic-Reboot "true"` on Ubuntu and Debian): Pyrodeck starts, finds no server, and launches the profile. Players
+`Automatic-Reboot "true"` on Ubuntu and Debian): Pyrodeck starts, finds no server, and launches the profiles. Players
 are dropped for the length of the reboot, as with any restart of the game. To check it once, reboot by hand and look
 for `[Autostart] Starting "<profile>"` and, a minute later, `[Autostart] "<profile>" is up` in the journal.
 
@@ -110,9 +117,9 @@ nssm start Pyrodeck
 ```
 
 `ObjectName` runs the service as the local account `d3host`; use the account that owns the Descent 3 directory.
-`PYRODECK_AUTOSTART_PROFILE` names the profile to launch whenever the service starts ([After a reboot](#after-a-reboot));
-leave it out to start the game by hand. To
-keep the game server running when the service stops or restarts, also set:
+`PYRODECK_AUTOSTART_PROFILE` names the profile to launch whenever the service starts (`PYRODECK_AUTOSTART_PROFILES`
+names several; [After a reboot](#after-a-reboot)); leave it out to start the game by hand. To keep the game servers
+running when the service stops or restarts, also set:
 
 ```cmd
 nssm set Pyrodeck AppKillProcessTree 0
@@ -120,8 +127,8 @@ nssm set Pyrodeck AppKillProcessTree 0
 
 With the settings above, Pyrodeck answers browsers on this machine only; for browsers on other machines of the LAN,
 add `PYRODECK_HOST=0.0.0.0` to `AppEnvironmentExtra`. `nssm stop Pyrodeck`, `nssm restart Pyrodeck` and
-`nssm remove Pyrodeck confirm` manage it afterwards. The Windows firewall needs an inbound rule for the game's UDP
-port, and for Pyrodeck's port (3001) if browsers on other machines reach it directly. The game's console port needs
+`nssm remove Pyrodeck confirm` manage it afterwards. The Windows firewall needs an inbound rule for each game server's
+UDP game port, and for Pyrodeck's port (3001) if browsers on other machines reach it directly. The game's console port needs
 one only for Connect mode from another machine, which also takes `AllowRemoteConsole=1` in the server's config; a
 server Pyrodeck launches here needs neither.
 
@@ -192,10 +199,11 @@ Environment=PYRODECK_LOG_MAX_MB=2048
 Environment=PYRODECK_LOG_COMPRESS=1
 # Launch this profile (its exact name) whenever Pyrodeck starts, so the game
 # comes back after a reboot ("After a reboot"). Remove it to start by hand.
+# Several servers: PYRODECK_AUTOSTART_PROFILES=Public CTF,Anarchy instead.
 Environment="PYRODECK_AUTOSTART_PROFILE=Public CTF"
 Restart=on-failure
 RestartSec=5
-# Leave the game server running when Pyrodeck stops or restarts
+# Leave the game servers running when Pyrodeck stops or restarts
 # (see "What happens when Pyrodeck restarts"). Remove this line to stop it too.
 KillMode=process
 

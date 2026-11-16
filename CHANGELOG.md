@@ -2,51 +2,74 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-15
 
-One Pyrodeck runs several game servers at once: an Anarchy and a CTF server from one panel. This is the server side,
-used through the API; the panel shows one server (the default) until the next release.
+One Pyrodeck runs several Descent 3 servers at once, an Anarchy and a CTF server side by side, from one panel. The
+upgrade from 0.5.x is automatic.
 
 ### Added
-- **A server per profile.** Each profile's server launches, logs in to its console, is watched by its own supervisor,
-  rotates its own playlist and records its own run, beside the others. `GET /api/servers` lists them (state, console,
-  mission and level, humans and max players, game type, playlist, ports, supervisor, autostart), and
-  `/api/servers/<id>/start`, `stop`, `status`, `command`, `players`, `playlist` (`activate`, `deactivate`, `resume`),
-  `supervisor` (`cancel-relaunch`) and `autostart` (`cancel`) act on one. A server's id is its profile's id; `launch`
-  is the server started from the global `dedicated.cfg`, `connect` Connect mode's session.
-- **Launches that would clash are refused**, with a message naming the other server: the same game port, GameSpy port
-  set in the profile, console port, server config file, Startup Commands file in use, or temp directory set in the
-  profile. A setting the operator made is never changed.
+- **A server list.** The Launch panel opens on the servers, one row per profile (and the server launched without a
+  profile, once used): its state (stopped, starting, running, stopping, crashed; restarting or holding during a
+  playlist's mission change), game type, mission and level, humans of max players, active playlist and ports, with
+  its own Start or Stop. The list says how many run.
+- **The server on screen.** A click on a row shows that server, and every tab is about it: Output, Console, Players,
+  Bots, the server card, Playlists, Logs, Rules, Config, and the launcher, supervisor and autostart blocks. Its name
+  and state stay in the header, the server card and the Launch and Stop buttons, so a command goes to the server you
+  see. Each server keeps its own console text and game output (2000 and 5000 lines), and switching shows that
+  server's, never the last one's. The choice is kept per browser. Bans and Settings apply to all servers and say so.
+- **On a phone** the Server tab lists the servers, every screen names the server on screen at the top, and a tap
+  there opens a sheet to pick another. The server is part of the address (`#/console?s=<id>`), so a reload opens it
+  again.
+- **A server per profile.** Each profile's server launches, logs in to its console, is watched by its own supervisor
+  (relaunch, hang check, restart when empty: a player on one server never keeps another from its empty restart),
+  rotates its own playlist, follows its own schedule and keeps its own run record, beside the others.
+- **Launches that would clash are refused**, with a message naming the other server and what to change: the same game
+  port, a GameSpy port set in the profile, the console port, the server config file, a Startup Commands file in use,
+  or a temp directory set in the profile. The panel shows each reason under the server's row. A setting the operator
+  made is never changed.
 - **Each server gets its own temp directory** (`-tempdir`, short, the same at every launch) unless the profile sets
   one, so two servers no longer fight over the engine's lock file; and **a free GameSpy port** (`-gamespyport`) when
-  another server holds 20142 and the profile sets none. Launch options take a **temp directory** of their own.
-- **A Startup Commands file per profile** (`startupFile`, default `autoexec.dmfc`), for servers sharing a game
-  directory.
-- **Each server has its own playlist**: a different one active on each, and two rotations at the same moment each
-  restart their own server on their own profile. Hosting a playlist's missions covers every active playlist.
+  another server holds 20142 and the profile sets none. Launch Options take a temp directory of their own.
+- **A Startup Commands file per profile**, for servers sharing a game directory: Launch panel → Edit → Startup
+  Commands File (default `autoexec.dmfc`), with a warning when another profile in the directory uses the same one. A
+  profile created or duplicated in a game directory another profile uses gets its own (`ctf.cfg`: `ctf.dmfc`; a
+  duplicate gets a copy of the source's commands). The Config tab edits the profile's own file.
+- **A playlist per server.** The library is shared; Activate starts a playlist on the server on screen, each server
+  rotates its own (two rotations at the same moment each restart their own server), and every playlist shows where it
+  is active ("Active on CTF"). Hosting a playlist's missions covers every active playlist.
 - **Re-attach to several games** after Pyrodeck restarts, and **autostart of several profiles**: "Start when Pyrodeck
-  starts" can be on for more than one, and `PYRODECK_AUTOSTART_PROFILES` takes a comma-separated list (the single
-  `PYRODECK_AUTOSTART_PROFILE` still works).
+  starts" can be on for more than one, the Autostart block lists them, and `PYRODECK_AUTOSTART_PROFILES` takes a
+  comma-separated list (the single `PYRODECK_AUTOSTART_PROFILE` still works).
+- **API.** `GET /api/servers` lists the servers (state, console, mission and level, humans and max players, game type,
+  playlist, ports, supervisor, autostart), and `/api/servers/<id>/start`, `stop`, `status`, `command`, `players`,
+  `playlist` (`activate`, `deactivate`, `resume`), `supervisor` (`cancel-relaunch`) and `autostart` (`cancel`) act on
+  one. A server's id is its profile's id; `launch` is the server started from the global `dedicated.cfg`, `connect`
+  Connect mode's session. `POST /api/profiles` takes the new config's `remoteConsolePort` and launch options; `PATCH`
+  takes `startupFile`.
 - **WebSocket protocol 2.** A client that sends `{ "type": "hello", "payload": { "protocol": 2 } }` gets every
-  server's messages tagged with `serverId`, and names the server in its commands.
-- `POST /api/profiles` takes the new config's `remoteConsolePort` and launch options.
+  server's messages tagged with `serverId`, and names the server in its commands. The panel speaks it.
 
 ### Changed
 - The URLs and WebSocket messages of earlier versions keep working for one server: they act on the profile named in
   the request, else on the only server running, else on the default server (the one running, else the last one). A
   change that names no server while several run answers 409 with the route to use, and `POST /api/launcher/start`
   still refuses while another server runs. A WebSocket that never says hello gets the default server's messages only,
-  as before.
+  as before. The panel uses the per-server routes for everything it changes.
 - Every launch now passes `-tempdir` (see above).
-- Log retention and log deletion protect every running server's log; process priority applies to every server;
-  `$rehash` after a hosts.deny edit goes to every server's console. Kick and ban take the server's `profileId` when
-  several consoles are open.
+- Supervisor settings apply to every server; each server's supervisor keeps its own counters. Log retention and log
+  deletion protect every running server's log; process priority applies to every server; `$rehash` after a hosts.deny
+  edit goes to every server's console. Kick and ban name their server.
+- `$netgameinfo` is asked once per console login of each server, when the panel first shows it, and never again on a
+  switch back.
 
 ### Upgrade
 - The first start upgrades the config directory in place: `servers/index.json` (the autostart list) and `servers/<id>/`
-  (each server's run record and playlist state) are added; nothing else is moved. A running server is re-attached
-  to. For a downgrade, `running-server.json`, `playlist-state.json` and `autostart.profileId` keep describing one
-  server; stop the others first.
+  (each server's run record and playlist state) are added; nothing else is moved, Connect mode's saved servers
+  (`servers.json`) included. A running server is re-attached to and its playlist carries on.
+- A browser tab left open across the upgrade keeps working on one server; reload it for the server list.
+- To go back to 0.5.x, stop every server but one first. `running-server.json`, `playlist-state.json` and
+  `autostart.profileId` keep describing one server for an older Pyrodeck, which re-attaches to it; the other servers
+  would keep running unseen.
 
 ## [0.5.7] - 2026-11-15
 
