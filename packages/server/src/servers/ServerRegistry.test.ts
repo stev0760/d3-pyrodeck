@@ -544,6 +544,152 @@ describe("ServerRegistry: restart of Pyrodeck", () => {
     expect(h.registry.get(A.id)!.autostart.snapshot().state).toBe("watching");
   });
 
+  /** A playlist of Alpha, Beta, Gamma with no hold, active on each of `ids`; its id. */
+  async function activateOn(h: Harness, ids: string[]): Promise<string> {
+    await fs.writeFile(path.join(h.gamePath, "missions", "gamma.mn3"), "");
+    const library = h.registry.get(ids[0])!.playlist;
+    const pl = await library.create("Rotation", "sequential", [
+      { label: "Alpha", missionName: "alpha.mn3" },
+      { label: "Beta", missionName: "beta.mn3" },
+      { label: "Gamma", missionName: "gamma.mn3" },
+    ]);
+    await library.update(pl.id, { holdSeconds: 0 });
+    for (const id of ids) await h.registry.get(id)!.playlist.activate(pl.id);
+    return pl.id;
+  }
+
+  const statePath = (h: Harness, id: string) => path.join(h.configDir, "servers", id, "playlist-state.json");
+
+  /** Wait (real time) until `id`'s saved playlist state passes `want`. */
+  async function savedState(h: Harness, id: string, want: (state: Record<string, unknown>) => boolean): Promise<void> {
+    const deadline = performance.now() + 2_000;
+    while (performance.now() < deadline) {
+      try {
+        if (want(JSON.parse(await fs.readFile(statePath(h, id), "utf-8")))) return;
+      } catch {
+        // not written yet
+      }
+      await new Promise<void>((r) => realSetImmediate(r));
+    }
+    throw new Error(`Timed out waiting for ${id}'s playlist state`);
+  }
+
+  /** A restart into Beta handed to the launcher, as a playlist saves it. */
+  const restartIntoBeta = (playlistId: string) =>
+    JSON.stringify({ activePlaylistId: playlistId, currentIndex: 1, shuffleOrder: null, paused: null, pending: { kind: "restart", since: Date.now() } });
+
+  /** Pyrodeck stops; of the games it ran, those in `alive` keep running. */
+  async function restartWith(first: Harness, alive: number[]): Promise<Harness> {
+    for (const pid of alive) first.world.alive.set(pid, { executable: path.join(first.gamePath, "Descent3") });
+    first.registry.dispose();
+    first.world.processes.clear();
+    first.world.listening.clear();
+    return setUp({ from: first });
+  }
+
+  const logged = () => [console.log, console.warn, console.error].flatMap((f) => vi.mocked(f).mock.calls.map((c) => c.join(" ")));
+
+  const missionOf = async (h: Harness, cfg: string) =>
+    /^MissionName=(.*)$/m.exec(await fs.readFile(path.join(h.gamePath, cfg), "utf-8"))?.[1];
+
+  it("restarted in the middle of two rotations: restarts the game it re-attached to, and launches the one whose game had quit", async () => {
+    const first = await setUp({ profiles: [A, B] });
+    await activateOn(first, [A.id, B.id]);
+    await launchAndLogIn(first, A.id);
+    await launchAndLogIn(first, B.id);
+    vi.setSystemTime(Date.now() + 60_000);
+    // Both missions end and their restarts are handed over; Pyrodeck stops before either old game is stopped.
+    for (const id of [A.id, B.id]) {
+      first.registry.get(id)!.playlist.removeAllListeners("rotate");
+      proc(first, id).print("Ending level.\n");
+      proc(first, id).print("Mission over.  Looping back to first level...\n");
+    }
+    for (const id of [A.id, B.id]) {
+      await savedState(first, id, (s) => s.currentIndex === 1 && (s.pending as { kind?: string } | null)?.kind === "restart");
+      await settle(() => existsSync(path.join(first.configDir, "servers", id, "run.json")), `${id}'s run record`);
+    }
+    const [pidA, pidB] = [A.id, B.id].map((id) => proc(first, id).getStatus().pid!);
+
+    // A's old game still runs; B's had quit.
+    const h = await restartWith(first, [pidA]);
+    await h.registry.reattachAll();
+    expect(proc(h, A.id).getStatus()).toMatchObject({ state: "running", adopted: true, pid: pidA });
+    expect(proc(h, B.id).getStatus().state).toBe("stopped");
+    await h.registry.runAutostart();
+
+    // B: launched into Beta at startup by its playlist, with the restart's health check.
+    expect(proc(h, B.id).launches).toHaveLength(1);
+    expect(h.events).toContain(`${B.id} server.started playlist`);
+    expect(await missionOf(h, B.cfg)).toBe("beta.mn3");
+    expect(h.registry.get(B.id)!.playlistStatusPayload()).toMatchObject({
+      status: "restarting",
+      currentEntry: { label: "Beta" },
+      rotationCheck: { state: "waiting" },
+    });
+    // A: once its console is logged in to, the old game is restarted into Beta.
+    await settleTicking(() => proc(h, A.id).launches.length === 1, "A's restart");
+    expect(h.events).toContain(`${A.id} server.started playlist`);
+    expect(await missionOf(h, A.cfg)).toBe("beta.mn3");
+    expect(logged()).toContain(`[Pyrodeck] Not re-attaching to server PID ${pidB}: process ${pidB} is no longer running`);
+    expect(logged()).toContain('[Playlist] The restart into "Beta" was under way when Pyrodeck stopped; restarting now');
+    expect(logged().filter((l) => l.includes("and the server is down; launching it now"))).toEqual([
+      '[Playlist] The restart of "CTF" into "Beta" was under way when Pyrodeck stopped, and the server is down; launching it now',
+    ]);
+
+    // Both come up healthy; each next mission end goes to Gamma, with one launch per rotation.
+    for (const id of [A.id, B.id]) proc(h, id).consoleUp();
+    await settleTicking(
+      () => [A.id, B.id].every((id) => h.registry.get(id)!.playlist.getStatus().status === "active"),
+      "both healthy restarts",
+    );
+    for (const id of [A.id, B.id]) {
+      proc(h, id).print("Ending level.\n");
+      proc(h, id).print("Mission over.  Looping back to first level...\n");
+    }
+    await settleTicking(() => proc(h, A.id).launches.length === 2 && proc(h, B.id).launches.length === 2, "both rotations");
+    expect(await missionOf(h, A.cfg)).toBe("gamma.mn3");
+    expect(await missionOf(h, B.cfg)).toBe("gamma.mn3");
+  });
+
+  it("a restart it cannot launch (another server holds the port) is retried once, then the playlist pauses", async () => {
+    const first = await setUp({ profiles: [A, { ...B, launchOptions: { gamePort: 2092 } }] });
+    const playlistId = await activateOn(first, [B.id]);
+    await launchAndLogIn(first, A.id);
+    await settle(() => existsSync(path.join(first.configDir, "servers", A.id, "run.json")), "A's run record");
+    await fs.writeFile(statePath(first, B.id), restartIntoBeta(playlistId));
+
+    const h = await restartWith(first, [proc(first, A.id).getStatus().pid!]);
+    await h.registry.reattachAll();
+    await h.registry.runAutostart();
+    await settleTicking(() => h.registry.get(B.id)!.playlist.getStatus().status === "paused", "the pause");
+
+    expect(proc(h, B.id).launches).toHaveLength(0);
+    expect(h.registry.get(B.id)!.playlist.getStatus().pausedReason).toMatch(
+      /^The restart into "Beta" failed: restart failed \(.*game port 2092\/udp is used by "Anarchy".*\)\.$/,
+    );
+    expect(logged().some((l) => l.startsWith('[Playlist] Restart into "Beta" not healthy (restart failed ('))).toBe(true);
+    expect(logged().some((l) => l.startsWith('[Playlist] Paused: the restart into "Beta" failed: restart failed ('))).toBe(true);
+    // Saved paused: the next Pyrodeck does not try again.
+    await savedState(h, B.id, (s) => s.paused !== null && !s.pending);
+  });
+
+  it("skips, with a log line, a restart left under way by a profile that no longer exists", async () => {
+    const h = await setUp({ profiles: [A] });
+    const playlistId = await activateOn(h, [A.id]);
+    await fs.mkdir(path.join(h.configDir, "servers", "p-gone"), { recursive: true });
+    await fs.writeFile(statePath(h, "p-gone"), restartIntoBeta(playlistId));
+
+    await h.registry.reattachAll();
+    await h.registry.runAutostart();
+
+    expect(h.registry.get("p-gone")).toBeUndefined();
+    expect(h.world.processes.has("p-gone")).toBe(false);
+    expect(logged()).toContain(
+      '[Playlist] The restart of "p-gone" into "Beta" was under way when Pyrodeck stopped, but its profile no longer exists; not launching it',
+    );
+    expect(h.registry.running()).toEqual([]);
+  });
+
   it("PYRODECK_AUTOSTART_PROFILES names several profiles; PYRODECK_AUTOSTART_PROFILE still names one, first", async () => {
     const h = await setUp({ env: { PYRODECK_AUTOSTART_PROFILE: "CTF", PYRODECK_AUTOSTART_PROFILES: "Co-op, nope" } });
     const plan = await h.registry.autostartPlan();

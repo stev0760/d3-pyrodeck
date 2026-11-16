@@ -16,7 +16,7 @@ import { serverBroadcast } from "../ws/wsHub.js";
 import { setDefaultServerResolver } from "../ws/wsHub.js";
 import { pyrodeckConfig } from "../routes/pyrodeck-config.js";
 import { playlistManager, rotationHealth } from "../launcher/playlistInstance.js";
-import { PlaylistManager } from "../launcher/PlaylistManager.js";
+import { PlaylistManager, savedRotationToResume } from "../launcher/PlaylistManager.js";
 import { RotationHealthMonitor } from "../launcher/RotationHealthMonitor.js";
 import { NO_PROFILE_ID, scopedEvents, serverEvents, type ScopedServerEvents, type ServerEvents } from "../events/ServerEvents.js";
 import { logServerEvents } from "../events/serverEventLog.js";
@@ -40,12 +40,14 @@ import { checkLaunch, defaultTempDir, type OtherLaunch } from "./launchConflicts
 import {
   CONNECT_SERVER_ID,
   LAUNCH_SERVER_ID,
+  PLAYLIST_STATE_FILE,
   RESERVED_SERVER_IDS,
   isServerIdSafe,
   readServerRunRecords,
   readServersFile,
   serverDir,
   serverIdOfRecord,
+  serverIdsWithPlaylistState,
   upgradeConfigDir,
   writeServersFile,
   type ServersFile,
@@ -142,6 +144,7 @@ export class ServerRegistry implements LaunchGuard {
   private lock: Promise<void> = Promise.resolve();
   private legacyQueue: Promise<void> = Promise.resolve();
   private autostartPlanned: AutostartPlan | null = null;
+  private resumed: Promise<void> | null = null;
 
   constructor(private readonly opts: RegistryOptions) {}
 
@@ -208,7 +211,7 @@ export class ServerRegistry implements LaunchGuard {
     const dir = serverDir(this.opts.configDir, id);
     const playlist = legacy
       ? (this.opts.legacyPlaylist ?? new PlaylistManager(this.opts.configDir))
-      : new PlaylistManager(this.opts.configDir, { statePath: path.join(dir, "playlist-state.json") });
+      : new PlaylistManager(this.opts.configDir, { statePath: path.join(dir, PLAYLIST_STATE_FILE) });
     const server = new ServerInstance({
       id,
       profileId: id === LAUNCH_SERVER_ID ? null : id,
@@ -541,10 +544,55 @@ export class ServerRegistry implements LaunchGuard {
     return profile ? { source: plan.source, profile } : null;
   }
 
-  /** Autostart (once), after reattachAll(): every listed profile's server, each with its own crash-loop guard. */
+  /**
+   * Launch every server a playlist rotation was restarting when Pyrodeck stopped and that is down now (the old game
+   * had quit and the new one was not launched yet): ServerInstance.resumeRotation. Once, after reattachAll() and
+   * before autostart (runAutostart() calls it). The servers are found from their saved playlist states as well as
+   * from the servers there are: a state left by a profile that no longer exists is skipped, with a log line.
+   */
+  resumeRotations(): Promise<void> {
+    this.resumed ??= this.doResumeRotations();
+    return this.resumed;
+  }
+
+  private async doResumeRotations(): Promise<void> {
+    await this.init();
+    const profiles = await listProfiles(this.opts.configDir);
+    this.rememberNames(profiles);
+    const known = new Set(profiles.map((p) => p.id));
+    const ids = new Set([...this.servers.keys(), ...(await serverIdsWithPlaylistState(this.opts.configDir))]);
+    for (const id of ids) {
+      try {
+        await this.resumeRotationOf(id, known);
+      } catch (err) {
+        // Autostart and the other servers go on.
+        console.warn(`[Playlist] Could not resume the rotation of "${this.nameOf(id)}": ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+
+  private async resumeRotationOf(id: string, profileIds: ReadonlySet<string>): Promise<void> {
+    const server = this.servers.get(id) ?? (await this.ensure(id));
+    if (server && (id === LAUNCH_SERVER_ID || profileIds.has(id))) {
+      await server.resumeRotation(this.nameOf(id));
+      return;
+    }
+    if (profileIds.has(id)) return; // a profile whose id cannot name a server (init said so)
+    const entry = server
+      ? await server.rotationToResume()
+      : await savedRotationToResume(this.opts.configDir, path.join(serverDir(this.opts.configDir, id), PLAYLIST_STATE_FILE));
+    if (entry) {
+      console.warn(
+        `[Playlist] The restart of "${this.nameOf(id)}" into "${entry.label}" was under way when Pyrodeck stopped, but its profile no longer exists; not launching it`,
+      );
+    }
+  }
+
+  /** Autostart (once), after reattachAll() and resumeRotations(): every listed profile's server, each with its own crash-loop guard. */
   async runAutostart(): Promise<void> {
     await this.init();
     if (this.autostartPlanned) return;
+    await this.resumeRotations();
     const plan = await this.autostartPlan();
     this.autostartPlanned = plan;
     for (const error of plan.errors) console.error(`[Autostart] Nothing started: ${error}.`);

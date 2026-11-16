@@ -166,7 +166,8 @@ export class PlaylistManager extends EventEmitter {
 
   /**
    * A hold or restart the last Pyrodeck run saved as under way (PlaylistState.pending), until the re-attached
-   * server's console settles it (reattached()) or a launch loads the entry (consumeInitialSync()).
+   * server's console settles it (reattached()), a launch loads the entry (consumeInitialSync()), or, with no server
+   * left to re-attach to, the restart into the entry is made at startup (resumeRotation()).
    */
   private restoredRotation: "hold" | "restart" | null = null;
 
@@ -1095,6 +1096,31 @@ export class PlaylistManager extends EventEmitter {
     return true;
   }
 
+  /**
+   * The entry of a hold or restart the last run saved as under way (PlaylistState.pending) that nothing has settled
+   * yet (reattached(), consumeInitialSync(), resumeRotation()); null otherwise, and while the playlist is paused.
+   */
+  rotationToResume(): PlaylistEntry | null {
+    if (!this.restoredRotation || !this.activePlaylist || !this.needsInitialSync || this.status !== "active") return null;
+    return this.activePlaylist.entries[this.currentIndex] ?? null;
+  }
+
+  /**
+   * Pyrodeck has started and the server is down with no game left to re-attach to: the old game had quit, or was
+   * stopped, before the new one was launched. The restart into the entry (rotationToResume) is handed to the launcher
+   * now, as the rotation would have done, with no hold (nobody is on). The next mission end goes past the entry.
+   * Returns false when there is nothing to resume.
+   */
+  resumeRotation(): boolean {
+    const entry = this.rotationToResume();
+    if (!entry) return false;
+    this.restoredRotation = null;
+    this.needsInitialSync = false;
+    this.clearTimers();
+    this.rotateTo(entry);
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // Voting
   // ---------------------------------------------------------------------------
@@ -1458,4 +1484,14 @@ export class PlaylistManager extends EventEmitter {
       // No saved state
     }
   }
+}
+
+/**
+ * The entry a saved playlist state's rotation was restarting the server into (PlaylistManager.rotationToResume),
+ * read without a server: for the state a deleted profile's server left.
+ */
+export async function savedRotationToResume(configDir: string, statePath: string): Promise<PlaylistEntry | null> {
+  const mgr = new PlaylistManager(configDir, { statePath });
+  await mgr.restoreState();
+  return mgr.rotationToResume();
 }

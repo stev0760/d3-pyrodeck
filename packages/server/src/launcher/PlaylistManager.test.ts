@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { PlaylistManager, type PlaylistEntry } from "./PlaylistManager.js";
+import { PlaylistManager, savedRotationToResume, type PlaylistEntry } from "./PlaylistManager.js";
 
 async function makeManager(): Promise<PlaylistManager> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pl-test-"));
@@ -1157,6 +1157,80 @@ describe("PlaylistManager — a Pyrodeck restart", () => {
       expect(after.mgr.consumeInitialSync()?.label).toBe("Stonecutter");
       after.mgr.onStdoutChunk(missionOver);
       expect(after.rotated.map((e) => e.label)).toEqual(["BBQ"]);
+    });
+
+    it("no server is left, and Pyrodeck carries the restart out at startup: once, and the next mission end goes past it", async () => {
+      await restarting();
+      const after = await restarted();
+
+      expect(after.mgr.rotationToResume()?.label).toBe("Stonecutter");
+      expect(after.mgr.resumeRotation()).toBe(true);
+      expect(after.mgr.resumeRotation()).toBe(false);
+      expect(after.mgr.consumeInitialSync()).toBeNull();
+
+      expect(after.rotated.map((e) => e.label)).toEqual(["Stonecutter"]);
+      expect(after.mgr.getStatus()).toMatchObject({ status: "restarting", currentEntry: { label: "Stonecutter" } });
+      after.mgr.markRotationComplete();
+      after.mgr.onStdoutChunk(missionOver);
+      expect(after.rotated.map((e) => e.label)).toEqual(["Stonecutter", "BBQ"]);
+    });
+
+    it("a re-attached server settles the restart first: nothing is left to resume", async () => {
+      const handedOver = await restarting();
+      const after = await restarted();
+      after.mgr.reattached(new Date(handedOver + 1_500));
+
+      expect(after.mgr.rotationToResume()).toBeNull();
+      expect(after.mgr.resumeRotation()).toBe(false);
+      expect(after.rotated).toEqual([]);
+    });
+  });
+
+  describe("resumed at startup with no server", () => {
+    async function savedState(state: Record<string, unknown>): Promise<void> {
+      const mgr = new PlaylistManager(dir);
+      const pl = await mgr.create("Soak", "sequential", fourEntries);
+      await fs.writeFile(
+        path.join(dir, "playlist-state.json"),
+        JSON.stringify({ activePlaylistId: pl.id, currentIndex: 1, shuffleOrder: null, paused: null, ...state }),
+      );
+    }
+
+    it("a hold: the restart into the held entry is made at once, with no second hold and no $wait", async () => {
+      await savedState({ pending: { kind: "hold", since: Date.now() - 5_000 } });
+      const after = await restarted();
+      after.mgr.humansFn = () => 1;
+
+      expect(after.mgr.resumeRotation()).toBe(true);
+
+      expect(after.rotated.map((e) => e.label)).toEqual(["Stonecutter"]);
+      expect(after.mgr.getStatus()).toMatchObject({ status: "restarting", holdEntry: null });
+      after.mgr.rotationSkipped();
+      expect(after.sent).toEqual([]);
+    });
+
+    it("a paused playlist is not resumed, whatever was under way", async () => {
+      await savedState({ paused: { reason: "Paused.", at: Date.now() }, pending: { kind: "restart", since: Date.now() } });
+      const after = await restarted();
+
+      expect(after.mgr.rotationToResume()).toBeNull();
+      expect(after.mgr.resumeRotation()).toBe(false);
+      expect(after.rotated).toEqual([]);
+      expect(after.mgr.getStatus()).toMatchObject({ status: "paused", currentEntry: { label: "Stonecutter" } });
+    });
+
+    it("an activation is left to the next launch, which loads the entry", async () => {
+      await savedState({ currentIndex: 0, pending: { kind: "activation", since: Date.now() } });
+      const after = await restarted();
+
+      expect(after.mgr.resumeRotation()).toBe(false);
+      expect(after.mgr.consumeInitialSync()?.label).toBe("Skybox");
+    });
+
+    it("the saved state alone tells what a server would resume", async () => {
+      await savedState({ pending: { kind: "restart", since: Date.now() } });
+      expect((await savedRotationToResume(dir, path.join(dir, "playlist-state.json")))?.label).toBe("Stonecutter");
+      expect(await savedRotationToResume(dir, path.join(dir, "missing.json"))).toBeNull();
     });
   });
 });

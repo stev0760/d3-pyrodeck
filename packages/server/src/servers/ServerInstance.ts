@@ -317,6 +317,8 @@ export class ServerInstance {
   private sessionId: string | null = null;
   /** A playlist rotation is between stopping the server and spawning the next mission's. */
   private rotating = false;
+  /** The last rotation's run (rotate()), up to its first launch attempt. */
+  private rotationRun: Promise<void> = Promise.resolve();
   /** A server from before Pyrodeck's restart that still runs but could not be re-attached to. */
   private unattached: RunRecord | null = null;
 
@@ -477,7 +479,9 @@ export class ServerInstance {
     });
 
     // Rotate: stop server, swap mission CVar, restart
-    this.playlist.on("rotate", (entry: PlaylistEntry) => this.rotate(entry));
+    this.playlist.on("rotate", (entry: PlaylistEntry) => {
+      this.rotationRun = this.rotate(entry);
+    });
 
     this.supervisor = new Supervisor(
       {
@@ -524,6 +528,7 @@ export class ServerInstance {
       {
         choose: autostartChoice,
         blockedBy: () => {
+          if (this.rotating || this.rotationHealth.isPending()) return "its playlist is restarting it";
           if (this.process.isRunning()) {
             const { pid, adopted } = this.process.getStatus();
             return adopted
@@ -811,7 +816,40 @@ export class ServerInstance {
     }
   }
 
-  /** Run autostart (once), after reattach(). */
+  /**
+   * The entry of a playlist rotation the last Pyrodeck left under way (a hold or a restart) whose server is down: no
+   * game runs, none is held for a rotation, and re-attach found none that may still hold the ports. Null otherwise,
+   * and while the playlist is paused. Call after reattach().
+   */
+  async rotationToResume(): Promise<PlaylistEntry | null> {
+    await this.playlistRestored;
+    return this.resumableEntry();
+  }
+
+  private resumableEntry(): PlaylistEntry | null {
+    if (this.process.isRunning() || this.heldLaunch() !== null || this.reattachBlock !== null) return null;
+    return this.playlist.rotationToResume();
+  }
+
+  /**
+   * Carry out the rotation of rotationToResume() now, after reattach() and before runAutostart(): the server is
+   * launched into the entry as the rotation would have launched it (start reason "playlist", the restart's health
+   * check). A refused or failed launch is handled as a rotation's: one retry, then the playlist pauses with the
+   * reason. False when there was nothing to resume. `name` is the server's, for the log.
+   */
+  async resumeRotation(name: string = this.id): Promise<boolean> {
+    await this.playlistRestored;
+    const entry = this.resumableEntry();
+    if (!entry) return false;
+    console.log(
+      `[Playlist] The restart of "${name}" into "${entry.label}" was under way when Pyrodeck stopped, and the server is down; launching it now`,
+    );
+    this.playlist.resumeRotation();
+    await this.rotationRun;
+    return true;
+  }
+
+  /** Run autostart (once), after reattach() and resumeRotation(). */
   runAutostart(): Promise<void> {
     return this.autostart.run();
   }

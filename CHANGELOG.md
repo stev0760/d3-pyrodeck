@@ -68,7 +68,10 @@ upgrade from 0.5.x is automatic.
   the same). The position is now saved at every mission change, and the next one goes to the entry after the one the
   server runs; a shuffle round goes on where it was. A mission change that was under way is finished: a server held
   before its restart, or one not yet stopped, is restarted into the next mission once Pyrodeck has logged in to it
-  again; a server already restarted into it is left alone; with no server left, the next launch starts it.
+  again; a server already restarted into it is left alone.
+- **A server a playlist was restarting is no longer left down by a Pyrodeck restart.** When the old game had quit and
+  the new one was not launched yet, Pyrodeck now launches it into the next mission at startup, unless the playlist is
+  paused.
 
 ### Upgrade
 - The first start upgrades the config directory in place: `servers/index.json` (the autostart list) and `servers/<id>/`

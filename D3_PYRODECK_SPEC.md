@@ -692,7 +692,12 @@ entry comes next. The first console login to a re-attached server (E.5) settles 
   relaunch), with no second hold and no timer anchor. A rotation then called off sends `$wait off`.
 - `activation`: the server's mission end loads the entry, as without the restart.
 
-With no server to re-attach to, the next launch (autostart or the Launch button) starts the entry.
+With no server to re-attach to (the old one had quit and the new one was not launched yet), a `hold` or `restart` is
+carried out at startup, after re-attach and before autostart: the server is launched into the entry as the rotation
+launches it (start reason `playlist`, the restart health check), and autostart skips that server. A paused playlist
+is left as it is. A launch that is refused or fails is retried once, then pauses the playlist, as for any rotation. A
+state left by a profile that no longer exists is skipped with a log line. An `activation` is started by the next
+launch (autostart or the Launch button).
 
 #### Mission Voting
 Voting is chat-based — backwards-compatible with all D3 builds, no client mod required. Players vote by typing a single digit in all-chat; Pyrodeck parses `*PlayerName says: N` from stdout.

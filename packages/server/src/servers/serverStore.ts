@@ -181,22 +181,40 @@ export async function upgradeConfigDir(input: UpgradeInput): Promise<UpgradeResu
   return { file, created, legacyRecord, notes };
 }
 
+/** A server's playlist state, in its directory. */
+export const PLAYLIST_STATE_FILE = "playlist-state.json";
+
+/** The ids of the directories under servers/ that can name a server. */
+async function serverDirIds(configDir: string): Promise<string[]> {
+  try {
+    // Directories only: servers/index.json sits beside them.
+    return (await fs.readdir(path.join(configDir, SERVERS_DIR), { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && isServerIdSafe(e.name))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 /** Each server's run record, by server id (the directories under servers/). */
 export async function readServerRunRecords(configDir: string): Promise<Map<string, RunRecord>> {
   const out = new Map<string, RunRecord>();
-  let ids: string[];
-  try {
-    // Directories only: servers/index.json sits beside them.
-    ids = (await fs.readdir(path.join(configDir, SERVERS_DIR), { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch {
-    return out;
-  }
-  for (const id of ids) {
-    if (!isServerIdSafe(id)) continue;
+  for (const id of await serverDirIds(configDir)) {
     const record = await readRunRecord(serverDir(configDir, id), "run.json");
     if (record) out.set(id, record);
+  }
+  return out;
+}
+
+/** The servers that have a playlist state of their own (servers/<id>/playlist-state.json). */
+export async function serverIdsWithPlaylistState(configDir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const id of await serverDirIds(configDir)) {
+    try {
+      if ((await fs.stat(path.join(serverDir(configDir, id), PLAYLIST_STATE_FILE))).isFile()) out.push(id);
+    } catch {
+      // none
+    }
   }
   return out;
 }

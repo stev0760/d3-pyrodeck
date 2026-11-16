@@ -1022,6 +1022,144 @@ describe("ServerInstance: a playlist across a Pyrodeck restart", () => {
 
     expect(await missionName(after)).toBe("gamma.mn3");
   });
+
+  /** A mission ends and its restart is handed to the launcher; Pyrodeck stops before the old game is stopped. */
+  async function stopsMidRestart(h: Harness): Promise<void> {
+    h.playlist.removeAllListeners("rotate");
+    missionOver(h);
+    await saved(h, "restart");
+    pyrodeckStops(h);
+  }
+
+  /** As stopsMidRestart, during the hold before the restart into Beta, with a human on. */
+  async function stopsDuringHold(h: Harness): Promise<void> {
+    h.game.humans = ["Pilot"];
+    await activatePlaylist(h, 10, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    await settle(() => h.server.supervisor.humansOnline() === 1, "the roster");
+    missionOver(h);
+    h.game.process.print("Opening level 'alpha.d3l'\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(h.game.sent).toContain("$wait on");
+    await saved(h, "hold");
+    pyrodeckStops(h);
+  }
+
+  /** The next Pyrodeck once the game the last one ran has quit as well: re-attach finds nothing. */
+  async function restartedWithNoGame(h: Harness, opts: Omit<SetUpOptions, "after"> = {}): Promise<Harness> {
+    const pid = h.game.process.getStatus().pid;
+    const next = await setUp({ ...opts, after: h });
+    await next.server.reattach();
+    expect(next.logs).toContain(`[Pyrodeck] Not re-attaching to server PID ${pid}: process ${pid} is no longer running`);
+    return next;
+  }
+
+  /** The launched entry comes up healthy, and the next mission end rotates to `label`. */
+  async function healthyThenRotates(h: Harness, label: string): Promise<void> {
+    h.game.process.consoleUp();
+    await loggedIn(h, 1);
+    await settle(() => h.playlist.getStatus().status === "active", "the healthy restart");
+    missionOver(h);
+    await settle(() => h.game.sent.includes(sayToAll(`Changing mission to ${label}`)), `the rotation into ${label}`);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => h.game.process.launches.length === 2, "the relaunch");
+    expect(await missionName(h)).toBe(`${label.toLowerCase()}.mn3`);
+  }
+
+  it("restarted between a rotation's old game quitting and its new one launching, it launches the entry at startup", async () => {
+    const h = await setUp();
+    await activatePlaylist(h, 0, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    await stopsMidRestart(h);
+
+    const after = await restartedWithNoGame(h, { autostartProfileId: PROFILE_ID });
+    expect(await after.server.resumeRotation()).toBe(true);
+    await after.server.runAutostart();
+
+    expect(after.timeline.filter((e) => e.startsWith("proc start"))).toEqual(["proc start playlist"]);
+    expect(await missionName(after)).toBe("beta.mn3");
+    expect(after.server.playlistStatusPayload()).toMatchObject({
+      status: "restarting",
+      currentEntry: { label: "Beta" },
+      rotationCheck: { state: "waiting", attempt: 0 },
+    });
+    expect(after.logs).toContain(
+      '[Playlist] The restart of "test" into "Beta" was under way when Pyrodeck stopped, and the server is down; launching it now',
+    );
+    // Autostart leaves alone the server its playlist is restarting; a second call finds nothing to resume.
+    expect(after.server.autostart.snapshot()).toMatchObject({ state: "skipped", reason: "its playlist is restarting it" });
+    expect(await after.server.resumeRotation()).toBe(false);
+
+    await healthyThenRotates(after, "Gamma");
+    expect(after.logs).toContain('[Playlist] Restart into "Beta" healthy');
+  });
+
+  it("restarted during the hold after the held game quit, it launches the held entry with no second hold", async () => {
+    const h = await setUp();
+    await stopsDuringHold(h);
+
+    const after = await restartedWithNoGame(h);
+    expect(await after.server.resumeRotation()).toBe(true);
+
+    expect(after.timeline.filter((e) => e.startsWith("proc start"))).toEqual(["proc start playlist"]);
+    expect(await missionName(after)).toBe("beta.mn3");
+    expect(after.server.playlistStatusPayload()).toMatchObject({
+      status: "restarting",
+      holdEntry: null,
+      currentEntry: { label: "Beta" },
+      rotationCheck: { state: "waiting" },
+    });
+    await healthyThenRotates(after, "Gamma");
+    expect(after.game.sent.filter((c) => c.startsWith("$wait"))).toEqual([]);
+  });
+
+  it("a paused playlist is not resumed: the server stays down", async () => {
+    const h = await setUp();
+    await activatePlaylist(h, 0, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    await stopsMidRestart(h);
+    const state = JSON.parse(await fs.readFile(statePath(h), "utf-8"));
+    await fs.writeFile(statePath(h), JSON.stringify({ ...state, paused: { reason: "Paused.", at: Date.now() } }));
+
+    const after = await restartedWithNoGame(h);
+    expect(await after.server.resumeRotation()).toBe(false);
+    await after.server.runAutostart();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(after.game.process.launches).toHaveLength(0);
+    expect(after.server.playlist.getStatus()).toMatchObject({ status: "paused", currentEntry: { label: "Beta" } });
+  });
+
+  it("re-attached to the held game, it restarts that game once and launches no second one", async () => {
+    const h = await setUp();
+    await stopsDuringHold(h);
+
+    const after = await setUp({
+      after: h,
+      processFacts: (p) => ({
+        alive: p === 5001,
+        cmdline: [path.join(h.gamePath, "Descent3"), "-dedicated", "./ctf.cfg"],
+        linux: { startTicks: `ticks-${p}`, state: "S", bootId: BOOT_ID },
+        bootTimeMs: 0,
+      }),
+    });
+    await after.server.reattach();
+    expect(await after.server.resumeRotation()).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    await loggedIn(after, 1);
+    await settle(() => after.game.sent.includes(sayToAll("Changing mission to Beta")), "the rotation into Beta");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => after.game.process.launches.length === 1, "the relaunch");
+    expect(await after.server.resumeRotation()).toBe(false);
+
+    expect(inOrder(after.timeline, ["proc adopt 5001", "proc stop playlist", "proc start playlist"])).toEqual([
+      "proc adopt 5001",
+      "proc stop playlist",
+      "proc start playlist",
+    ]);
+    expect(after.timeline.filter((e) => e.startsWith("proc start"))).toEqual(["proc start playlist"]);
+    expect(after.logs.filter((l) => l.includes("and the server is down; launching it now"))).toEqual([]);
+  });
 });
 
 describe("ServerInstance: re-attach and autostart", () => {
