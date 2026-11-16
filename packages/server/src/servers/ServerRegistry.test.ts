@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ServerRegistry, type RegistrySettings } from "./ServerRegistry.js";
+import { SERVERS_FILE } from "./serverStore.js";
 import { ServerEvents } from "../events/ServerEvents.js";
 import { SessionManager } from "../session/SessionManager.js";
 import { PlaylistManager } from "../launcher/PlaylistManager.js";
@@ -501,7 +502,7 @@ describe("ServerRegistry: restart of Pyrodeck", () => {
   it("re-attaches from an older Pyrodeck's running-server.json into its profile's server", async () => {
     const h0 = await setUp({ profiles: [A, B] });
     h0.registry.dispose();
-    await fs.rm(path.join(h0.configDir, "servers.json"));
+    await fs.rm(path.join(h0.configDir, SERVERS_FILE));
     const pid = 9100;
     h0.world.alive.set(pid, { executable: path.join(h0.gamePath, "Descent3") });
     const record: RunRecord = {

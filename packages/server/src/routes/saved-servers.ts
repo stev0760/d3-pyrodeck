@@ -11,12 +11,13 @@ interface SavedServer {
 }
 
 const CONFIG_DIR = process.env.PYRODECK_CONFIG_DIR ?? "./config";
+/** Connect mode's saved servers (the servers Pyrodeck runs are listed in servers/index.json). */
 const SERVERS_FILE = path.join(CONFIG_DIR, "servers.json");
 
 async function readServers(): Promise<SavedServer[]> {
   try {
-    const data = await fs.readFile(SERVERS_FILE, "utf-8");
-    return JSON.parse(data) as SavedServer[];
+    const data = JSON.parse(await fs.readFile(SERVERS_FILE, "utf-8")) as unknown;
+    return Array.isArray(data) ? (data as SavedServer[]) : [];
   } catch {
     return [];
   }

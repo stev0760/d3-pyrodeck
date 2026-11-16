@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readServersFile, serverIdOfRecord, upgradeConfigDir } from "./serverStore.js";
+import { SERVERS_FILE, readServerRunRecords, readServersFile, serverIdOfRecord, upgradeConfigDir } from "./serverStore.js";
 import { RUN_RECORD_FILE, type RunRecord } from "../launcher/runRecord.js";
 
 /**
@@ -39,7 +39,7 @@ function record(profileId: string | null, pid = 4242): RunRecord {
 }
 
 describe("upgradeConfigDir", () => {
-  it("fresh: an empty servers.json, the server without a profile keeps the legacy playlist state", async () => {
+  it("fresh: an empty servers/index.json, the server without a profile keeps the legacy playlist state", async () => {
     const result = await upgradeConfigDir({ configDir: dir, profiles: [], autostartProfileId: null });
     expect(result).toMatchObject({ created: true, legacyRecord: null });
     expect(await readServersFile(dir)).toEqual({ version: 1, autostart: [], legacyOwner: "launch" });
@@ -51,12 +51,13 @@ describe("upgradeConfigDir", () => {
     expect(result.file).toEqual({ version: 1, autostart: ["p1"], legacyOwner: "p1" });
     // Nothing else is moved or rewritten.
     expect(JSON.parse(await fs.readFile(path.join(dir, "playlist-state.json"), "utf-8"))).toEqual({ activePlaylistId: "pl", currentIndex: 1 });
-    expect(await fs.readdir(dir)).toEqual(expect.arrayContaining(["playlist-state.json", "servers.json"]));
+    expect(await fs.readdir(dir)).toEqual(expect.arrayContaining(["playlist-state.json", "servers"]));
+    expect(await fs.readdir(path.join(dir, "servers"))).toEqual(["index.json"]);
   });
 
   it("0.5.x idle without autostart: the most recently launched profile, else the only one, owns it", async () => {
     expect((await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: null })).file.legacyOwner).toBe("p2");
-    await fs.rm(path.join(dir, "servers.json"));
+    await fs.rm(path.join(dir, SERVERS_FILE));
     expect((await upgradeConfigDir({ configDir: dir, profiles: [{ id: "only" }], autostartProfileId: null })).file.legacyOwner).toBe("only");
   });
 
@@ -81,16 +82,16 @@ describe("upgradeConfigDir", () => {
 
   it("is idempotent: a second start changes nothing", async () => {
     await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p1" });
-    const before = await fs.readFile(path.join(dir, "servers.json"), "utf-8");
+    const before = await fs.readFile(path.join(dir, SERVERS_FILE), "utf-8");
     const again = await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p1" });
     expect(again).toMatchObject({ created: false, notes: [] });
-    expect(await fs.readFile(path.join(dir, "servers.json"), "utf-8")).toBe(before);
+    expect(await fs.readFile(path.join(dir, SERVERS_FILE), "utf-8")).toBe(before);
   });
 
   it("downgrade then upgrade: the older Pyrodeck's autostart choice and its running server are taken back", async () => {
     await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p1" });
     await fs.writeFile(
-      path.join(dir, "servers.json"),
+      path.join(dir, SERVERS_FILE),
       JSON.stringify({ version: 1, autostart: ["p1", "p2"], legacyOwner: "p1" }),
     );
     // The downgraded Pyrodeck ticked p2 instead and launched it.
@@ -102,6 +103,34 @@ describe("upgradeConfigDir", () => {
     // And when it cleared the autostart profile, the first of the list goes.
     const cleared = await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: null });
     expect(cleared.file.autostart).toEqual(["p1"]);
+  });
+
+  it("leaves Connect mode's saved servers (0.5.x servers.json) alone, and still runs the first start", async () => {
+    const saved = JSON.stringify([{ id: "s1", name: "Public CTF", host: "203.0.113.5", port: 2092 }], null, 2);
+    await fs.writeFile(path.join(dir, "servers.json"), saved);
+    const result = await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p1" });
+    expect(result).toMatchObject({ created: true, file: { autostart: ["p1"], legacyOwner: "p1" } });
+    expect(await fs.readFile(path.join(dir, "servers.json"), "utf-8")).toBe(saved);
+  });
+
+  it("moves a development build's store out of servers.json, once", async () => {
+    await fs.writeFile(
+      path.join(dir, "servers.json"),
+      JSON.stringify({ version: 1, autostart: ["p2", "p1"], legacyOwner: "p1" }),
+    );
+    const result = await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p2" });
+    expect(result).toMatchObject({ created: false, file: { version: 1, autostart: ["p2", "p1"], legacyOwner: "p1" } });
+    expect(result.notes[0]).toMatch(/moved/);
+    await expect(fs.access(path.join(dir, "servers.json"))).rejects.toThrow();
+    const again = await upgradeConfigDir({ configDir: dir, profiles: [P1, P2], autostartProfileId: "p2" });
+    expect(again).toMatchObject({ created: false, notes: [] });
+  });
+
+  it("reads the run records of the server directories, not the index beside them", async () => {
+    await upgradeConfigDir({ configDir: dir, profiles: [P1], autostartProfileId: null });
+    await fs.mkdir(path.join(dir, "servers", "p1"), { recursive: true });
+    await fs.writeFile(path.join(dir, "servers", "p1", "run.json"), JSON.stringify(record("p1")));
+    expect([...(await readServerRunRecords(dir)).keys()]).toEqual(["p1"]);
   });
 
   it("takes the server id from a record that carries one", () => {

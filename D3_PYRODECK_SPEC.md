@@ -1797,7 +1797,7 @@ the profile by its exact, case-sensitive name, else by id; two profiles of that 
 (`PATCH /api/profiles/:id { autostart: true }` makes the profile the one, replacing another; `false` clears it only if
 it is this profile; any other value is a 400). Deleting the profile clears it. While the variable is set the UI box is
 locked, and a PATCH that sends `autostart` anyway is stored and answered with a warning that the variable wins.
-Neither set: no autostart. Since several servers (Addendum H.6), the UI setting is a list in `servers.json` and
+Neither set: no autostart. Since several servers (Addendum H.6), the UI setting is a list in `servers/index.json` and
 `PYRODECK_AUTOSTART_PROFILES` names several; each listed profile starts with its own guard.
 
 ### F.2 When, and how
@@ -1994,15 +1994,20 @@ host on, or moving it, hosts every server's active playlist; each server's playl
 
 | File | Holds |
 |------|-------|
-| `servers.json` | `{ version: 1, autostart: [profileId…], legacyOwner }` |
+| `servers/index.json` | `{ version: 1, autostart: [profileId…], legacyOwner }` |
 | `servers/<id>/run.json` | the server's run record (E.5), plus `serverId`, `defaultOptions`, `startupFile` |
 | `servers/<id>/playlist-state.json` | the server's playlist state (not the legacy owner's) |
 | `running-server.json` | a copy of one running server's record, for a Pyrodeck that ran one server: the legacy owner's when it runs, else the server started first; removed when none runs |
 | `playlist-state.json` | the legacy owner's playlist state |
 | `pyrodeck.json` `autostart.profileId` | the first of the autostart list |
 
+`servers.json` in the config directory is Connect mode's saved servers (§7), as in every earlier version; the server
+list is not kept there. A development build of this addendum wrote its index to `servers.json`, over the saved servers;
+the first start moves such a file (an object with `version: 1` and `autostart`) to `servers/index.json`, and leaves a
+`servers.json` holding saved servers (an array) alone.
+
 Not in `pyrodeck.json`, which a Pyrodeck from before saves with only the keys it knows. `servers/serverStore.ts`
-`upgradeConfigDir()` runs at every start and is idempotent. Without `servers.json` (the first start): the legacy owner is
+`upgradeConfigDir()` runs at every start and is idempotent. Without `servers/index.json` (the first start): the legacy owner is
 the server `running-server.json` names (its profile, else `launch`), else `autostart.profileId`, else the most recently
 launched profile, else the only profile, else `launch`; the autostart list is `[autostart.profileId]`; profiles,
 schedules, bans, history and playlists are not touched. With it: when `autostart.profileId` is not the list's first, a
@@ -2018,7 +2023,7 @@ newer live record wins and becomes its own. A live game whose console cannot be 
 blocks that server's autostart. Then autostart runs once per listed profile, each with its own crash-loop guard (F.3):
 `PYRODECK_AUTOSTART_PROFILE` (one name) and `PYRODECK_AUTOSTART_PROFILES` (a comma list of names or ids) together,
 when either is set, win over the profiles ticked **Start when Pyrodeck starts**; `PATCH /api/profiles/:id
-{ autostart }` now adds or removes one profile of `servers.json`'s list instead of replacing the one. A name that
+{ autostart }` now adds or removes one profile of `servers/index.json`'s list instead of replacing the one. A name that
 matches no profile is logged; the others still start. Autostart launches go through the launch check like any other.
 
 ### H.7 API

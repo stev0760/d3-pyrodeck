@@ -43,7 +43,7 @@ used through the API; the panel shows one server (the default) until the next re
   several consoles are open.
 
 ### Upgrade
-- The first start upgrades the config directory in place: `servers.json` (the autostart list) and `servers/<id>/`
+- The first start upgrades the config directory in place: `servers/index.json` (the autostart list) and `servers/<id>/`
   (each server's run record and playlist state) are added; nothing else is moved. A running server is re-attached
   to. For a downgrade, `running-server.json`, `playlist-state.json` and `autostart.profileId` keep describing one
   server; stop the others first.

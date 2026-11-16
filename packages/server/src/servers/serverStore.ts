@@ -4,9 +4,10 @@ import { readRunRecord, type RunRecord } from "../launcher/runRecord.js";
 import { NO_PROFILE_ID } from "../events/ServerEvents.js";
 
 /**
- * What Pyrodeck keeps about the servers it runs, in `<config>/servers.json`,
+ * What Pyrodeck keeps about the servers it runs, in `<config>/servers/index.json`,
  * and each server's own files under `<config>/servers/<id>/` (run.json, the
- * run record; playlist-state.json, its playlist). Kept out of pyrodeck.json:
+ * run record; playlist-state.json, its playlist). Not `<config>/servers.json`:
+ * that file is Connect mode's saved servers (routes/saved-servers.ts). Kept out of pyrodeck.json:
  * a Pyrodeck from before it ran several servers saves only the keys it
  * knows, and would drop these.
  *
@@ -16,8 +17,15 @@ import { NO_PROFILE_ID } from "../events/ServerEvents.js";
  * profile of the autostart list.
  */
 
-export const SERVERS_FILE = "servers.json";
 export const SERVERS_DIR = "servers";
+/** The autostart list and the legacy owner, relative to the config directory. */
+export const SERVERS_FILE = path.join(SERVERS_DIR, "index.json");
+/**
+ * Where development builds before the release kept SERVERS_FILE: the name of
+ * Connect mode's saved servers, which they overwrote. Moved once, when it
+ * holds this store's shape (an object) and not saved servers (an array).
+ */
+const EARLY_SERVERS_FILE = "servers.json";
 /** The server launched without a profile (the global dedicated.cfg); its events carry NO_PROFILE_ID. */
 export const LAUNCH_SERVER_ID = NO_PROFILE_ID;
 /** Connect mode's console session (one remote server), in the server list and on the WebSocket. */
@@ -47,7 +55,7 @@ export function serverDir(configDir: string, id: string): string {
 }
 
 function sanitize(raw: unknown): ServersFile | null {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const autostart = Array.isArray(r.autostart)
     ? [...new Set(r.autostart.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim()))]
@@ -64,9 +72,26 @@ export async function readServersFile(configDir: string): Promise<ServersFile | 
   }
 }
 
+/** Move a development build's store out of the saved servers' file (see EARLY_SERVERS_FILE); true when moved. */
+async function moveEarlyServersFile(configDir: string): Promise<boolean> {
+  const early = path.join(configDir, EARLY_SERVERS_FILE);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fs.readFile(early, "utf-8"));
+  } catch {
+    return false;
+  }
+  const r = raw as Record<string, unknown> | null;
+  if (!r || typeof r !== "object" || Array.isArray(r) || r.version !== 1 || !Array.isArray(r.autostart)) return false;
+  if ((await readServersFile(configDir)) !== null) return false;
+  await fs.mkdir(path.join(configDir, SERVERS_DIR), { recursive: true });
+  await fs.rename(early, path.join(configDir, SERVERS_FILE));
+  return true;
+}
+
 export async function writeServersFile(configDir: string, file: ServersFile): Promise<void> {
-  await fs.mkdir(configDir, { recursive: true });
   const target = path.join(configDir, SERVERS_FILE);
+  await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(`${target}.tmp`, JSON.stringify(file, null, 2));
   await fs.rename(`${target}.tmp`, target);
 }
@@ -86,7 +111,7 @@ export interface UpgradeInput {
 
 export interface UpgradeResult {
   file: ServersFile;
-  /** servers.json did not exist: this is the first start of a Pyrodeck that runs several servers. */
+  /** servers/index.json did not exist: this is the first start of a Pyrodeck that runs several servers. */
   created: boolean;
   /** running-server.json, the record an older Pyrodeck (or this one, for a downgrade) keeps for one server. */
   legacyRecord: RunRecord | null;
@@ -102,7 +127,7 @@ export function serverIdOfRecord(record: RunRecord): string {
 /**
  * Bring a config directory up to date, at every start. Idempotent.
  *
- * First start (no servers.json): the legacy owner is the server
+ * First start (no servers/index.json): the legacy owner is the server
  * running-server.json names, else the autostart profile, else the most
  * recently launched profile, else the only profile, else the server without
  * a profile; the autostart list is pyrodeck.json's profile. Profiles,
@@ -117,6 +142,9 @@ export async function upgradeConfigDir(input: UpgradeInput): Promise<UpgradeResu
   const { configDir } = input;
   const legacyRecord = await readRunRecord(configDir);
   const notes: string[] = [];
+  if (await moveEarlyServersFile(configDir)) {
+    notes.push(`${EARLY_SERVERS_FILE} of a development build moved to ${SERVERS_FILE}; ${EARLY_SERVERS_FILE} is Connect mode's saved servers`);
+  }
   const existing = await readServersFile(configDir);
   let file: ServersFile;
   const created = existing === null;
@@ -158,7 +186,10 @@ export async function readServerRunRecords(configDir: string): Promise<Map<strin
   const out = new Map<string, RunRecord>();
   let ids: string[];
   try {
-    ids = await fs.readdir(path.join(configDir, SERVERS_DIR));
+    // Directories only: servers/index.json sits beside them.
+    ids = (await fs.readdir(path.join(configDir, SERVERS_DIR), { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
   } catch {
     return out;
   }

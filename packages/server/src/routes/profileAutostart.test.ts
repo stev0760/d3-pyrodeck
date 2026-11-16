@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 /**
  * "Start when Pyrodeck starts" on the profile API: on for several profiles
- * (servers.json keeps the list, pyrodeck.json its first), cleared with its
+ * (servers/index.json keeps the list, pyrodeck.json its first), cleared with its
  * profile, and PYRODECK_AUTOSTART_PROFILE winning (said in the save's
  * warnings). profiles.json lives in a temp config directory; the stored
  * Pyrodeck config is a stand-in.
@@ -41,11 +41,11 @@ const PROFILES = [
 let app: FastifyInstance;
 
 const autostartList = async (): Promise<string[]> =>
-  (JSON.parse(await fs.readFile(`${mocks.dir}/servers.json`, "utf-8")) as { autostart: string[] }).autostart;
+  (JSON.parse(await fs.readFile(`${mocks.dir}/servers/index.json`, "utf-8")) as { autostart: string[] }).autostart;
 
 beforeEach(async () => {
   await fs.writeFile(`${mocks.dir}/profiles.json`, JSON.stringify(PROFILES));
-  await fs.rm(`${mocks.dir}/servers.json`, { force: true });
+  await fs.rm(`${mocks.dir}/servers/index.json`, { force: true });
   mocks.config.autostart = { profileId: null };
   app = Fastify();
   await app.register(configRoutes);
