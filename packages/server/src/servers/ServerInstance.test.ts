@@ -338,6 +338,8 @@ interface SetUpOptions {
   autostartProfileId?: string;
   autostart?: { maxFailures?: number };
   processFacts?: (pid: number) => ProcessFacts;
+  /** A restarted Pyrodeck: the config and game directories of this earlier harness, as it left them. */
+  after?: Harness;
 }
 
 interface Harness {
@@ -357,17 +359,21 @@ interface Harness {
 const harnesses: Harness[] = [];
 
 async function setUp(opts: SetUpOptions = {}): Promise<Harness> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-instance-"));
+  const root = opts.after?.root ?? (await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-instance-")));
   const configDir = path.join(root, "config");
   const gamePath = path.join(root, "game");
-  await fs.mkdir(configDir, { recursive: true });
-  await fs.mkdir(path.join(gamePath, "missions"), { recursive: true });
-  await fs.writeFile(path.join(gamePath, "ctf.cfg"), CFG);
-  for (const mission of ["alpha.mn3", "beta.mn3"]) await fs.writeFile(path.join(gamePath, "missions", mission), "");
-  await fs.writeFile(
-    path.join(configDir, "profiles.json"),
-    JSON.stringify([{ id: PROFILE_ID, name: PROFILE_NAME, configFile: "ctf.cfg", createdAt: "2026-11-01T00:00:00.000Z" }]),
-  );
+  if (!opts.after) {
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.mkdir(path.join(gamePath, "missions"), { recursive: true });
+    await fs.writeFile(path.join(gamePath, "ctf.cfg"), CFG);
+    for (const mission of ["alpha.mn3", "beta.mn3", "gamma.mn3"]) {
+      await fs.writeFile(path.join(gamePath, "missions", mission), "");
+    }
+    await fs.writeFile(
+      path.join(configDir, "profiles.json"),
+      JSON.stringify([{ id: PROFILE_ID, name: PROFILE_NAME, configFile: "ctf.cfg", createdAt: "2026-11-01T00:00:00.000Z" }]),
+    );
+  }
 
   const timeline: string[] = [];
   const bus = new ServerEvents();
@@ -457,11 +463,12 @@ async function missionName(h: Harness): Promise<string | undefined> {
   return /^MissionName=(.*)$/m.exec(cfg)?.[1];
 }
 
-async function activatePlaylist(h: Harness, holdSeconds: number): Promise<void> {
-  const playlist = await h.playlist.create("Rotation", "sequential", [
-    { label: "Alpha", missionName: "alpha.mn3" },
-    { label: "Beta", missionName: "beta.mn3" },
-  ]);
+async function activatePlaylist(h: Harness, holdSeconds: number, labels = ["Alpha", "Beta"]): Promise<void> {
+  const playlist = await h.playlist.create(
+    "Rotation",
+    "sequential",
+    labels.map((label) => ({ label, missionName: `${label.toLowerCase()}.mn3` })),
+  );
   await h.playlist.update(playlist.id, { holdSeconds });
   await h.playlist.activate(playlist.id);
 }
@@ -882,6 +889,138 @@ describe("ServerInstance: supervisor", () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(h.timeline).not.toContain("bus server.hung");
     expect(h.game.process.launches).toHaveLength(1);
+  });
+});
+
+describe("ServerInstance: a playlist across a Pyrodeck restart", () => {
+  const statePath = (h: Harness) => path.join(h.configDir, "playlist-state.json");
+
+  /**
+   * Wait (real time, at most 2 s) until the saved playlist state has the position the playlist has now, and the
+   * run record names the running process. The test goes on either way: a position that is never saved fails it later.
+   */
+  async function saved(h: Harness, pending: string | null): Promise<void> {
+    const deadline = performance.now() + 2_000;
+    const want = h.playlist.getStatus().currentIndex;
+    while (performance.now() < deadline) {
+      try {
+        const state = JSON.parse(await fs.readFile(statePath(h), "utf-8"));
+        const record = JSON.parse(await fs.readFile(runRecordPath(h), "utf-8")) as RunRecord;
+        const running = h.game.process.getStatus().pid;
+        if (state.currentIndex === want && (state.pending?.kind ?? null) === pending && record.pid === running) return;
+      } catch {
+        // not written yet
+      }
+      await new Promise<void>((r) => realSetImmediate(r));
+    }
+  }
+
+  /** Pyrodeck stops (its timers go with it); the game server keeps running. */
+  function pyrodeckStops(h: Harness): void {
+    h.server.dispose();
+    vi.clearAllTimers();
+  }
+
+  /** The next Pyrodeck: re-attaches to the process `pid` the last one left running and logs in to its console. */
+  async function restartedOnto(h: Harness, pid: number): Promise<Harness> {
+    const next = await setUp({
+      after: h,
+      processFacts: (p) => ({
+        alive: p === pid,
+        cmdline: [path.join(h.gamePath, "Descent3"), "-dedicated", "./ctf.cfg"],
+        linux: { startTicks: `ticks-${p}`, state: "S", bootId: BOOT_ID },
+        bootTimeMs: 0,
+      }),
+    });
+    await next.server.reattach();
+    expect(next.timeline).toContain(`proc adopt ${pid}`);
+    await vi.advanceTimersByTimeAsync(0);
+    await loggedIn(next, 1);
+    return next;
+  }
+
+  /** The re-attached server's mission ends (on its console: there is no stdout), and the rotation relaunches it. */
+  async function missionOverOnConsole(h: Harness, label: string): Promise<void> {
+    h.game.console.print("Ending level.Mission over.  Looping back to first level...\n");
+    await settle(() => h.game.sent.includes(sayToAll(`Changing mission to ${label}`)), `the rotation into ${label}`);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => h.game.process.launches.length === 1, "the relaunch");
+  }
+
+  it("re-attached mid-playlist, the next mission end rotates to the entry after the one the server runs", async () => {
+    const h = await setUp();
+    await activatePlaylist(h, 0, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    missionOver(h);
+    await settle(() => h.game.sent.includes(sayToAll("Changing mission to Beta")), "the rotation into Beta");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => h.game.process.launches.length === 2, "the relaunch");
+    h.game.process.consoleUp();
+    await loggedIn(h, 2);
+    await settle(() => h.playlist.getStatus().status === "active", "the healthy restart");
+    await saved(h, null);
+    pyrodeckStops(h);
+
+    const after = await restartedOnto(h, 5002);
+    expect(after.server.playlistStatusPayload()).toMatchObject({ status: "active", currentEntry: { label: "Beta" } });
+    expect(after.game.sent).toContain("$netgameinfo"); // the playlist's timer is anchored again
+    await missionOverOnConsole(after, "Gamma");
+
+    expect(await missionName(after)).toBe("gamma.mn3");
+    expect(after.game.sent).not.toContain(sayToAll("Changing mission to Beta"));
+  });
+
+  it("restarted during the hold, it restarts the held server into the held entry once logged in", async () => {
+    const h = await setUp();
+    h.game.humans = ["Pilot"];
+    await activatePlaylist(h, 10, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    await settle(() => h.server.supervisor.humansOnline() === 1, "the roster");
+    missionOver(h);
+    h.game.process.print("Opening level 'alpha.d3l'\n");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(h.game.sent).toContain("$wait on");
+    await saved(h, "hold");
+    pyrodeckStops(h);
+
+    const after = await restartedOnto(h, 5001);
+    await settle(() => after.game.sent.includes(sayToAll("Changing mission to Beta")), "the rotation into Beta");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => after.game.process.launches.length === 1, "the relaunch");
+
+    expect(await missionName(after)).toBe("beta.mn3");
+    const expected = [
+      "proc adopt 5001",
+      "login",
+      `console ${sayToAll("Changing mission to Beta")}`,
+      "proc stop playlist",
+      "console quit",
+      "proc start playlist",
+    ];
+    expect(inOrder(after.timeline, expected)).toEqual(expected);
+    // No second hold, no timer for the level the restart throws away; the server quits held.
+    expect(after.game.sent.filter((c) => c.startsWith("$wait") || c === "$netgameinfo")).toEqual([]);
+    expect(after.server.playlistStatusPayload()).toMatchObject({ status: "restarting", currentEntry: { label: "Beta" } });
+  });
+
+  it("restarted while a rotation's relaunch was being checked, it leaves the new server alone and goes past its entry", async () => {
+    const h = await setUp();
+    await activatePlaylist(h, 0, ["Alpha", "Beta", "Gamma"]);
+    await launchAndLogIn(h);
+    missionOver(h);
+    await settle(() => h.game.sent.includes(sayToAll("Changing mission to Beta")), "the rotation into Beta");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(() => h.broadcasts.some((b) => b.type === "playlist_rotate"), "the relaunch");
+    expect(h.server.rotationPending()).toBe(true);
+    await saved(h, "restart");
+    pyrodeckStops(h);
+
+    const after = await restartedOnto(h, 5002);
+    expect(after.server.playlistStatusPayload()).toMatchObject({ status: "active", currentEntry: { label: "Beta" } });
+    expect(after.game.sent).not.toContain(sayToAll("Changing mission to Beta"));
+    await missionOverOnConsole(after, "Gamma");
+
+    expect(await missionName(after)).toBe("gamma.mn3");
   });
 });
 

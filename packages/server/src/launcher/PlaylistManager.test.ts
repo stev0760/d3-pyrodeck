@@ -921,3 +921,242 @@ describe("PlaylistManager — the hold before a restart", () => {
     expect(rotated.map((e) => e.missionName)).toEqual(["b.mn3"]);
   });
 });
+
+describe("PlaylistManager — a Pyrodeck restart", () => {
+  // As a re-attached server prints them on its console (Ending level. without its newline).
+  const missionOver = "Ending level.Mission over.  Looping back to first level in mission file.\n";
+  const fourEntries: Omit<PlaylistEntry, "id">[] = [
+    { label: "Skybox", missionName: "skybox.mn3" },
+    { label: "Stonecutter", missionName: "stonecutter.mn3" },
+    { label: "BBQ", missionName: "bbq.mn3" },
+    { label: "Bluedev", missionName: "bluedev.mn3" },
+  ];
+  const realSetImmediate = setImmediate;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pl-test-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Wait (real time) until the saved state says what `want` checks, or two seconds pass: the state is written in the
+   * background. The test then goes on either way, so a state that never gets there fails the test's own assertions.
+   */
+  async function saved(want: (state: Record<string, unknown>) => boolean): Promise<void> {
+    const deadline = performance.now() + 2_000;
+    while (performance.now() < deadline) {
+      try {
+        if (want(JSON.parse(await fs.readFile(path.join(dir, "playlist-state.json"), "utf-8")))) return;
+      } catch {
+        // not written yet, or being replaced
+      }
+      await new Promise<void>((r) => realSetImmediate(r));
+    }
+  }
+
+  /** The runner a restarted Pyrodeck builds for the server: the saved state, a console, the rotations it asks for. */
+  async function restarted(): Promise<{ mgr: PlaylistManager; rotated: PlaylistEntry[]; sent: string[] }> {
+    const mgr = new PlaylistManager(dir);
+    await mgr.restoreState();
+    const sent: string[] = [];
+    mgr.sendCommandFn = async (cmd: string) => {
+      sent.push(cmd);
+      return "";
+    };
+    const rotated: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => rotated.push(e));
+    return { mgr, rotated, sent };
+  }
+
+  /** Activated while a server runs, then three more rotations: the server runs the last entry. */
+  async function playedThrough(
+    mode: "sequential" | "shuffle" | "weighted",
+  ): Promise<{ mgr: PlaylistManager; played: PlaylistEntry[] }> {
+    const mgr = new PlaylistManager(dir);
+    const pl = await mgr.create("Soak", mode, fourEntries);
+    await mgr.update(pl.id, { holdSeconds: 0 });
+    await mgr.activate(pl.id);
+    const played: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => played.push(e));
+    for (let i = 0; i < 4; i++) {
+      mgr.onStdoutChunk(missionOver);
+      mgr.markRotationComplete();
+    }
+    return { mgr, played };
+  }
+
+  it("sequential: the next rotation goes to the entry after the one the re-attached server runs", async () => {
+    const { mgr, played } = await playedThrough("sequential");
+    expect(played.map((e) => e.label)).toEqual(["Skybox", "Stonecutter", "BBQ", "Bluedev"]);
+    await saved((s) => s.currentIndex === mgr.getStatus().currentIndex && !s.pending);
+
+    const after = await restarted();
+    const restored = after.mgr.getStatus();
+    after.mgr.onStdoutChunk(missionOver);
+
+    expect(after.rotated.map((e) => e.label)).toEqual(["Skybox"]);
+    expect(restored).toMatchObject({ status: "active", currentIndex: 3, currentEntry: { label: "Bluedev" } });
+  });
+
+  it("shuffle: the round goes on where it was, with no entry repeated or left out", async () => {
+    const mgr = new PlaylistManager(dir);
+    const pl = await mgr.create("Soak", "shuffle", fourEntries);
+    await mgr.update(pl.id, { holdSeconds: 0 });
+    await mgr.activate(pl.id);
+    mgr.consumeInitialSync(); // launched into the first entry, outside the round
+    const played: PlaylistEntry[] = [];
+    mgr.on("rotate", (e: PlaylistEntry) => played.push(e));
+    for (let i = 0; i < 2; i++) {
+      mgr.onStdoutChunk(missionOver);
+      mgr.markRotationComplete();
+    }
+    await saved(
+      (s) =>
+        s.currentIndex === mgr.getStatus().currentIndex &&
+        !s.pending &&
+        Array.isArray(s.shuffleOrder) &&
+        s.shuffleOrder.length === 2,
+    );
+
+    const after = await restarted();
+    const restored = after.mgr.getStatus();
+    for (let i = 0; i < 2; i++) {
+      after.mgr.onStdoutChunk(missionOver);
+      after.mgr.markRotationComplete();
+    }
+
+    const round = [...played, ...after.rotated].map((e) => e.label);
+    expect(new Set(round).size).toBe(4);
+    expect(restored.currentEntry?.label).toBe(played[1].label);
+  });
+
+  it("weighted: the saved position is the entry the server runs (the one a vote leaves out)", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.6); // weights 1:1:1:1, so the third entry every draw
+    const { mgr, played } = await playedThrough("weighted");
+    expect(played.map((e) => e.label)).toEqual(["Skybox", "BBQ", "BBQ", "BBQ"]);
+    await saved((s) => s.currentIndex === mgr.getStatus().currentIndex && !s.pending);
+
+    const after = await restarted();
+    expect(after.mgr.getStatus()).toMatchObject({ currentIndex: 2, currentEntry: { label: "BBQ" } });
+  });
+
+  it("activated mid-game and restarted before the first rotation: the mission end still loads the first entry", async () => {
+    const mgr = new PlaylistManager(dir);
+    const pl = await mgr.create("Soak", "sequential", fourEntries);
+    await mgr.activate(pl.id);
+
+    const after = await restarted();
+    after.mgr.reattached(new Date(Date.now() - 3_600_000));
+    after.mgr.onStdoutChunk(missionOver);
+
+    expect(after.rotated.map((e) => e.label)).toEqual(["Skybox"]);
+  });
+
+  describe("during the hold", () => {
+    async function heldThenRestarted(mode: "sequential" | "shuffle" | "weighted") {
+      const serverStartedAt = new Date(Date.now() - 15 * 60_000);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      const mgr = new PlaylistManager(dir);
+      const pl = await mgr.create("Soak", mode, fourEntries);
+      await mgr.activate(pl.id);
+      mgr.consumeInitialSync();
+      mgr.humansFn = () => 1;
+      mgr.sendCommandFn = async () => "";
+      mgr.onStdoutChunk(missionOver);
+      mgr.onStdoutChunk("Opening level 'skybox.d3l'...\n");
+      await vi.advanceTimersByTimeAsync(3_000); // $wait on
+      const held = mgr.getStatus().holdEntry!;
+      expect(held).not.toBeNull();
+      await saved(
+        (s) => s.currentIndex === mgr.getStatus().currentIndex && (s.pending as { kind?: string } | null)?.kind === "hold",
+      );
+      mgr.removeAllListeners();
+
+      const after = await restarted();
+      after.mgr.humansFn = () => 1;
+      return { held, after, serverStartedAt };
+    }
+
+    for (const mode of ["sequential", "shuffle", "weighted"] as const) {
+      it(`${mode}: the restart into the held entry happens once the console is back, with no second hold`, async () => {
+        const { held, after, serverStartedAt } = await heldThenRestarted(mode);
+        expect(after.rotated).toHaveLength(0);
+
+        expect(after.mgr.reattached(serverStartedAt)).toBe(true);
+
+        expect(after.rotated.map((e) => e.id)).toEqual([held.id]);
+        expect(after.mgr.getStatus()).toMatchObject({ status: "restarting", holdEntry: null, currentEntry: { id: held.id } });
+        expect(after.sent).not.toContain("$wait off"); // the server quits held
+      });
+    }
+
+    it("a rotation called off after the restart lets the held players go", async () => {
+      const { after, serverStartedAt } = await heldThenRestarted("sequential");
+      after.mgr.reattached(serverStartedAt);
+      after.mgr.rotationSkipped();
+      expect(after.sent).toContain("$wait off");
+      expect(after.mgr.getStatus().status).toBe("active");
+    });
+
+    it("then the playlist goes on from the held entry", async () => {
+      const { held, after, serverStartedAt } = await heldThenRestarted("sequential");
+      after.mgr.reattached(serverStartedAt);
+      after.mgr.markRotationComplete();
+      after.mgr.humansFn = () => 0; // nobody on: no hold before the next one
+      after.mgr.onStdoutChunk(missionOver);
+      expect(held.label).toBe("Stonecutter");
+      expect(after.rotated.map((e) => e.label)).toEqual(["Stonecutter", "BBQ"]);
+    });
+  });
+
+  describe("while a rotation's restart is under way", () => {
+    /** A rotation into Stonecutter handed to the launcher; the restart is not healthy yet. Returns the hand-off time. */
+    async function restarting(): Promise<number> {
+      const mgr = new PlaylistManager(dir);
+      const pl = await mgr.create("Soak", "sequential", fourEntries);
+      await mgr.update(pl.id, { holdSeconds: 0 });
+      await mgr.activate(pl.id);
+      mgr.consumeInitialSync();
+      const handedOver = Date.now();
+      mgr.onStdoutChunk(missionOver);
+      expect(mgr.getStatus()).toMatchObject({ status: "restarting", currentEntry: { label: "Stonecutter" } });
+      await saved((s) => s.currentIndex === 1 && (s.pending as { kind?: string } | null)?.kind === "restart");
+      mgr.removeAllListeners();
+      return handedOver;
+    }
+
+    it("the re-attached server is the restart's: it runs the entry, and the next mission end goes past it", async () => {
+      const handedOver = await restarting();
+      const after = await restarted();
+
+      expect(after.mgr.reattached(new Date(handedOver + 1_500))).toBe(false);
+      after.mgr.onStdoutChunk(missionOver);
+
+      expect(after.rotated.map((e) => e.label)).toEqual(["BBQ"]);
+      await saved((s) => s.currentIndex === 2 && (s.pending as { kind?: string } | null)?.kind === "restart");
+    });
+
+    it("the re-attached server is the old one (it was not stopped yet): the restart is carried out", async () => {
+      const handedOver = await restarting();
+      const after = await restarted();
+
+      expect(after.mgr.reattached(new Date(handedOver - 15 * 60_000))).toBe(true);
+
+      expect(after.rotated.map((e) => e.label)).toEqual(["Stonecutter"]);
+    });
+
+    it("no server is left to re-attach to: the next launch starts the entry", async () => {
+      await restarting();
+      const after = await restarted();
+
+      expect(after.mgr.consumeInitialSync()?.label).toBe("Stonecutter");
+      after.mgr.onStdoutChunk(missionOver);
+      expect(after.rotated.map((e) => e.label)).toEqual(["BBQ"]);
+    });
+  });
+});

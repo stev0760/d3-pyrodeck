@@ -676,6 +676,24 @@ D3 dedicated server prints `"Ending level."` to stdout at the end of every level
    `GET /api/playlists/status` and `playlist_status` carry
    `rotationCheck: { state: "idle"|"relaunching"|"waiting", attempt, maxRetries, deadline }`.
 
+#### Position across a Pyrodeck restart
+`playlist-state.json` holds `{ activePlaylistId, currentIndex, shuffleOrder, paused, pending }`. `currentIndex` is
+the entry the server runs, `shuffleOrder` the rest of the shuffle round. `pending: { kind, since }` is set while that
+entry is not the server's yet: `activation` (activated, not loaded), `hold`, or `restart` (handed to the launcher at
+`since`, not healthy yet). The file is written whole and renamed into place, in order, at activation, at a hold's
+start, at the hand-off, at the healthy restart (or a rotation called off), at a hold called off, at a launch that
+loads the entry, and at pause, resume and deactivation.
+
+After a restart, with no `pending` the next mission end goes to the entry after `currentIndex`. With `pending`, the
+entry comes next. The first console login to a re-attached server (E.5) settles it from the server's start time:
+- `restart`, server started at or after `since`: the restarted server, which runs the entry; nothing to do.
+- `hold`, or `restart` with a server started before `since` (Pyrodeck stopped before the old server did): its
+  mission is over and it may be held, so the restart into the entry happens at once (`say Changing mission`, `quit`,
+  relaunch), with no second hold and no timer anchor. A rotation then called off sends `$wait off`.
+- `activation`: the server's mission end loads the entry, as without the restart.
+
+With no server to re-attach to, the next launch (autostart or the Launch button) starts the entry.
+
 #### Mission Voting
 Voting is chat-based — backwards-compatible with all D3 builds, no client mod required. Players vote by typing a single digit in all-chat; Pyrodeck parses `*PlayerName says: N` from stdout.
 
@@ -1762,7 +1780,8 @@ the last boot, and a login to its console port with the config file's password s
 else removes the record and logs why.
 
 An adopted process: state `running`, `adopted: true`, `server.adopted` on the bus; the console logs
-in (no post-start settings; the playlist timer is anchored once); Stop sends `quit`, then SIGTERM
+in (no post-start settings; the playlist timer is anchored once, and a rotation the last Pyrodeck left under way is
+settled: "Position across a Pyrodeck restart" under Server Playlists); Stop sends `quit`, then SIGTERM
 and SIGKILL by PID; its exit is found by polling every second (exit code unknown, so an exit
 without a request is a crash and the supervisor relaunches it). Its stdout went to the old
 Pyrodeck, so the Output tab and log get nothing more; the console then feeds the line monitor

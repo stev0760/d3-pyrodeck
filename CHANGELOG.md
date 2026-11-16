@@ -62,6 +62,14 @@ upgrade from 0.5.x is automatic.
 - `$netgameinfo` is asked once per console login of each server, when the panel first shows it, and never again on a
   switch back.
 
+### Fixed
+- **A playlist no longer skips an entry after Pyrodeck restarts.** The position was saved only at activation, so a
+  restarted Pyrodeck came back at the first entry and the next mission change skipped ahead (0.5.7 and earlier do
+  the same). The position is now saved at every mission change, and the next one goes to the entry after the one the
+  server runs; a shuffle round goes on where it was. A mission change that was under way is finished: a server held
+  before its restart, or one not yet stopped, is restarted into the next mission once Pyrodeck has logged in to it
+  again; a server already restarted into it is left alone; with no server left, the next launch starts it.
+
 ### Upgrade
 - The first start upgrades the config directory in place: `servers/index.json` (the autostart list) and `servers/<id>/`
   (each server's run record and playlist state) are added; nothing else is moved, Connect mode's saved servers
