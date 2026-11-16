@@ -118,6 +118,50 @@ async function getProfileManagerForId(id: string): Promise<{ manager: ServerProf
   };
 }
 
+/**
+ * A new profile's own Startup Commands file when another profile runs from
+ * the same game directory: `<config file's name>.dmfc` (ctf.cfg: ctf.dmfc),
+ * so the two servers can run at once (a launch sharing one is refused). A
+ * profile alone in its directory keeps autoexec.dmfc. For a duplicate, the
+ * source's Startup Commands are copied into the new file. Returns the
+ * profile as saved.
+ */
+async function ownStartupFileIfShared(
+  profile: ServerProfile,
+  copyFrom?: ServerProfile,
+): Promise<ServerProfile> {
+  if (profile.startupFile) return profile;
+  const globalGamePath = pyrodeckConfig.get().gamePath;
+  const dirOf = (p: ServerProfile) => {
+    const dir = p.gamePath ?? globalGamePath;
+    return dir ? path.resolve(dir) : null;
+  };
+  const dir = dirOf(profile);
+  if (!dir) return profile;
+  const others = (await getMetadataManager().list()).filter((p) => p.id !== profile.id && dirOf(p) === dir);
+  if (others.length === 0) return profile;
+  const stem = profile.configFile.replace(/\.[^.]*$/, "");
+  const taken = new Set(others.map((p) => (p.startupFile ?? AUTOEXEC_FILE).toLowerCase()));
+  let name: string | null = null;
+  const exists = (file: string) =>
+    fs.access(path.join(dir, file)).then(
+      () => true,
+      () => false,
+    );
+  // A name no other profile uses and no file in the directory has (never an operator's file).
+  for (let n = 1; n < 100 && name === null; n++) {
+    const candidate = n === 1 ? `${stem}.dmfc` : `${stem}-${n}.dmfc`;
+    const check = checkStartupFileName(candidate);
+    if ("name" in check && !taken.has(check.name.toLowerCase()) && !(await exists(check.name))) name = check.name;
+  }
+  if (name === null) return profile;
+  if (copyFrom) {
+    const source = path.join(dir, copyFrom.startupFile ?? AUTOEXEC_FILE);
+    await fs.copyFile(source, path.join(dir, name), fs.constants.COPYFILE_EXCL).catch(() => {});
+  }
+  return getMetadataManager().update(profile.id, { startupFile: name });
+}
+
 /** The ports a profile's server holds: launch options plus RemoteConsolePort from its config file. */
 async function profilePorts(profile: ServerProfile): Promise<ProfilePorts> {
   const ports = effectivePorts(sanitizeStoredLaunchOptions(profile.launchOptions));
@@ -277,7 +321,7 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
         const launchOptions = sanitizeStoredLaunchOptions(body.launchOptions);
         if (launchOptions) profile = await manager.update(profile.id, { launchOptions });
       }
-      return profile;
+      return await ownStartupFileIfShared(profile);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create profile";
       return reply.status(400).send({ error: message });
@@ -449,9 +493,10 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       // duplicate() uses the source profile's effective gamePath internally
-      const { manager } = await getProfileManagerForId(id);
+      const { manager, profile: source } = await getProfileManagerForId(id);
       const profile = await manager.duplicate(id, body?.name);
-      return profile;
+      // The copy runs from the source's game directory: it gets its own Startup Commands, the source's copied in.
+      return await ownStartupFileIfShared(profile, source);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Profile not found";
       return reply.status(404).send({ error: message });

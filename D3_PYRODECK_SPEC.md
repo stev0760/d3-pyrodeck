@@ -2068,7 +2068,10 @@ Profiles: `POST /api/profiles` takes `remoteConsolePort` (1-65535, written into 
 profile, `launchOptions` (refused with 400 when invalid). `PATCH /api/profiles/:id` takes `startupFile` (a plain
 `.dmfc` name in the game directory, at most 64 characters; `null` or `""` goes back to `autoexec.dmfc`) and
 `launchOptions.tempDir` (an absolute path of at most 99 bytes, `-tempdir`). `GET /api/profiles/:id/companions` reports
-the profile's Startup Commands file.
+the profile's Startup Commands file. A profile created (`POST /api/profiles`) or duplicated in a game directory that
+another profile uses gets its own Startup Commands file, `<config file's name>.dmfc` (`-2`, `-3` ... when that name is
+taken by a profile or a file), so the two can run at once; a duplicate gets the source's file copied into it. A profile
+alone in its directory keeps `autoexec.dmfc`; existing profiles are not changed.
 
 ### H.8 WebSocket
 
