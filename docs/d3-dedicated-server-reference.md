@@ -152,8 +152,6 @@ DisallowPowerup=ProxMinePowerup
 DisallowPowerup=Betty4Pack
 ```
 
-For the complete list of all valid powerup names, see [d3-powerups-and-ships.md](d3-powerups-and-ships.md).
-
 ### Ship Control
 
 There is **no direct cfg key** for ship banning. Ship permissions must be set via a `.mps` file loaded with `MultiSettingsFile`:

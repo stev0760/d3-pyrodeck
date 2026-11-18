@@ -8,8 +8,8 @@ Two ways to run Pyrodeck: **dev mode** (fastest for testing, requires Node.js on
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Node.js | 20 LTS | [nodejs.org](https://nodejs.org) or your distro's package manager |
-| pnpm | 8+ | `npm install -g pnpm` after Node is installed |
+| Node.js | 24 (see `.nvmrc`) | [nodejs.org](https://nodejs.org) or your distro's package manager |
+| pnpm | 11 | `npm install -g pnpm` after Node is installed |
 | Git | any | For cloning the repo |
 | `objcopy` | any | **Linux only**, for building the standalone binary. Part of `binutils`. |
 | `unzip` | any | **Linux only**, only needed for cross-compiling Windows binary. |
@@ -24,14 +24,14 @@ sudo pacman -S nodejs pnpm git binutils
 **Ubuntu / Debian**
 ```bash
 # Node 20 via NodeSource (Ubuntu's built-in package is often outdated)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs git binutils
 npm install -g pnpm
 ```
 
 **Rocky Linux 8 / 9 (RHEL-compatible)**
 ```bash
-curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
 sudo dnf install -y nodejs git binutils
 npm install -g pnpm
 ```
@@ -53,8 +53,8 @@ No C++ build tools or Visual Studio required — Pyrodeck has no native addons.
 ## Getting the source
 
 ```bash
-git clone https://github.com/stev0760/Descent3-Pyrodeck.git
-cd Descent3-Pyrodeck
+git clone https://github.com/stev0760/d3-pyrodeck.git
+cd d3-pyrodeck
 pnpm install
 ```
 
@@ -64,7 +64,7 @@ pnpm install
 
 ## Option 1 — Dev mode (fastest, requires Node on the machine)
 
-This is how all development has been done. Both the backend and frontend run as separate dev servers with hot reload.
+Both the backend and frontend run as separate dev servers with hot reload.
 
 ```bash
 pnpm dev
@@ -232,12 +232,12 @@ Rocky Linux runs SELinux in enforcing mode by default. Some extra steps are need
 **Install prerequisites:**
 ```bash
 # Node 20 (not in default Rocky repos)
-curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
 sudo dnf install -y nodejs git binutils
 npm install -g pnpm
 
 # Verify
-node --version   # should be v20.x.x
+node --version   # should be v24.x.x
 pnpm --version
 ```
 
@@ -275,7 +275,7 @@ sudo tail -f /var/log/audit/audit.log | grep denied
 Node.js uses JIT compilation which requires `execmem` (the ability to execute writable memory). This is normally allowed for unconfined user processes on Rocky Linux, but if you're running under systemd with a strict service context you may see denials. Quick diagnosis:
 
 ```bash
-sudo setsebool -P allow_execmem 1   # temporary workaround for testing
+sudo setsebool -P allow_execmem 1   # persists across reboots; undo with: sudo setsebool -P allow_execmem 0
 # Proper fix: write a custom SELinux policy module (see below)
 ```
 
@@ -317,7 +317,7 @@ sudo semodule -i pyrodeck.pp
 
 ---
 
-### Arch Linux (the dev machine)
+### Arch Linux
 
 Everything works out of the box. The note here is about **not distributing locally-built binaries** to other platforms:
 
@@ -412,3 +412,25 @@ PYRODECK_CONFIG_DIR=/var/lib/pyrodeck ./pyrodeck-server
 
 **TypeScript errors during build**
 Run `pnpm tsc --noEmit` in `packages/server` or `packages/client` to see type errors clearly. The build script runs tsc but esbuild output may obscure where the error originated.
+
+## Tech stack
+
+| Layer | Choice |
+|-------|--------|
+| Backend | Fastify + TypeScript |
+| Frontend | React 19 + Vite 8 + TailwindCSS v4 + shadcn/ui |
+| Terminal | xterm.js |
+| Transport | Plain TCP (D3's "telnet" is not actual telnet IAC) |
+| UI Components | shadcn/ui (Radix + Tailwind) with semantic CSS variable theming |
+| Package manager | pnpm (monorepo workspaces) |
+
+## Project layout
+
+```
+packages/
+  server/     Fastify backend — telnet transport, parser framework,
+              process manager, config/profile management
+  client/     React frontend — xterm.js console, dashboard,
+              config editor, shadcn/ui components
+docs/         User and operator guides (see the README's index)
+```

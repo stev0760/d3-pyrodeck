@@ -22,8 +22,8 @@ interface), and function addresses in the decompiled binary.
 | Embedded helper | `WaitMutCopy.exe` 1.2 ("Copyright (C) 2010, Thomas"): waits for a mutex, copies files, starts the last one. Extracted at update time to swap in a new `D3Server3.exe`. Its banner says it is freeware with source at dateiliste.com; that covers the helper only. The binary carries no licence text for D3Server3 itself |
 | Help | One online page per dialog under `dateiliste.com/descent-3/58-descent-3-dedicated-server-tool-for-windws/` |
 
-Pyrodeck's `PLAN.md` (Phase 3) cites "D3Server3 v3.2 screenshots". The binary audited here is 3.0.83, so a later
-release may have features this one lacks.
+Screenshots of a D3Server3 v3.2 exist. The binary audited here is 3.0.83, so a later release may have features this
+one lacks.
 
 ### How it drives the server
 

@@ -34,7 +34,7 @@ jobs:
           if-no-files-found: error
 
   # ── Windows binary (cross-compiled from Linux, unsigned) ──────────────
-  # Code signing (SignPath/Azure) is deferred — see PLAN.md Phase 6.
+  # The Windows binary is not code-signed.
   build-windows:
     runs-on: ubuntu-latest
     steps:

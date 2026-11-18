@@ -1,6 +1,6 @@
 # D3 Pyrodeck
 
-Web-based admin panel for Descent 3 dedicated servers. Companion project to the Matcen fork (`stev0760/Descent3`, branch `feature/multiplayer-bots`).
+Web-based admin panel for Descent 3 dedicated servers. Companion project to the Matcen fork (`github.com/stev0760/Descent3`).
 
 ## Project Structure
 
@@ -25,7 +25,7 @@ pnpm monorepo:
   - **Engine layer** (bot commands): `$addbot`, `$removebot`, `$botlist`, `$servercaps` — always work from telnet
   - **DMFC layer** (game commands): `$kick`, `$ban`, `$scores`, `$endlevel` — go through game DLL
 - `$kick` works on bots from Matcen 0.8.4 (`MultiDisconnectPlayer` hands a bot to `BotRemove`); `$removebot` is still the bot command. Never `$ban` a bot: DMFC would ban its address, which is the server's own (Pyrodeck refuses).
-- Web admin auth exists (scrypt hash + cookie session) but is skipped automatically on localhost when no password is set — dev workflow needs no login
+- Web admin auth: scrypt hash + cookie session. With no admin password set, the panel shows the first-run setup page (allowed from localhost only); set `PYRODECK_ADMIN_PASSWORD` in dev to skip it
 - Each launched server's process, console login and watchers (supervisor, autostart, playlist rotation, run record) are one `ServerInstance` (`packages/server/src/servers/`), one per profile plus `launch`; `serverRegistry` holds them, checks launches against each other and picks the default server for the old flat routes. An instance only touches its own console session and hears only its own events (scoped bus). Spec §3.5 gives the order of effects on a process state change, Addendum H the multi-server rules
 - The panel shows one server at a time, the selected one (`session/SessionProvider.tsx`; persisted, `?s=` on the phone). It speaks WebSocket protocol 2: `lib/serverViews.ts` keeps each server's console text, state and playlist apart by `serverId`, and anything that changes a server goes to `/api/servers/:serverId/...`, never a flat route's default server (spec H.9)
 
@@ -57,5 +57,5 @@ MCP tools load at session start — tools are available as `mcp__playwright__bro
 - Don't add extra abstraction until core functionality is solid
 - Output D3 server logs to project root for easy analysis (gitignored via `*.log`)
 - Test with empty server + add bots from web panel, not chaotic preset rosters
-- The spec (`D3_PYRODECK_SPEC.md`) defines what to build; `PLAN.md` tracks progress; `DEVLOG.md` (gitignored) is the working journal
+- The spec (`D3_PYRODECK_SPEC.md`) records the design; `CHANGELOG.md` records what shipped
 - **Keep `README.md` up to date** — update the current status, working features, and known limitations whenever significant changes land
