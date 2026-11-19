@@ -42,6 +42,7 @@ DEVLOG*.md
 # Playwright MCP artifacts and screenshots
 .playwright-mcp/
 *.png
+!docs/images/*.png
 
 # Local scratch files (brainstorming, notes, prompts)
 *.txt

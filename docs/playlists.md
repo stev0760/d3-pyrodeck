@@ -5,6 +5,8 @@ without them.
 
 ## Playlists
 
+![The playlist editor: four missions in order, the hold before a mission change, and the vote switch](images/desktop-playlist.png)
+
 - Create named playlists with ordered mission entries (label, `.mn3` filename, optional starting level)
 - Three rotation modes: Sequential (in order, looping), Shuffle (Fisher-Yates, reshuffles on loop), Weighted (random draw by weight)
 - Activate/deactivate from the Playlists tab or the Server sidebar widget

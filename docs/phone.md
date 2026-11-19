@@ -29,6 +29,13 @@ and the phone remembers it like the desktop does.
 
 ## The tabs
 
+<p align="center">
+  <img src="images/phone-server.png" width="200" alt="The Server tab">
+  <img src="images/phone-console.png" width="200" alt="The Console tab">
+  <img src="images/phone-players.png" width="200" alt="The Players tab">
+  <img src="images/phone-bots.png" width="200" alt="The Bots tab">
+</p>
+
 - **Server.** Connect or Launch at the top. In Launch mode: every server with its state and how many run (tap one to
   show it), then the server on screen with its state and one button to launch or stop it (stopping asks first and
   leaves the other servers running; a launch Pyrodeck refuses says why, naming the server it would clash with), and,

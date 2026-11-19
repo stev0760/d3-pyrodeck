@@ -7,6 +7,16 @@ browser, on a desktop or a phone. One Pyrodeck runs several servers at once. It 
 [Matcen](https://github.com/stev0760/Descent3), the Descent 3 build with multiplayer bots, and also manages servers
 without bots.
 
+![D3 Pyrodeck on a desktop. Three servers are listed on the left. The scoreboard of one is open in the middle, with its game settings and playlist on the right.](docs/images/desktop-players.png)
+
+<p align="center">
+  <img src="docs/images/phone-server.png" width="250" alt="The phone layout: the Server tab, listing three running servers">
+  <img src="docs/images/phone-players.png" width="250" alt="The phone layout: the scoreboard">
+  <img src="docs/images/phone-bots.png" width="250" alt="The phone layout: the Bots tab, with the population settings and each bot's shields">
+</p>
+
+The panel on a desktop and on a phone, running three Matcen servers with bots.
+
 ## Features
 
 - **Several servers from one panel.** Each server runs from its own profile, with its own console, supervisor,
@@ -49,8 +59,6 @@ also run by hand on Windows; 0.6.0 itself has not been run on Windows yet.
 4. Open `http://localhost:3001` in a browser on the same machine and choose an admin password.
 
 To check a download, put `SHA256SUMS.txt` from the same release in the same directory, then:
-
-Download `SHA256SUMS.txt` into the same directory as the package, then:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux: "pyrodeck-v0.6.0-linux-x64.tar.gz: OK"

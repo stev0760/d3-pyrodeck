@@ -4,6 +4,9 @@ What each part of the panel does. The task guides are [several servers](several-
 [playlists and mission downloads](playlists.md) and [configuration](configuration.md).
 
 ## Console
+
+![The Console tab: a command typed into one server's console, with the reply](images/desktop-console.png)
+
 - Live terminal (xterm.js) with command input, history (up/down), and 5000-line scrollback
 - Collapsible, resizable command reference drawer with 6 categories (Players, Teams, Server, Stats, Bots, Bot Debug) — click-to-execute for simple commands, inline inputs for parameterized commands
 - D3 color codes and null bytes stripped from output
@@ -19,6 +22,9 @@ What each part of the panel does. The task guides are [several servers](several-
 - **History** view: every join and leave per server, with slot and address, searchable by name or address; "who was on" between two times; a name-to-address index
 
 ## Bots (Matcen fork only)
+
+![The Bots tab: the add-bot form, the population settings, and each bot with its state, shields, target, ship and difficulty](images/desktop-bots.png)
+
 - Auto-detected via `$servercaps` probe — bot UI only appears when connected to a Matcen fork server
 - Add bots with name, ship, and difficulty selection; a team choice appears when the server advertises `teams` and the game has teams
 - A refused `$addbot` (server full) or one the server altered (unknown ship, team out of range) shows as an error toast
