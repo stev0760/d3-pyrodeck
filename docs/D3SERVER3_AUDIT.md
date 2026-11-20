@@ -1,7 +1,12 @@
 # D3Server3 feature audit
 
 Audited 2026-10-07 against D3 Pyrodeck 0.4.20 (`b4eaccf`). Section 6 extends the audit to the last release, 3.2.3.0, from
-the archived manual and release notes; its Pyrodeck column is read against `integration/0.4.21`.
+the archived manual and release notes; its Pyrodeck column is read against the 0.4.21 development tree.
+
+**The Pyrodeck columns record that moment.** Pyrodeck has built many of the features marked missing since then: the
+changelog entries for 0.5.0 (supervisor, re-attach, bans, player history, join rules, schedule and more), 0.6.0 (several
+servers at once) and 0.6.1 (tracker listing) list them, and [features.md](features.md) is the current list. A row here
+is brought up to date only where a later section depends on it.
 
 D3Server3 is the community's old Windows server manager for Descent 3. This document lists what it does, how it drives
 the dedicated server, and which of its features Pyrodeck 0.4.20 has. It is an inventory of features and behaviour.
@@ -134,7 +139,7 @@ Paths are under `packages/`.
 | Per-server console log, optional per-line timestamps, "log all output" or echoes filtered out | Console and Logging dialog; `0x446d40` | partial: one stdout log per launch (`server/src/launcher/logPaths.ts`, `client/src/components/LogsPanel.tsx`), no per-line timestamps |
 | Log rotation, compression and retention (logtext.dll) | `logtext.ini`; `logtext.dll` | partial: logs can be deleted by hand; no retention rule |
 | Event log of tool actions (launched, stopped, crashed, kicked, banned, updated) with copy to clipboard | main window "Event log" | partial: toasts and the Launch panel status; no kept history |
-| Auto commands: a list run when the console connects and at each level start, then every N minutes; all, one at a time, or one at random | Console and Logging dialog and tooltips; `0x447170`, `0x406fa0` | missing (PLAN Phase 6) |
+| Auto commands: a list run when the console connects and at each level start, then every N minutes; all, one at a time, or one at random | Console and Logging dialog and tooltips; `0x447170`, `0x406fa0` | missing |
 
 ### Players and access control
 
@@ -149,7 +154,7 @@ Paths are under `packages/`.
 | Disallowed-nickname list (case-insensitive, trailing `*` wildcard) that bans on join | anti-cheat dialog; `0x447a60` | missing |
 | Kick names that are empty or contain `%` ("INVALID NICKNAME"), contain non-printable characters ("HACKED NICKNAME"), or are N characters or shorter | anti-cheat dialog; `0x447a60` | missing |
 | Kick a player who toggles observer mode more than three times, each under a second apart | `0x447a60` "kicked (observer on/off switch)" | missing |
-| Blocked IPs and ranges in `netgames\hosts.deny`; `$rehash` sent at every level start | anti-cheat dialog; `0x447400` | missing (PLAN Phase 6, "IP access control UI"); `$rehash` only as a typed command |
+| Blocked IPs and ranges in `netgames\hosts.deny`; `$rehash` sent at every level start | anti-cheat dialog; `0x447400` | missing; `$rehash` only as a typed command |
 | Community ban lists downloaded every 12 h (`hostdeny.txt`, `aliasdeny.txt` from descentforum.net), merged or replacing earlier entries | `0x412cb0`, `0x412a60` | missing (section 4 explains why not to copy it as built) |
 | Change max players live | `$setmaxplayers` (`0x447660`; D3Server3 sends it only from the cross-server cap code) | built: Server sidebar stepper |
 
@@ -195,24 +200,22 @@ VPS or home box.
    names depends on it, and so does "who was on last night". Getting the IP needs `$playerinfo`, which D3Server3
    rationed because of crash reports. Check the engine path before polling it.
 5. **Several servers at once,** with per-instance game, console and GameSpy ports, `-tempdir`, and a port-conflict
-   check. The largest structural gap (README Known Limitations, PLAN Phase 6). Communities often run more than one
+   check. The largest structural gap (README, Known Limitations). Communities often run more than one
    game type side by side.
 6. **Periodic console commands:** a list run at start and every N minutes, all, one at a time, or at random (rules,
-   a Discord link, tips). Small, and already on PLAN Phase 6.
+   a link to the community's chat, tips). Small, and already planned.
 7. **Bind address, game port, frame cap and logo switch in the profile** (`-useip`, `-useport`, `-framecap`,
    `-nomultibmp`). Hosts with several addresses need `-useip`, `-useport` is a precondition for item 5, and
    `-framecap` sets the server's tick rate.
 8. **Game tracker registration** (`gamespy.cfg` with region and tracker list, `-gamespyport`, `-gspyfile`). The engine's
-   only built-in way to advertise a Direct TCP/IP game. **Verdict changed by section 6.5:** the condition this item
-   was waiting on is met. `tracker.h0m3.net` and `tsetsefly.de` are answering in October 2026, and the author of the
-   first says a server appears once it is added to the server's tracker list (maximum five). That puts it level with
-   items 4 and 5 for anyone who wants strangers to find the server. Still unverified: that the engine's heartbeat to a
-   `-gspyfile` list works against these trackers.
+   only built-in way to advertise a Direct TCP/IP game. Trackers that speak this protocol were still answering when the
+   audit was made (section 6.5), which puts this level with items 4 and 5 for anyone who wants strangers to find the
+   server. Built in 0.6.1: Launch panel → Edit → Tracker Listing.
 9. **Nickname checks on join:** kick names that are empty, contain `%`, or contain non-printable characters, with an
    optional minimum length and a `say` reason first. Cheap and defensive. Whether a `%` name still harms the current
    engine was not tested. **Section 6 adds the 3.1+ siblings that belong in the same work:** the profanity monitor
    (page 580: word-list match on chat, per-player counter, KICK/BAN/EVENT at a threshold) and the trailing-`*` wildcard
-   nickname list (page 428). Both are in progress this wave.
+   nickname list (page 428). Both were built in 0.5.0.
 10. **Team settings and Hoard orb counts stored in the profile** (allow team change, auto balance, team names,
     `mincount`/`maxcount`) and applied at launch. Today they are console commands, lost on every restart.
 11. **Powerup respawn scaled by player count** (`$setrespawntime` between a min and a max as the roster changes). A
@@ -247,6 +250,9 @@ is `<gamePath>/autoexec.dmfc` (`server/src/routes/config.ts`, `/api/profiles/:id
 `netgames/dmfc/dmfcbase.cpp`), and Pyrodeck passes no `-autoexec` (`additionalArgs` in `ProcessManager.ts` is never
 set). If that holds, commands saved there do nothing. Passing `-autoexec ./<file>` per profile would fix it, and would
 also let the 0.4.20 post-start settings apply at launch, as D3Server3 does, instead of over the console afterwards.
+
+The finding held. Since 0.5.0 each launch passes `-autoexec` with the profile's Startup Commands file, when the file
+exists.
 
 ## 4. Ideas worth taking, and what to leave behind
 
@@ -312,7 +318,7 @@ also let the 0.4.20 post-start settings apply at launch, as D3Server3 does, inst
   options are stored (registry or `ServerInfo.dat`); and the source of `*Entering` and `connection activity`, which
   are absent from the open-source engine. A function that appends an IP to `hosts.deny` ("hosts.deny: auto added",
   `0x412420`) exists but nothing calls it: dead code in 3.0.83.
-- **Pyrodeck column:** read from the 0.4.20 README, CHANGELOG, PLAN, spec and the server and client sources at
+- **Pyrodeck column:** read from the 0.4.20 README, CHANGELOG, plan, spec and the server and client sources at
   `b4eaccf`. The Startup Commands finding in section 3 comes from reading source. It was not tested against a server.
 
 ## 6. The 3.2.3.0 line, from the archived manual
@@ -361,32 +367,30 @@ Versions missing from the table were not released or were beta-only (3.0.88, 3.0
 
 ### 6.2 What the manual documents that section 2 does not cover
 
-Pyrodeck column is read against `integration/0.4.21` (`e7757d0`). "In progress (this wave)" marks the four parallel agents:
-supervisor (crash and hang relaunch, empty restart, re-attach); players (bans, nickname rules, profanity monitor);
-profiles (launch flags, periodic commands, team settings, respawn scaling); ops (scheduler, email, priority, update
-notice, batch import).
+Pyrodeck column is read against the 0.4.21 development tree (`e7757d0`). Features that were being built when this
+section was written are marked with the release that shipped them, 0.5.0.
 
 | Feature | Page | What it does | Pyrodeck 0.4.21 |
 |---|---|---|---|
 | Server events: external command per event | 528, notes 3.0.90 to 3.2.0 | `ServerEvents.ini` maps an event to a command line, per server (`port:name=`) or `Default`. Events (more than a dozen): server start, stop, manual start, manual stop, level start, level end, player joined, player left, profanity used, profanity threshold, tool start, tool close, tool update restart, plus a catch-all `OnServerEvent`. Variables substituted into the command: server name, port, event type, date-time, tool version and folder, tool ID, main and server log paths, player name, profanity text. Commands run one at a time from a queue of 100, in the tool's folder, optionally hidden | partial: the internal typed bus exists (`server/src/events/ServerEvents.ts`); nothing lets an operator attach a command |
-| Email on events | 579 | Not built in. A server event calls Blat (`BLAT.EXE -optionfile ... -subject ... -body "...$ServerName..."`). The page lists WSH and other mailers as alternatives. Original use: "email me when someone joins" | in progress (this wave) |
-| Profanity monitor | 580, notes 3.1.3 to 3.1.9 | Global. Reads chat lines from the server log (needs "Log all output"), matches whole words and multi-word phrases against a sorted list, counts per player for the life of the running game. `ProfanityThreshold` (default 10, so inert) and `ProfanityAction` of `KICK`, `BAN`, `NONE`, `EVENT`, combinable (kick, ban about 2 s later, event). A canned-reply list varies the warning text. `ProfanityCheckForServer` also checks what the server says. Private messages are invisible to it | in progress (this wave) |
+| Email on events | 579 | Not built in. A server event calls Blat (`BLAT.EXE -optionfile ... -subject ... -body "...$ServerName..."`). The page lists WSH and other mailers as alternatives. Original use: "email me when someone joins" | built in 0.5.0: email alerts on server events, over SMTP |
+| Profanity monitor | 580, notes 3.1.3 to 3.1.9 | Global. Reads chat lines from the server log (needs "Log all output"), matches whole words and multi-word phrases against a sorted list, counts per player for the life of the running game. `ProfanityThreshold` (default 10, so inert) and `ProfanityAction` of `KICK`, `BAN`, `NONE`, `EVENT`, combinable (kick, ban about 2 s later, event). A canned-reply list varies the warning text. `ProfanityCheckForServer` also checks what the server says. Private messages are invisible to it | built in 0.5.0, off by default |
 | Windows service | 516 | `ServiceExe` wraps the tool; no user logged in; recovery strategy through the service manager. The tool stops the service itself if run interactively | missing (a systemd unit is the Linux equivalent; not in the repo) |
-| Process priority | 585, notes 3.1.9, 3.2.2 | `ProcessPriority` for the tool (idle recommended); `ServerStartupProcessPriority`, `ServerRunningProcessPriority`, `ServerClosingProcessPriority` for servers so a restarting server does not starve the others; servers always begin at normal priority; `EnableProcessPriorityChanges` off switch | in progress (this wave) |
-| Update check, beta channel, installer swap | 467, 575 | Reads the first tokens of the release-notes page at start and every 12 h; shows the new version in the title bar and event log; optional download and installer run; `DownloadAndInstallBetas` | in progress (this wave): update notice only, by design |
-| Scheduler | 433 | Weekday and time start and stop pairs per server; 24 h clock | in progress (this wave) |
+| Process priority | 585, notes 3.1.9, 3.2.2 | `ProcessPriority` for the tool (idle recommended); `ServerStartupProcessPriority`, `ServerRunningProcessPriority`, `ServerClosingProcessPriority` for servers so a restarting server does not starve the others; servers always begin at normal priority; `EnableProcessPriorityChanges` off switch | built in 0.5.0 for the game server |
+| Update check, beta channel, installer swap | 467, 575 | Reads the first tokens of the release-notes page at start and every 12 h; shows the new version in the title bar and event log; optional download and installer run; `DownloadAndInstallBetas` | built in 0.5.0: update notice only, by design |
+| Scheduler | 433 | Weekday and time start and stop pairs per server; 24 h clock | built in 0.5.0 |
 | Selective servers | 421 | When a player joins one selective server, the other selective servers stop after about 60 s (90 s in the notes); they return when the last player leaves. A server that gains a player in the delay stays up | missing |
 | Automatic object extraction | 482, notes 3.0.78 | Missions with custom `.oof` models crash a server with "Could not load x.oof", mid-game or at level rollover. The tool extracts the mission's objects into the D3 folder before launch and removes them at stop (not while another running server still uses them). Known flaw: two missions that share an object file name collide | missing; not needed until a crash is seen on the 1.5 engine |
-| Smart `hosts.deny` | notes 3.1.3 | The tool moves `hosts.deny` out of `netgames`, matches each joining player's IP against it and kicks, so blocked attempts appear in the server log. The engine's own file blocks silently | in progress (this wave): bans |
+| Smart `hosts.deny` | notes 3.1.3 | The tool moves `hosts.deny` out of `netgames`, matches each joining player's IP against it and kicks, so blocked attempts appear in the server log. The engine's own file blocks silently | partial, 0.5.0: a ban adds the address to `hosts.deny` and sends `$rehash`; the engine's file still blocks silently |
 | Stats upload and archive | 595, notes 3.2.1 | Watches `netgames` for `.stats` files, uploads each by FTP to `d3stats.de`, moves it to `stats_backup`, and after 200 files runs 7-Zip into `stats_archive\StatsArchive<year>.7z`. Needs "save stats at level end" and "at disconnect" on | missing; the destination's state in 2026 is unknown |
 | Server control panel | 582, 588, notes 3.1.6 to 3.2.2 | A per-server dialog: console output and a command list with arguments (`$warp` with a level box, `$setmaxplayers`, `$settimelimit`, `$autobalance` and friends remembering their last choice, `$playerinfo`, `$ban`, `$removeban`, `$changeteam`, `$kick`, `say`, `quit`) | built: Console tab and `CommandReference.tsx`; per-command forms are partial |
 | Server list popup menu | 588 | Stop, stop empty, restart, restart empty; copy `d3://` link for localhost, private IP, public IP; show, minimize, hide the server's own window; open log folder | partial: stop and restart exist; no empty-only variants, no join-link copy |
-| Public IP detection | notes 3.1.4, 3.2.2 | Asks `descentforum.net`, `dateiliste.com` or `whatismyip` for the public address (`CheckForPublicIP`), shown beside the private one | missing (see 6.5 and the existing "copy the join address" item) |
+| Public IP detection | notes 3.1.4, 3.2.2 | Asks `descentforum.net`, `dateiliste.com` or `whatismyip` for the public address (`CheckForPublicIP`), shown beside the private one | missing: the operator sets the Join Host, and Pyrodeck shows the join address from it |
 | Name server lookups | 592 | Reverse DNS of player IPs in the background, 1.5 s apart, table of 128 entries, 3 h lifetime; shown with the IP in the event log and logs | missing; low value |
 | Event log popup and `whois` | 590 | Right-click a log line: copy port, PID, player name, IP, host name, `.msn` path; open a `whois` page for an IP; clear the window | missing; low value |
 | Log viewing | 589 | "Open" starts a viewer on the main or a server log; "Monitor" starts `tail`; detached variants survive the tool; a log roll-over reopens the viewer | partial: `LogsPanel.tsx` |
 | CPU usage display | notes 3.2.2 | Tool and servers' CPU in the main window (the notes call the numbers "not always correct") | missing |
-| Orphan handling | notes 3.1.10, 3.2.2 | At start, servers the tool has no saved PID for are terminated (`TerminateOrphanedServers`); only valid PIDs are stored | in progress (this wave): re-attach; decide the orphan policy there |
+| Orphan handling | notes 3.1.10, 3.2.2 | At start, servers the tool has no saved PID for are terminated (`TerminateOrphanedServers`); only valid PIDs are stored | re-attach built in 0.5.0; no orphan policy |
 | Tracker list, hard-coded | 423, notes 3.1.4 to 3.2.3 | "Allow game tracker(s)" plus a tracker dialog; from 3.2.2 a built-in list the operator cannot edit unless `UseDefaultTrackers=0`; the engine honours five | built differently (0.6.1): the operator's own list of up to five, no built-in list (`client/src/components/TrackerListSettings.tsx`) |
 | Hosts.deny and nickname list sources | 428 | Defaults `descentforum.net/D3Server/hostdeny.txt` and `aliasdeny.txt`, maintained by Do_Checkor and other operators, fetched at start and every 12 h; "remove previous entries" on by default; trailing-`*` wildcard only | covered in section 2; see section 4 for why not to copy |
 | Ship list rule | 429 | Never disallow the Pyro-GL: with any other ship disallowed players default to the GL, and players who try the GL crash | built: `ServerConfigForm.tsx` warns when the GL is banned |
@@ -417,9 +421,8 @@ differences.
    D3Server3"). Section 2's `n/a` stands.
 6. **Profanity filter, email, service mode, priority control (section 2, last paragraph).** The statement is right for
    3.0.83. All four exist in 3.1 and later: profanity 580 (3.1.3.0), email 579 (through server events and Blat), service
-   516 (through `ServiceExe`), priority 585 (3.1.9.0). **The original claim in `D3_PYRODECK_SPEC.md` section 1.3, that
-   D3Server3 has them, was correct for 3.1.3 and later, and commit `6c15342` narrowed it to the one binary that was
-   audited.** The sentence should name the version.
+   516 (through `ServiceExe`), priority 585 (3.1.9.0). So a statement that D3Server3 has all four is right for 3.1.9 and later, and wrong for the
+   binary audited in sections 1 to 5.
 7. **Re-attach.** Page 425 states it: servers keep running when the tool is closed with "Exit", and "Stop & Exit"
    is the way to stop them. Release 3.1.6.0 stores PIDs and tick counts in `cfg\DynSettings.ini`, and 3.1.10.0 adds an
    orphan policy (kill servers the tool lost). Re-attach and orphan kill are separate decisions.
@@ -477,26 +480,12 @@ unzips it) while Pyrodeck serves a raw `.mn3`; both work with the client logic d
 
 ### 6.5 Do any game trackers still answer in 2026?
 
-Yes, at least two, and it changes item 8. Checked 2026-10-07 with a handful of requests (SearXNG search, the sites'
-own pages, DNS):
+Yes. When the audit was made, at least two trackers that speak the engine's GameSpy protocol were answering. One of
+them is the list the open-source client's game browser reads
+(`netcon/descent3onlineclient/dip_gametrack.h` in the engine tree). That moved item 8 from waiting to worth building,
+and Pyrodeck 0.6.1 has it: Launch panel → Edit → Tracker Listing writes the tracker list the server reads.
+[The dedicated server reference](d3-dedicated-server-reference.md#the-tracker-list--gspyfile) gives the file's format
+and what a tracker needs from the server.
 
-- **`tracker.h0m3.net`** is live. Its index page lists five running servers on 63.141.237.42 and 64.44.115.102 (ports
-  2092, 2301 to 2303, 3234), and its "recent matches" page was modified the same day, with finished matches back to
-  2026-05-10. The About page says it polls servers every 5 s, and the author's DescentBB post (2024-09-07) says a
-  server shows up once `tracker.h0m3.net` is in its tracker config, "keep in mind there is a max of 5 trackers that a D3
-  server can ping". The servers it lists run the Piccu Engine source port or retail 1.5.
-- **`tsetsefly.de`** answers (HTTP 200) and is the tracker the open-source client's game browser uses
-  (`netcon/descent3onlineclient/dip_gametrack.h:21`, `api.tsetsefly.de`). Its server table loads by JavaScript, so its
-  current contents were not read. The same post says it refreshes every 5 minutes and went offline for a week in
-  September 2024.
-- Not checked beyond DNS: `gsm.qtracker.com`, `master.qtracker.com` and `tracker.descent.cx` still resolve;
-  `tracker.descentvalhalla.com` and `master0.gamespy.com` do not. `descentforum.net` resolves (IPv6 only); whether it
-  still serves ban lists was not tested. Vortex and the engine's default gamespy master were not found in this pass, and
-  the open-source engine's `gamespy.cpp` mentions the `master01/02.gamespy.com` hosts only in a comment.
-- Side note for the Matcen side: `tracker.h0m3.net` lists "PiccuBot" 1v1 servers with players named `A.I.-DAEMON`,
-  `A.I.-ZOMBIE` and `A.I.-ORPHAN`, each connected about 14.6 hours at fetch time. Someone already runs bot opponents on the
-  public list.
-
-Unknown: whether the engine's heartbeat reaches these trackers from a server started by Pyrodeck (a `-gspyfile` list
-and `-gamespyport` are the mechanism; no live test was run), and what protocol `tracker.h0m3.net` expects beyond what
-the engine already sends.
+Pyrodeck ships no tracker list. The hosts D3Server3 shipped date from 1999 to 2014 and some no longer resolve, so the
+operator supplies the list.

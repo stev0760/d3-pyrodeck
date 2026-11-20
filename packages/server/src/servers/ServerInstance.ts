@@ -463,7 +463,7 @@ export class ServerInstance {
       }
     });
 
-    // Playlist restart health (PLAN Phase 3 Step 6, best-effort rotation):
+    // Playlist restart health (best-effort rotation):
     // every rotation restart must come healthy within the deadline; one
     // automatic retry, then the playlist pauses with a visible reason instead
     // of rotating on behind a dead server.
@@ -996,7 +996,7 @@ export class ServerInstance {
   }
 
   /**
-   * Send the launched profile's post-start settings (PLAN Phase 3 Step 7) over
+   * Send the launched profile's post-start settings over
    * the new console session. Best-effort: a failure is reported, never fatal.
    */
   private async applyPostStartSettings(connection: ServerConnection): Promise<void> {
