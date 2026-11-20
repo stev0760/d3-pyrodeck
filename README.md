@@ -141,4 +141,6 @@ Pyrodeck was written by Steve V with substantial AI assistance (Claude, by Anthr
 every release decision are the author's. Bug reports are welcome on the
 [issue tracker](https://github.com/stev0760/d3-pyrodeck/issues).
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](LICENSE), except the three display fonts in
+[`packages/client/public/fonts/`](packages/client/public/fonts/). They are The Descent Fonts V1.3 from 1997 and keep
+their own terms, stated in `README.TXT` there: non-commercial distribution, with that file included.
