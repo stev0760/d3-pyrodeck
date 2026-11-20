@@ -1426,7 +1426,8 @@ export class PlaylistManager extends EventEmitter {
     const state: PlaylistState = {
       activePlaylistId: this.activePlaylist?.id ?? null,
       currentIndex: this.currentIndex,
-      shuffleOrder: this.shuffleOrder,
+      // A copy: the write is queued, and the next rotation shifts the live array before an earlier write runs.
+      shuffleOrder: this.shuffleOrder ? [...this.shuffleOrder] : null,
       paused:
         this.status === "paused" && this.pausedReason
           ? { reason: this.pausedReason, at: this.pausedAt ?? Date.now() }

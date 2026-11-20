@@ -18,6 +18,11 @@ A server can be listed on game trackers from the panel.
   list of its own. On a phone it is under More → Profiles → Edit.
 - **API.** `GET` and `PUT /api/profiles/<id>/tracker-list`.
 
+### Fixed
+- **A shuffle playlist's saved position could carry a later shuffle order.** Each save of the playlist state is queued,
+  and a queued save shared the live shuffle list, so a rotation made before the write ran changed what was written. A
+  Pyrodeck restarted from such a file could play one entry of the round twice. Each save now takes its own copy.
+
 ### Security
 - **The panel writes and deletes only config files in the game directory:** `.cfg`, `.mps`, `.dmfc` and `.txt`. Every
   write and delete there (the file editors, a restore of the previous version, the tracker list) refuses any other
