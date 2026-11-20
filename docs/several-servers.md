@@ -14,8 +14,10 @@ To run a second server beside the first:
    when another server holds 20142, unless the profile sets one.
 3. A shared game directory is fine. Each profile has its own server config file, and a profile created where another
    already runs from gets its own Startup Commands file (Edit → Startup Commands File). Each server gets its own temp
-   directory.
-4. Open each server's UDP game port in the firewall, as for the first.
+   directory. The tracker list is shared: servers of one game directory read the same `gamespy.cfg` unless a profile
+   names its own GameSpy file (Edit → Launch Options), and Edit → Tracker Listing says which profiles share it.
+4. Open each server's UDP game port in the firewall, as for the first, and its GameSpy port if it is listed on a
+   tracker. Set that port in Launch Options so it stays the same at every launch.
 
 Pyrodeck refuses a launch that would clash with a running server, and says which server and what to change: the same
 game, GameSpy or console port, the same server config, the same Startup Commands file (while it exists or the profile

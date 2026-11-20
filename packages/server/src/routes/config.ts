@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { ServerProfileManager, checkStartupFileName, type ServerProfile } from "../config/ServerProfile.js";
+import {
+  ServerProfileManager,
+  WRITABLE_GAME_FILE_EXTENSIONS,
+  checkStartupFileName,
+  gameFileWriteError,
+  type ServerProfile,
+} from "../config/ServerProfile.js";
 import {
   parseDedicatedCfg,
   extractTelnetConfig,
@@ -28,6 +34,13 @@ import {
   validateLaunchOptions,
   type ProfilePorts,
 } from "../launcher/launchOptions.js";
+import {
+  DEFAULT_GAMESPY_FILE,
+  formatTrackerList,
+  parseTrackerList,
+  validateTrackerList,
+} from "../launcher/trackerList.js";
+import { launchFootprint } from "../servers/launchConflicts.js";
 import { validateTeamSettings } from "../launcher/teamSettings.js";
 import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
 import { validateRespawnScaling } from "../launcher/respawnScaling.js";
@@ -214,6 +227,117 @@ function withLinkFields<T extends object>(
 ): T & { linkError?: string; hostUrl?: string; hostError?: string } {
   const linkError = checkLinkableMission(file);
   return { ...info, ...(linkError ? { linkError } : {}), ...hostedLinkFor(file, missionsDir) };
+}
+
+/** GET /api/profiles/:id/tracker-list, and the reply to a save (launcher/trackerList.ts). */
+interface TrackerListView {
+  /** The file the profile's server reads at its next start: its -gspyfile, else gamespy.cfg. */
+  file: string;
+  /** Its path in the profile's game directory. */
+  path: string;
+  exists: boolean;
+  /** Whether the panel may write it, and why not. */
+  writable: boolean;
+  writeError: string | null;
+  /** What the game takes from the file (region 0 and no trackers when there is none). */
+  region: number;
+  trackers: string[];
+  /** Lines of the file the game does not use as trackers (a file not in region/tracker pairs). */
+  ignored: string[];
+  /** Other profiles whose servers read the same file: same game directory, same file name. */
+  sharedWith: string[];
+  /**
+   * The UDP port trackers query the server on. "running": the port of the
+   * launch the server holds (an automatic move to a free port included);
+   * "profile": the profile's -gamespyport; "default": 20142, which a launch
+   * moves to a free port when another server holds it.
+   */
+  gameSpyPort: { port: number; source: "running" | "profile" | "default" };
+  /** The profile's server is running: it keeps the list it read at its start. */
+  running: boolean;
+}
+
+/** The tracker list file a profile's server reads: the saved -gspyfile, else gamespy.cfg. */
+function trackerFileName(profile: ServerProfile): string {
+  return sanitizeStoredLaunchOptions(profile.launchOptions)?.gameSpyFile ?? DEFAULT_GAMESPY_FILE;
+}
+
+/**
+ * Why the panel does not write the tracker list to `file`: a file type it
+ * never writes in the game directory (ServerProfile.ts, gameFileWriteError),
+ * or a file another part of a server's setup lives in. Null when it may.
+ */
+function trackerFileWriteError(file: string, dir: string, profilesInDir: readonly ServerProfile[]): string | null {
+  if (gameFileWriteError(file)) {
+    return (
+      `Pyrodeck writes only ${WRITABLE_GAME_FILE_EXTENSIONS.join(", ")} files in the game directory, and ${file} is ` +
+      "none of them. Choose a GameSpy file name that ends in .cfg (Launch Options)."
+    );
+  }
+  const lower = file.toLowerCase();
+  const own = `Choose a GameSpy file of its own, such as ${DEFAULT_GAMESPY_FILE} (Launch Options).`;
+  for (const p of profilesInDir) {
+    if (p.configFile.toLowerCase() === lower) return `${file} is the server config of "${p.name}". ${own}`;
+    if ((p.startupFile ?? AUTOEXEC_FILE).toLowerCase() === lower) {
+      return `${file} is the Startup Commands file of "${p.name}". ${own}`;
+    }
+  }
+  const globalGamePath = pyrodeckConfig.get().gamePath;
+  if (lower === "dedicated.cfg" && globalGamePath && path.resolve(globalGamePath) === dir) {
+    return `${file} is the server config Pyrodeck launches without a profile. ${own}`;
+  }
+  return null;
+}
+
+/** The tracker list a profile's server reads, with what the panel needs around it. */
+async function trackerListView(profile: ServerProfile): Promise<TrackerListView> {
+  const globalGamePath = pyrodeckConfig.get().gamePath;
+  const gamePath = profile.gamePath ?? globalGamePath;
+  if (!gamePath) {
+    throw new Error(`Profile "${profile.name}" has no game path configured. Edit the profile and set a Game Path.`);
+  }
+  const dir = path.resolve(gamePath);
+  const file = trackerFileName(profile);
+  const dirOf = (p: ServerProfile) => {
+    const d = p.gamePath ?? globalGamePath;
+    return d ? path.resolve(d) : null;
+  };
+  const inDir = (await getMetadataManager().list()).filter((p) => dirOf(p) === dir);
+  const others = inDir.filter((p) => p.id !== profile.id);
+
+  let content: string | null = null;
+  try {
+    content = await new ServerProfileManager(CONFIG_DIR, gamePath).readFile(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`Cannot read ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    }
+  }
+  const read = parseTrackerList(content ?? "");
+  const writeError = trackerFileWriteError(file, dir, inDir);
+
+  // The launch the server holds: running, or restarting for its playlist (no PID then: the next game reads the file anew).
+  const held = serverRegistry.get(profile.id)?.heldLaunch() ?? null;
+  const ownPort = sanitizeStoredLaunchOptions(profile.launchOptions)?.gameSpyPort;
+  const gameSpyPort: TrackerListView["gameSpyPort"] = held
+    ? { port: launchFootprint(held.launch).gameSpyPort, source: "running" }
+    : ownPort !== undefined
+      ? { port: ownPort, source: "profile" }
+      : { port: effectivePorts(null).gameSpy, source: "default" };
+
+  return {
+    file,
+    path: path.join(dir, file),
+    exists: content !== null,
+    writable: writeError === null,
+    writeError,
+    region: read.region,
+    trackers: read.trackers,
+    ignored: read.ignored,
+    sharedWith: others.filter((p) => trackerFileName(p).toLowerCase() === file.toLowerCase()).map((p) => p.name),
+    gameSpyPort,
+    running: held !== null && held.pid !== null,
+  };
 }
 
 export async function configRoutes(app: FastifyInstance): Promise<void> {
@@ -471,6 +595,70 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       config.joinHost,
       config.missionHost.publicBaseUrl,
     );
+  });
+
+  /**
+   * GET /api/profiles/:id/tracker-list
+   * The tracker list the profile's server reads when it starts: the file
+   * (-gspyfile, else gamespy.cfg, in its game directory), what the game takes
+   * from it, the lines it does not use, the other profiles that read the same
+   * file, and the GameSpy port trackers query it on (TrackerListView).
+   */
+  app.get("/api/profiles/:id/tracker-list", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    let profile: ServerProfile;
+    try {
+      profile = await getMetadataManager().read(id);
+    } catch {
+      return reply.status(404).send({ error: "Profile not found" });
+    }
+    try {
+      return await trackerListView(profile);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to read the tracker list";
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  /**
+   * PUT /api/profiles/:id/tracker-list  { region, trackers }
+   * Write the list in the form the game reads (region/tracker pairs), keeping
+   * the previous file as its backup. Refused with 400 when the file is not one
+   * the panel writes (`writable: false`), or with `details` when the list is
+   * invalid. Region 0 and no trackers with no file writes nothing. The reply
+   * is the list as read back, plus `written`.
+   */
+  app.put("/api/profiles/:id/tracker-list", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    let profile: ServerProfile;
+    try {
+      profile = await getMetadataManager().read(id);
+    } catch {
+      return reply.status(404).send({ error: "Profile not found" });
+    }
+    try {
+      const view = await trackerListView(profile);
+      if (!view.writable) {
+        return reply.status(400).send({
+          error: `The tracker list cannot be saved to ${view.file}. ${view.writeError}`,
+          writable: false,
+          writeError: view.writeError,
+        });
+      }
+      const check = validateTrackerList(request.body);
+      if (!check.list) {
+        return reply.status(400).send({ error: check.errors.join(" "), details: check.errors });
+      }
+      const content = formatTrackerList(check.list, view.exists);
+      if (content !== null) {
+        const { manager } = await getProfileManagerForId(id);
+        await manager.writeFile(view.file, content);
+      }
+      return { ok: true, written: content !== null, ...(await trackerListView(profile)) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to write the tracker list";
+      return reply.status(400).send({ error: message });
+    }
   });
 
   /** Delete a profile (metadata only — config files in gamePath are preserved). */

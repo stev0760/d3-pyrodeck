@@ -157,7 +157,7 @@ Paths are under `packages/`.
 
 | Feature | Evidence | Pyrodeck 0.4.20 |
 |---|---|---|
-| GameSpy-protocol tracker list and region code (`gamespy.cfg`, `-gamespyport`, `-gspyfile`); defaults `tracker.descent.cx:27900`, `tracker.kali.net:22999`, `master0.gamespy.com:27900` | Game Tracker dialog; region list | missing (PLAN Phase 6) |
+| GameSpy-protocol tracker list and region code (`gamespy.cfg`, `-gamespyport`, `-gspyfile`); defaults `tracker.descent.cx:27900`, `tracker.kali.net:22999`, `master0.gamespy.com:27900` | Game Tracker dialog; region list | built (0.6.1): Launch panel → Edit → Tracker Listing writes a region and up to five trackers to the profile's `-gspyfile` as region/tracker pairs (`server/src/launcher/trackerList.ts`); no default list |
 | PlanetDescent listing over HTTP (launch, update with player count, shutdown) | `0x41a8f0`; its own tooltip: "Planetdescent.com is down" | n/a |
 | PXO login, PXO status panel, switch servers to Direct TCP/IP when PXO is down | Global options; main window status box; `chat.pxo.net` | n/a: PXO is gone |
 | Copy a `d3://ip:port` link | server list context menu | missing (minor) |
@@ -387,7 +387,7 @@ notice, batch import).
 | Log viewing | 589 | "Open" starts a viewer on the main or a server log; "Monitor" starts `tail`; detached variants survive the tool; a log roll-over reopens the viewer | partial: `LogsPanel.tsx` |
 | CPU usage display | notes 3.2.2 | Tool and servers' CPU in the main window (the notes call the numbers "not always correct") | missing |
 | Orphan handling | notes 3.1.10, 3.2.2 | At start, servers the tool has no saved PID for are terminated (`TerminateOrphanedServers`); only valid PIDs are stored | in progress (this wave): re-attach; decide the orphan policy there |
-| Tracker list, hard-coded | 423, notes 3.1.4 to 3.2.3 | "Allow game tracker(s)" plus a tracker dialog; from 3.2.2 a built-in list the operator cannot edit unless `UseDefaultTrackers=0`; the engine honours five | missing (item 8, promoted; see 6.5) |
+| Tracker list, hard-coded | 423, notes 3.1.4 to 3.2.3 | "Allow game tracker(s)" plus a tracker dialog; from 3.2.2 a built-in list the operator cannot edit unless `UseDefaultTrackers=0`; the engine honours five | built differently (0.6.1): the operator's own list of up to five, no built-in list (`client/src/components/TrackerListSettings.tsx`) |
 | Hosts.deny and nickname list sources | 428 | Defaults `descentforum.net/D3Server/hostdeny.txt` and `aliasdeny.txt`, maintained by Do_Checkor and other operators, fetched at start and every 12 h; "remove previous entries" on by default; trailing-`*` wildcard only | covered in section 2; see section 4 for why not to copy |
 | Ship list rule | 429 | Never disallow the Pyro-GL: with any other ship disallowed players default to the GL, and players who try the GL crash | built: `ServerConfigForm.tsx` warns when the GL is banned |
 | Powerup rule | 430 | Always allow the "Others" group (keys, CTF flags, the Builder's Icon in co-op) | built (the list is in the form); a warning is not present |

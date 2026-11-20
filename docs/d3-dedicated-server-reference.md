@@ -14,7 +14,7 @@ Comprehensive reference for running and managing Descent 3 dedicated servers. Co
 | `-useip [IP]` | Bind every server socket (game UDP, remote console, GameSpy) to this IPv4 address. Parsed with `inet_addr`, so a host name is ignored (`networking/networking.cpp:591-599`, `nw_GetThisIP` :847) |
 | `-useport [port]` | Game UDP port (default 2092, `D3_DEFAULT_PORT` in `Descent3/descent.h`; `Descent3/init.cpp:1808-1817`) |
 | `-gamespyport [port]` | GameSpy query UDP port (default 20142, `Descent3/gamespy.cpp:144-151`) |
-| `-gspyfile [file]` | GameSpy tracker list, found under the game directory (default `gamespy.cfg`, `Descent3/gamespy.cpp:113-128`) |
+| `-gspyfile [file]` | GameSpy tracker list, found under the game directory (default `gamespy.cfg`, `Descent3/gamespy.cpp:113-128`); its format is under [The tracker list](#the-tracker-list--gspyfile) |
 | `-nomultibmp` | The server neither requests nor relays pilot logos (`Use_file_xfer = 0`, `Descent3/init.cpp:1078`, `multi_server.cpp:2703`) |
 | `-quitongoal` | Shut down server after goal is reached |
 | `-setdir [path]` | Set working directory |
@@ -31,6 +31,34 @@ Comprehensive reference for running and managing Descent 3 dedicated servers. Co
 Pyrodeck sets `-useip`, `-useport`, `-framecap`, `-nomultibmp`, `-gamespyport` and `-gspyfile` per profile (Launch
 panel → Edit → Launch Options) and passes them right after `-dedicated <cfg>`. The engine takes the first occurrence of
 a flag and keeps at most 99 characters of each argument (`Descent3/args.cpp`).
+
+### The tracker list (`-gspyfile`)
+
+The server reads the file once, when it starts (`gspy_Init`, `Descent3/gamespy.cpp:109-227`). It reads pairs of
+lines, at most five pairs: a region line, then a tracker line.
+
+- The region line is read with `atoi`. The region is a number from 0 to 12, and 0 is the default. A line that is not
+  a number reads as 0, and a host such as `192.0.2.10:27952` reads as 192. The region is read again before every
+  tracker, and the last one read is the one the server sends.
+- The tracker line is `host` or `host:port`. The host is a DNS name or an IPv4 address; the port is 27900 when left
+  out.
+- An empty line is read and used for nothing: as a region it leaves the region as it was, as a tracker it leaves that
+  slot empty. A line ends at LF, CR or CR LF, and the server keeps its first 298 characters (`cf_ReadString`,
+  `cfile/cfile.cpp`). The file has no comments: every line is a region or a tracker.
+
+```
+3
+tracker.example.org
+3
+tracker.example.net:27901
+```
+
+A file of one region line followed by several trackers loses every second tracker, because the server reads it as a
+region.
+
+While a game runs, the server sends each tracker a heartbeat every five minutes, the first within seconds of the game
+starting. The tracker then queries the server on its GameSpy UDP port (`-gamespyport`, default 20142), which must be
+reachable from the internet. Pyrodeck writes this file from Launch panel → Edit → Tracker Listing.
 
 ### Network Switches
 

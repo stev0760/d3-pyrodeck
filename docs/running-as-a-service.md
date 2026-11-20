@@ -128,7 +128,8 @@ nssm set Pyrodeck AppKillProcessTree 0
 With the settings above, Pyrodeck answers browsers on this machine only; for browsers on other machines of the LAN,
 add `PYRODECK_HOST=0.0.0.0` to `AppEnvironmentExtra`. `nssm stop Pyrodeck`, `nssm restart Pyrodeck` and
 `nssm remove Pyrodeck confirm` manage it afterwards. The Windows firewall needs an inbound rule for each game server's
-UDP game port, and for Pyrodeck's port (3001) if browsers on other machines reach it directly. The game's console port needs
+UDP game port (and its UDP GameSpy port when it is listed on a tracker), and for Pyrodeck's port (3001) if browsers
+on other machines reach it directly. The game's console port needs
 one only for Connect mode from another machine, which also takes `AllowRemoteConsole=1` in the server's config; a
 server Pyrodeck launches here needs neither.
 

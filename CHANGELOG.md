@@ -2,6 +2,28 @@
 
 All notable changes to D3 Pyrodeck are documented here.
 
+## [0.6.1] - 2026-11-20
+
+A server can be listed on game trackers from the panel.
+
+### Added
+- **Tracker listing.** Launch panel → Edit → Tracker Listing sets a server's region (a number from 0 to 12) and up to
+  five trackers (`host` or `host:port`). Pyrodeck writes them to the file the server reads (`-gspyfile`, default
+  `gamespy.cfg` in the game directory) as region and tracker pairs, the form the game reads, and keeps the old file as
+  `<name>.bak`. The game reads one region line before each tracker, so a file of one region line followed by several
+  trackers loses every second tracker: the block flags such a file and shows the lines the game does not use. It names
+  the other profiles that read the same file, says the game reads it when the server starts, and gives the GameSpy UDP
+  port the trackers query, which must be reachable from the internet. A GameSpy file that is not a `.cfg`, `.mps`,
+  `.dmfc` or `.txt`, or is a server config or Startup Commands file, is shown but not saved. Pyrodeck ships no tracker
+  list of its own. On a phone it is under More → Profiles → Edit.
+- **API.** `GET` and `PUT /api/profiles/<id>/tracker-list`.
+
+### Security
+- **The panel writes and deletes only config files in the game directory:** `.cfg`, `.mps`, `.dmfc` and `.txt`. Every
+  write and delete there (the file editors, a restore of the previous version, the tracker list) refuses any other
+  name with a 400. The game's executable lives in that directory, and a file written under its name would have run at
+  the next launch. Reads are unchanged.
+
 ## [0.6.0] - 2026-11-15
 
 One Pyrodeck runs several Descent 3 servers at once, an Anarchy and a CTF server side by side, from one panel. The

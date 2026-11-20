@@ -157,10 +157,14 @@ sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp           # certificate renewal and the redirect to https
 sudo ufw allow 443/tcp          # the panel
 sudo ufw allow 2092/udp         # the game (the profile's -useport, if set)
-sudo ufw allow 20142/udp        # GameSpy queries (-gamespyport, if set)
+sudo ufw allow 20142/udp        # tracker queries, for a server listed on a tracker (-gamespyport, if set)
 sudo ufw allow 3002/tcp         # mission downloads, only if the mission host is on (its port)
 sudo ufw enable
 ```
+
+A tracker queries each server listed on it (Edit → Tracker Listing) on that server's GameSpy UDP port, so open that
+port for every listed server. The Tracker Listing block shows the port; set it in Launch Options so it stays the same
+at every launch.
 
 Never open:
 

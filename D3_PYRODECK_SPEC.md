@@ -881,6 +881,8 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 | `GET` | `/api/launcher/autostart` | `{ env, settingProfileId, effective: { source, profileId, profileName, error } \| null, run }`: the profile that starts with Pyrodeck and this run's autostart state (Addendum F, v0.5.3) |
 | `POST` | `/api/launcher/autostart/cancel` | Drop a pending retry of a failed autostart launch (409 when none) |
 | `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.5.0) |
+| `GET` | `/api/profiles/:id/tracker-list` | The tracker list the profile's server reads at its next start, what the game takes from it, and what the panel says around it (Addendum I, v0.6.1) |
+| `PUT` | `/api/profiles/:id/tracker-list` | `{ region, trackers }`: write it as region/tracker pairs (Addendum I, v0.6.1) |
 
 **Join address (v0.5.0).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
 (`Descent3/descent.h`). `host` is the first of: the global `joinHost` setting (`PUT /api/pyrodeck/config`
@@ -938,7 +940,7 @@ Launch option rules, from the engine source (`packages/server/src/launcher/launc
 `bindIp` is a dotted IPv4 literal (`inet_addr`; a host name would be ignored, `255.255.255.255` is `INADDR_NONE`), and
 since the server binds its console to it too, Pyrodeck's readiness probe and auto-connect go to that address instead of
 loopback. Ports are 1-65535 (defaults: game 2092, GameSpy 20142). `frameCap` is 1-999 frames per second (default 60;
-0 divides by zero in `init.cpp`). `gameSpyFile` is a plain file name in the game directory.
+0 divides by zero in `init.cpp`). `gameSpyFile` is a plain file name in the game directory; Addendum I writes it.
 
 Team settings ride in the Startup Commands file because DMFC reads exactly one startup script (`ParseStartupScript`,
 `netgames/dmfc/dmfcbase.cpp`), after its saved settings, so they apply before any player joins. At each profile launch
@@ -2172,6 +2174,63 @@ Only real servers can show: two games on one machine with clients on both; `-tem
 a separate `-autoexec` file per profile read by DMFC; `systemctl restart` with `KillMode=process` re-attaching
 several; the CPU of several bot servers on one VPS; a downgrade to 0.5.7 on a copy of a config directory; the panel
 against real servers' console traffic.
+
+## Addendum I — Tracker listing (v0.6.1, branch `feature/tracker-list`)
+
+A profile's tracker list: the region and up to five trackers its server reports to. Pyrodeck writes the file the
+game reads; it has no tracker list of its own.
+
+### I.1 Engine facts (Matcen `Descent3/gamespy.cpp` `gspy_Init`, :109-227; `cfile/cfile.cpp` `cf_ReadString`, `cfgetc`)
+
+- The file is `-gspyfile <name>`, else `gamespy.cfg`, found under the game directory (`cf_LocatePath`), read once
+  when the server process starts.
+- It is read as at most five pairs of lines (`MAX_GAMESPY_SERVERS`): a region line, `gspy_region = atoi(line)`, then
+  a tracker line, `host` or `host:port` (`GAMESPY_PORT` 27900 when left out; `inet_addr`, else `gethostbyname`). The
+  region is read again before every tracker; the last one read wins. A line of length 0 (an empty line, or the end of
+  the file) is skipped but uses its place: the region stays, the tracker slot stays empty. A line ends at LF, CR or
+  CR LF; `cf_ReadString(hostn, MAX_HOSTNAMELEN - 1, cfp)` keeps 298 characters of it. There are no comment lines.
+- So one region line followed by several hosts loses every second host, which the game reads as a region (`atoi` of
+  `192.0.2.10:27952` is 192). Tested with a live server: such a file sent heartbeats to the first and third hosts only;
+  the same hosts as pairs reached all three.
+- While a game runs the server sends each tracker a heartbeat every 300 s (`GSPY_HEARBEAT_INTERVAL`), the first when
+  the game starts (`gspy_StartGame`). The tracker queries the server back on its GameSpy UDP port (`-gamespyport`,
+  default 20142), which must be reachable from the internet.
+- The region is 0 to 12 (the comment in `gspy_Init`), 0 the default. The engine does not say what each number means,
+  so the panel shows a number and names no regions.
+
+### I.2 Server (`launcher/trackerList.ts`, `routes/config.ts`)
+
+`parseTrackerList(text)` returns what the game takes (`region`, `trackers`) and `ignored`: the non-empty lines it does
+not use as trackers that are not plain numbers in a region position (a host where a region is expected, a line of
+spaces, anything after the fifth pair). `formatTrackerList` writes region/tracker pairs with LF line ends and nothing
+else; with no trackers, the region line alone; with region 0, no trackers and no file, nothing.
+`validateTrackerList`: region a whole number 0-12; at most five trackers, each a DNS name or dotted IPv4 address
+(not `255.255.255.255`, which the game cannot use) of at most 253 characters, an optional `:port` 1-65535, no white
+space, none twice (host without case, with the effective port).
+
+`GET /api/profiles/:id/tracker-list` returns `{ file, path, exists, writable, writeError, region, trackers, ignored,
+sharedWith, gameSpyPort: { port, source: "running"|"profile"|"default" }, running }`. `file` is the profile's saved
+`launchOptions.gameSpyFile` (as a launch sanitizes it), else `gamespy.cfg`, in the profile's game directory (its
+`gamePath`, else the global one). `sharedWith` names the other profiles with the same directory and file name (case
+ignored). `gameSpyPort` is the port of the launch the server holds (an automatic move to a free port included), else
+the profile's `-gamespyport`, else 20142, which a launch moves when another server holds it (H.3). `running` is a held
+launch with a process.
+
+`PUT` takes `{ region, trackers }` (400 with `details` when invalid) and writes through
+`ServerProfileManager.writeFile`, so the old file becomes `<file>.bak`. It is refused (400, `writable: false`) when the
+file is not a `.cfg`, `.mps`, `.dmfc` or `.txt` (the game-file write rule, `gameFileWriteError`) or is a profile's
+server config, a profile's Startup Commands file or the global `dedicated.cfg` in that directory. The reply is the GET
+shape plus `ok` and `written`.
+
+### I.3 Panel (`components/TrackerListSettings.tsx`, `lib/trackerList.ts`)
+
+A **Tracker Listing** section in the profile form, below Launch Options, with its own Save. It says which file it
+edits, which other profiles read it, that the game reads it when the server starts (and that a running server keeps
+its old list until it restarts), the UDP port trackers query and that it must be reachable from the internet, and that
+with no trackers the server is listed nowhere. A file with `ignored` lines gets a warning, the lines, and "Saving
+rewrites the file in pairs". Save is disabled while the profile form has unsaved changes to the game path or GameSpy
+file, while the region is not 0-12, and when the file is not writable (its reason shown). The phone's Profiles screen
+is the same panel.
 
 ---
 

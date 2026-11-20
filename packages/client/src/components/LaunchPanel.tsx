@@ -30,6 +30,7 @@ import {
   type TeamSettingsForm,
 } from "./ProfileLaunchSettings";
 import { ScheduleFields, EMPTY_SCHEDULE, describeNextAction } from "./ScheduleFields";
+import { TrackerListSettings } from "./TrackerListSettings";
 import { LaunchScriptImport } from "./LaunchScriptImport";
 import { getJson, type ProfileSchedule, type ScheduleState } from "@/lib/ops";
 
@@ -547,6 +548,17 @@ export function LaunchPanel({ launcher }: LaunchPanelProps) {
           <LaunchOptionsFields
             values={form.launchOptions}
             onChange={(launchOptions) => setForm((prev) => ({ ...prev, launchOptions }))}
+          />
+        )}
+
+        {!isCreate && selectedProfile && (
+          <TrackerListSettings
+            profileId={selectedProfile.id}
+            fileKey={`${selectedProfile.gamePath ?? config?.gamePath ?? ""}\n${selectedProfile.launchOptions?.gameSpyFile ?? ""}`}
+            profileUnsaved={
+              form.launchOptions.gameSpyFile.trim() !== (selectedProfile.launchOptions?.gameSpyFile ?? "") ||
+              form.gamePath.trim() !== (selectedProfile.gamePath ?? config?.gamePath ?? "").trim()
+            }
           />
         )}
 

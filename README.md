@@ -32,6 +32,8 @@ The panel on a desktop and on a phone, running three Matcen servers with bots.
   after an uptime limit, and servers start with Pyrodeck after a reboot. Restarting Pyrodeck does not stop a server.
 - **Configuration without editing files.** Forms for the server config, ship and powerup rules, the bot roster and
   startup commands, with a raw editor beside them.
+- **Tracker listing.** Set a server's region and up to five game trackers. Pyrodeck writes the tracker file in the
+  form the game reads and shows the port the trackers query.
 - **Logs.** One log file per launch, viewed or downloaded in the browser, with optional retention and compression.
 - **A phone layout.** Below 768 px the panel is a phone app that can be added to the home screen.
 
@@ -61,14 +63,14 @@ also run by hand on Windows; 0.6.0 itself has not been run on Windows yet.
 To check a download, put `SHA256SUMS.txt` from the same release in the same directory, then:
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux: "pyrodeck-v0.6.0-linux-x64.tar.gz: OK"
+sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux: "pyrodeck-v0.6.1-linux-x64.tar.gz: OK"
 shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS
 ```
 
 On Windows, in PowerShell, compare the hash with the package's line in `SHA256SUMS.txt`:
 
 ```powershell
-(Get-FileHash .\pyrodeck-v0.6.0-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\pyrodeck-v0.6.1-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 A mismatch, or `FAILED`, means the file is not the one the workflow built: download it again, and do not run it.
@@ -131,7 +133,6 @@ Not promises, and in no fixed order:
 - One dashboard for all servers, and supervisor settings per server.
 - Signed Windows packages.
 - A container image.
-- Tracker listing settings in the panel.
 - Repeating one level of a multi-level mission.
 - A light theme.
 
