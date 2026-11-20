@@ -7,6 +7,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { DEFAULT_LOG_RETENTION, RECOMMENDED_LOG_RETENTION, type LogRetentionSettings } from "../launcher/logRetention.js";
 import { logsRoutes } from "./logs.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * The Logs tab's API with compressed logs and the retention settings. The
  * stored config and the process manager are stand-ins; the log directory is a
@@ -60,7 +63,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   for (const instance of opened.splice(0)) await instance.close();
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, RM_TEMP);
 });
 
 describe("compressed logs in the Logs tab", () => {

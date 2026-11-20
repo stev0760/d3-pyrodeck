@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs/promises";
 import Fastify, { type FastifyInstance } from "fastify";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * "Start when Pyrodeck starts" on the profile API: on for several profiles
  * (servers/index.json keeps the list, pyrodeck.json its first), cleared with its
@@ -60,7 +63,7 @@ afterEach(async () => {
 afterAll(async () => {
   if (mocks.previousConfigDir === undefined) delete process.env.PYRODECK_CONFIG_DIR;
   else process.env.PYRODECK_CONFIG_DIR = mocks.previousConfigDir;
-  await fs.rm(mocks.dir, { recursive: true, force: true });
+  await fs.rm(mocks.dir, RM_TEMP);
 });
 
 const patch = (id: string, payload: unknown) => app.inject({ method: "PATCH", url: `/api/profiles/${id}`, payload: payload as object });

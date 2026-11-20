@@ -14,6 +14,9 @@ import {
   type RunRecord,
 } from "./runRecord.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 const record: RunRecord = {
   version: 1,
   pid: 4242,
@@ -87,7 +90,7 @@ describe("run record file", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("writes, reads and clears", async () => {

@@ -8,6 +8,9 @@ import { PlayerHistory, MAX_ROWS } from "./PlayerHistory.js";
 import { decideIpLookup, engineClearsTextBuffer, type ConsoleLink } from "./consoleLink.js";
 import type { ServerCapabilities } from "../parser/parsers/servercaps.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 const MATCEN: ServerCapabilities = { version: 1, fork: "Matcen", forkVersion: "0.9.16", features: new Set(["bots"]) };
 const VANILLA: ServerCapabilities = { version: 0, fork: "", forkVersion: "", features: new Set() };
 
@@ -222,7 +225,7 @@ describe("PlayerHistory", () => {
       expect(again.search().rows[0]).toMatchObject({ name: "Bob", slot: 2, ip: "203.0.113.9" });
       expect(again.recordJoin({ name: "Eve" }).id).toBe(row.id + 1);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, RM_TEMP);
     }
   });
 });

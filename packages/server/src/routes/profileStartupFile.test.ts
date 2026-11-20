@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs/promises";
 import Fastify, { type FastifyInstance } from "fastify";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * A new profile in a game directory another profile already uses gets its
  * own Startup Commands file (`<config>.dmfc`), so both servers can run at
@@ -55,7 +58,7 @@ afterEach(async () => {
 afterAll(async () => {
   if (mocks.previousConfigDir === undefined) delete process.env.PYRODECK_CONFIG_DIR;
   else process.env.PYRODECK_CONFIG_DIR = mocks.previousConfigDir;
-  await fs.rm(mocks.dir, { recursive: true, force: true });
+  await fs.rm(mocks.dir, RM_TEMP);
 });
 
 const create = async (payload: Record<string, unknown>) => {

@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * Playlists hosting their missions: activation, saving the active playlist
  * with other missions, and turning the mission host on while a playlist is
@@ -86,7 +89,7 @@ const entry = (label: string, missionName: string) => ({ label, missionName });
 let app: FastifyInstance;
 
 beforeEach(async () => {
-  await fs.rm(missionsDir, { recursive: true, force: true });
+  await fs.rm(missionsDir, RM_TEMP);
   await fs.mkdir(missionsDir);
   await fs.writeFile(path.join(missionsDir, "alpha.mn3"), buildMn3("alpha", [DEAD]));
   await fs.writeFile(path.join(missionsDir, "beta.mn3"), buildMn3("beta", [DEAD]));
@@ -116,7 +119,7 @@ afterEach(async () => {
 afterAll(async () => {
   if (mocks.previousConfigDir === undefined) delete process.env.PYRODECK_CONFIG_DIR;
   else process.env.PYRODECK_CONFIG_DIR = mocks.previousConfigDir;
-  await fs.rm(mocks.root, { recursive: true, force: true });
+  await fs.rm(mocks.root, RM_TEMP);
 });
 
 describe("playlist activation", () => {

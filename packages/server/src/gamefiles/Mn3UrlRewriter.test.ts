@@ -20,6 +20,9 @@ import {
 } from "./Mn3UrlRewriter.js";
 import { parseMn3 } from "./Mn3Scanner.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /** Build a HOG2 archive the way the engine lays one out (cfile/hogfile.h). */
 function buildHog(files: { name: string; data: Buffer }[], gap = 0): Buffer {
   const header = Buffer.alloc(68);
@@ -181,7 +184,7 @@ describe("setMissionUrl / restoreMissionUrl", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("rewrites the .msn, keeps every other payload byte-identical, and backs up once", async () => {

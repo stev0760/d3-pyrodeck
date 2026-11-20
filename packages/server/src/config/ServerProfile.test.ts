@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { ServerProfileManager } from "./ServerProfile.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 let dir: string;
 let manager: ServerProfileManager;
 
@@ -14,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, RM_TEMP);
 });
 
 const read = (name: string) => fs.readFile(path.join(dir, "game", name), "utf-8");

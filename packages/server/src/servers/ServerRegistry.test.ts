@@ -14,6 +14,9 @@ import { RUN_RECORD_FILE, type RunRecord } from "../launcher/runRecord.js";
 import { sayToAll } from "../players/playerActions.js";
 import { FakeWorld } from "./testing/fakeGames.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * Several servers on one Pyrodeck: one registry, one bus, stand-in game
  * processes and consoles (testing/fakeGames.ts). Each server must launch,
@@ -189,7 +192,7 @@ afterEach(async () => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
-  for (const root of roots) await fs.rm(root, { recursive: true, force: true });
+  for (const root of roots) await fs.rm(root, RM_TEMP);
 });
 
 describe("ServerRegistry: servers side by side", () => {

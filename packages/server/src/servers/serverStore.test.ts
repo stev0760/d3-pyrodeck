@@ -5,6 +5,9 @@ import path from "node:path";
 import { SERVERS_FILE, readServerRunRecords, readServersFile, serverIdOfRecord, upgradeConfigDir } from "./serverStore.js";
 import { RUN_RECORD_FILE, type RunRecord } from "../launcher/runRecord.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * The config directory of a Pyrodeck that ran one server, brought up to date
  * at the first start of one that runs several, and again after a downgrade.
@@ -17,7 +20,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, RM_TEMP);
 });
 
 const P1 = { id: "p1", lastLaunchedAt: "2026-11-01T10:00:00.000Z" };

@@ -17,6 +17,9 @@ import { ServerEvents, type ServerEventMap } from "../events/ServerEvents.js";
 import type { ConsoleLink } from "../players/consoleLink.js";
 import { sayToAll, sayToSlot } from "../players/playerActions.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 describe("hosts.deny lines as DMFC's ParseHostsFile reads them", () => {
   it("accepts addresses and whole-part wildcards", () => {
     for (const [line, octets] of [
@@ -180,7 +183,7 @@ describe("BanService", () => {
 
   afterEach(async () => {
     svc.stop();
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("adds a hosts.deny entry with its note and sends $rehash", async () => {

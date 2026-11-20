@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END, mergeAutoexecBlock, syncAutoexecBlock } from "./autoexecBlock.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 const BLOCK = ["$allowteamchange off", "$setteamname 0 Crimson"];
 
 describe("mergeAutoexecBlock", () => {
@@ -86,7 +89,7 @@ describe("syncAutoexecBlock", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("creates the file only when there is a block to write", async () => {

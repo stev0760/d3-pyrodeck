@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * A profile's tracker list (GET and PUT /api/profiles/:id/tracker-list): the
  * file its server reads (-gspyfile, else gamespy.cfg, in its game
@@ -82,7 +85,7 @@ afterEach(async () => {
 afterAll(async () => {
   if (mocks.previousConfigDir === undefined) delete process.env.PYRODECK_CONFIG_DIR;
   else process.env.PYRODECK_CONFIG_DIR = mocks.previousConfigDir;
-  await fs.rm(mocks.dir, { recursive: true, force: true });
+  await fs.rm(mocks.dir, RM_TEMP);
 });
 
 const read = (id: string) => app.inject({ method: "GET", url: `/api/profiles/${id}/tracker-list` });

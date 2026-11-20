@@ -9,6 +9,9 @@ import { sanitizeStoredLaunchOptions } from "./launchOptions.js";
 import { AUTOEXEC_BLOCK_BEGIN, AUTOEXEC_BLOCK_END } from "./autoexecBlock.js";
 import { ServerEvents, serverEvents, type ServerEventMap } from "../events/ServerEvents.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 describe("buildLaunchArgs", () => {
   let dir: string;
   const config = (gamePath: string) => ({
@@ -24,7 +27,7 @@ describe("buildLaunchArgs", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("passes no -autoexec when the game directory has no Startup Commands file", async () => {
@@ -117,7 +120,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager log health", () =>
 
   afterEach(async () => {
     await pm.stop();
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   const launch = (logPath?: string) =>
@@ -242,7 +245,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager server events", ()
 
   afterEach(async () => {
     await pm.stop();
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   const launch = (reason?: Parameters<ProcessManager["start"]>[1]) =>
@@ -316,7 +319,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager game environment",
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("starts the game without Pyrodeck's secrets and with what it needs", async () => {
@@ -373,7 +376,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager re-attach", () => 
         // already gone
       }
     }
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   /** A server some earlier Pyrodeck started: not this ProcessManager's child. */
@@ -456,7 +459,7 @@ describe.skipIf(process.platform === "win32")("ProcessManager launch survives Py
       expect(survivableCommand(exe, ["-dedicated"]).args.slice(2)).toEqual([exe, "-dedicated"]);
     } finally {
       await pm.stop();
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, RM_TEMP);
     }
   });
 

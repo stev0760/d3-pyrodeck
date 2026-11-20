@@ -6,6 +6,9 @@ import fastifyWebSocket from "@fastify/websocket";
 import type { WebSocket } from "ws";
 import type { FakeWorld } from "../servers/testing/fakeGames.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * The servers API (GET /api/servers, /api/servers/:serverId/...), the flat
  * routes of a single-server Pyrodeck as aliases, and the WebSocket's hello,
@@ -169,7 +172,7 @@ afterAll(async () => {
   vi.restoreAllMocks();
   if (mocks.previousConfigDir === undefined) delete process.env.PYRODECK_CONFIG_DIR;
   else process.env.PYRODECK_CONFIG_DIR = mocks.previousConfigDir;
-  await fs.rm(mocks.root, { recursive: true, force: true });
+  await fs.rm(mocks.root, RM_TEMP);
 });
 
 /** A WebSocket's messages as they arrive. */

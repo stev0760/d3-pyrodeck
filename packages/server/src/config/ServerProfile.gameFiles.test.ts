@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ServerProfileManager, gameFileWriteError } from "./ServerProfile.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * Writes and deletes in the game directory are limited to the config file types the
  * panel edits. The directory also holds the game's executable, and a file written under
@@ -23,8 +26,8 @@ describe("ServerProfileManager game-file writes", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(configDir, { recursive: true, force: true });
-    await fs.rm(gamePath, { recursive: true, force: true });
+    await fs.rm(configDir, RM_TEMP);
+    await fs.rm(gamePath, RM_TEMP);
   });
 
   it("writes and deletes the config file types", async () => {

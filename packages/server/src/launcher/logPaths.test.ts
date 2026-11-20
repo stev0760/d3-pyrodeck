@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { resolveLogDir, buildLogFilename, validateLogDir, prepareLogFile } from "./logPaths.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 describe("resolveLogDir", () => {
   it("defaults to the directory containing the executable", () => {
     expect(resolveLogDir(null, "/opt/d3/builds/Descent3")).toBe("/opt/d3/builds");
@@ -55,7 +58,7 @@ describe("validateLogDir / prepareLogFile", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("accepts an existing directory and one that launch will create", async () => {

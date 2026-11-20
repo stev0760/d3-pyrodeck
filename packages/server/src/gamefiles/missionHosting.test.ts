@@ -14,6 +14,9 @@ import {
   type MissionHostingResult,
 } from "./missionHosting.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /** A one-level .mn3 (HOG2, cfile/hogfile.h) whose .msn offers `urls`. */
 function buildMn3(stem: string, urls: string[]): Buffer {
   stem = stem.slice(0, 20); // entry names hold 36 bytes; the engine falls back to the only .msn
@@ -83,7 +86,7 @@ describe("hostMission / hostPlaylistEntries", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   const write = (file: string, urls: string[]) =>

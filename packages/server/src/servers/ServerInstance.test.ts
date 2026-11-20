@@ -14,6 +14,9 @@ import { DEFAULT_SUPERVISOR_SETTINGS } from "../launcher/supervisorSettings.js";
 import { RUN_RECORD_FILE, type ProcessFacts, type RunRecord } from "../launcher/runRecord.js";
 import { sayToAll } from "../players/playerActions.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 /**
  * A server instance on a stand-in game: the process follows ProcessManager's
  * order of state changes and events, the console TelnetConnection's
@@ -488,7 +491,7 @@ afterEach(async () => {
   for (const h of harnesses.splice(0)) {
     h.server.dispose();
     vi.clearAllTimers();
-    await fs.rm(h.root, { recursive: true, force: true });
+    await fs.rm(h.root, RM_TEMP);
   }
   vi.useRealTimers();
   vi.restoreAllMocks();

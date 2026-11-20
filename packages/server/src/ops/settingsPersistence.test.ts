@@ -5,13 +5,16 @@ import path from "node:path";
 import { PyrodeckConfigManager } from "../config/PyrodeckConfig.js";
 import { DEFAULT_MAIL_SETTINGS } from "./mailSettings.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 describe("operations settings in pyrodeck.json", () => {
   let dir: string;
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-ops-"));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("defaults to mail off, normal priority and the update check on", async () => {

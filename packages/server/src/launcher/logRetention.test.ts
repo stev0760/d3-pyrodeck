@@ -20,6 +20,9 @@ import {
   type LogRetentionSettings,
 } from "./logRetention.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 const DAY = 86_400_000;
 const MB = 1024 * 1024;
 const NOW = Date.parse("2026-10-08T12:00:00Z");
@@ -116,8 +119,8 @@ describe("runLogRetention on a directory", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
-    await fs.rm(outside, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
+    await fs.rm(outside, RM_TEMP);
   });
 
   /** Write a file whose last write was `ageDays` before NOW. */
@@ -378,7 +381,7 @@ describe("gzipLog", () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "pyrodeck-gzip-"));
   });
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, RM_TEMP);
   });
 
   it("replaces a stale .gz of the same name and leaves no .partial behind", async () => {

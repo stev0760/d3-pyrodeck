@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { FIRST_BYTE_DELAY_MS, MissionHost } from "./MissionHost.js";
 
+// A queued state write may still land while the temp directory is being removed (ENOTEMPTY): retry.
+const RM_TEMP = { recursive: true, force: true, maxRetries: 10, retryDelay: 20 } as const;
+
 interface Reply {
   status: number;
   headers: http.IncomingHttpHeaders;
@@ -66,7 +69,7 @@ describe("MissionHost listener", () => {
 
   afterAll(async () => {
     await host.stop();
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, RM_TEMP);
   });
 
   it("streams a listed .mn3 byte-identical, with Content-Length and no chunking", async () => {
@@ -162,7 +165,7 @@ describe("MissionHost lifecycle", () => {
   });
 
   afterAll(async () => {
-    await fs.rm(missionsDir, { recursive: true, force: true });
+    await fs.rm(missionsDir, RM_TEMP);
   });
 
   it("holds the first byte of a GET (not a HEAD) for the configured delay", async () => {
