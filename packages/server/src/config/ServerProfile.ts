@@ -98,6 +98,22 @@ export function checkStartupFileName(raw: unknown): { name: string } | { error: 
   return { name };
 }
 
+/**
+ * The file types the panel may write or delete in gamePath. The game's executable, its
+ * hogs and the missions live in the same directory, and anything written there under the
+ * executable's name runs at the next launch, so writes are limited to the config files
+ * the panel edits. Reads are not limited.
+ */
+export const WRITABLE_GAME_FILE_EXTENSIONS = [".cfg", ".mps", ".dmfc", ".txt"] as const;
+
+/** Why the panel may not write or delete `name` in gamePath, or null when it may. */
+export function gameFileWriteError(name: string): string | null {
+  const lower = name.toLowerCase();
+  // A bare ".cfg" has no name in front of the extension.
+  const allowed = WRITABLE_GAME_FILE_EXTENSIONS.some((ext) => lower.endsWith(ext) && lower.length > ext.length);
+  return allowed ? null : `Only ${WRITABLE_GAME_FILE_EXTENSIONS.join(", ")} files can be written or deleted here`;
+}
+
 /** profiles.json writes that Pyrodeck makes on its own (a launch's lastLaunchedAt), one at a time per file. */
 const launchMarks = new Map<string, Promise<void>>();
 
@@ -549,14 +565,13 @@ export class ServerProfileManager {
   }
 
   /**
-   * Write a file to gamePath by filename. The previous content, when it
-   * differs, is kept in `<filename>.bak` (one backup, replaced on each change),
-   * and the new content lands through a temp file and a rename so a crash
-   * mid-write never leaves a half file.
+   * Write a config file to gamePath by filename (see writableName). The
+   * previous content, when it differs, is kept in `<filename>.bak` (one
+   * backup, replaced on each change), and the new content lands through a
+   * temp file and a rename so a crash mid-write never leaves a half file.
    */
   async writeFile(filename: string, content: string): Promise<void> {
-    const safe = this.safeName(filename);
-    if (!safe) throw new Error("Invalid filename");
+    const safe = this.writableName(filename);
     const target = path.join(this.gamePath, safe);
     let previous: string | null;
     try {
@@ -596,10 +611,9 @@ export class ServerProfileManager {
     return true;
   }
 
-  /** Delete a file from gamePath. */
+  /** Delete a config file from gamePath (see writableName). */
   async deleteFile(filename: string): Promise<void> {
-    const safe = this.safeName(filename);
-    if (!safe) throw new Error("Invalid filename");
+    const safe = this.writableName(filename);
     await fs.rm(path.join(this.gamePath, safe), { force: true });
   }
 
@@ -648,6 +662,15 @@ export class ServerProfileManager {
     }
 
     return results;
+  }
+
+  /** safeName, plus the extension allowlist (gameFileWriteError). Throws with the reason. */
+  private writableName(name: string): string {
+    const safe = this.safeName(name);
+    if (!safe) throw new Error("Invalid filename");
+    const error = gameFileWriteError(safe);
+    if (error) throw new Error(error);
+    return safe;
   }
 
   /** Reject path traversal in filenames. */
