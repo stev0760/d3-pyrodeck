@@ -63,7 +63,10 @@ export interface PyrodeckConfig {
    * Set with PATCH /api/profiles/:id { autostart } only; PYRODECK_AUTOSTART_PROFILE wins.
    */
   autostart: AutostartSettings;
-  /** Host name or IPv4 address players join at, shown with the game port in the Launch panel. Null = unknown. */
+  /**
+   * Host name or IPv4 address players join at, shown with the game port in the Launch panel; a name is shown as
+   * the IPv4 address it resolves to, the only form the game's join screen takes. Null = unknown.
+   */
   joinHost: string | null;
   /** Email alerts (ops/mailSettings.ts). Set via /api/alerts/mail only; the password is never returned. */
   mail: MailSettings;

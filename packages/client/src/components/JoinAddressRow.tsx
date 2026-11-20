@@ -1,20 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-
-/** GET /api/profiles/:id/join-address (server: launcher/joinAddress.ts). */
-interface JoinAddress {
-  host: string | null;
-  port: number;
-  address: string | null;
-  hostSource: "setting" | "bind-address" | "mission-host" | null;
-  lanOnly: boolean;
-}
-
-const SOURCE_LABEL: Record<NonNullable<JoinAddress["hostSource"]>, string> = {
-  setting: "Join Host setting",
-  "bind-address": "bind address",
-  "mission-host": "mission host URL",
-};
+import { joinAddressNote, joinAddressText, type JoinAddress } from "@/lib/joinAddress";
 
 /** Copy text; navigator.clipboard needs a secure origin, so fall back to a selection copy over plain http. */
 async function copyText(text: string): Promise<boolean> {
@@ -43,9 +29,10 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * The host:port players type into the game's Direct TCP/IP join screen, with
- * a copy button. The host comes from the global Join Host setting (editable
- * here), the profile's bind address, or the mission host's public URL.
+ * The IPv4 address and port players type into the game's Direct TCP/IP join
+ * screen, with a copy button. The host comes from the global Join Host
+ * setting (editable here), the profile's bind address, or the mission host's
+ * public URL; a host name is shown with the address it resolves to.
  */
 export function JoinAddressRow({ profileId, refreshKey }: { profileId: string; refreshKey?: unknown }) {
   const [join, setJoin] = useState<JoinAddress | null>(null);
@@ -101,13 +88,14 @@ export function JoinAddressRow({ profileId, refreshKey }: { profileId: string; r
   };
 
   if (!join) return null;
+  const note = joinAddressNote(join);
 
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 bg-muted rounded-md px-2 py-1 text-xs">
         <span className="text-muted-foreground shrink-0">Join: </span>
         <span className="flex-1 min-w-0 text-foreground/80 break-all font-mono text-[11px] select-all">
-          {join.address ?? `?:${join.port}`}
+          {joinAddressText(join)}
         </span>
         {join.address && (
           <Button variant="outline" size="xs" onClick={() => void copy()} className="shrink-0 px-1.5">
@@ -128,10 +116,10 @@ export function JoinAddressRow({ profileId, refreshKey }: { profileId: string; r
         </Button>
       </div>
       {!editing && (
-        <p className="text-[10px] text-muted-foreground leading-snug">
-          {join.host
-            ? `Host from the ${SOURCE_LABEL[join.hostSource ?? "setting"]}${join.lanOnly ? "; a local address, so only players on this network can use it" : ""}. Players enter it under Multiplayer → Direct TCP/IP.`
-            : "Pyrodeck doesn't know the address players reach this machine at. Set the Join Host."}
+        <p
+          className={`text-[10px] leading-snug break-words ${note.tone === "warn" ? "text-amber-400" : "text-muted-foreground"}`}
+        >
+          {note.text}
         </p>
       )}
       {editing && (
@@ -155,7 +143,10 @@ export function JoinAddressRow({ profileId, refreshKey }: { profileId: string; r
               Cancel
             </Button>
           </div>
-          <p className="text-[10px] text-muted-foreground">Leave it empty and save to clear it.</p>
+          <p className="text-[10px] text-muted-foreground leading-snug">
+            The game's join screen takes only an IPv4 address. A host name is looked up from this machine and shown as
+            its address. Leave it empty and save to clear it.
+          </p>
         </div>
       )}
       {error && <p className="text-[11px] text-destructive break-words">{error}</p>}

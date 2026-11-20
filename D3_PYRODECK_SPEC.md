@@ -880,15 +880,23 @@ Path sanitization enforced on all endpoints — reject `..`, absolute paths, sym
 | `POST` | `/api/launcher/supervisor/cancel-relaunch` | Drop a pending relaunch (409 when none) |
 | `GET` | `/api/launcher/autostart` | `{ env, settingProfileId, effective: { source, profileId, profileName, error } \| null, run }`: the profile that starts with Pyrodeck and this run's autostart state (Addendum F, v0.5.3) |
 | `POST` | `/api/launcher/autostart/cancel` | Drop a pending retry of a failed autostart launch (409 when none) |
-| `GET` | `/api/profiles/:id/join-address` | `{ host, port, address, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, lanOnly }`: what players join the profile's server at (v0.5.0) |
+| `GET` | `/api/profiles/:id/join-address` | `{ host, port, hostSource: "setting"\|"bind-address"\|"mission-host"\|null, hostKind: "ipv4"\|"name"\|"ipv6"\|null, resolved, address, lanOnly }`: what players join the profile's server at (v0.5.0; `hostKind`, `resolved` and an IPv4-only `address` v0.6.1) |
 | `GET` | `/api/profiles/:id/tracker-list` | The tracker list the profile's server reads at its next start, what the game takes from it, and what the panel says around it (Addendum I, v0.6.1) |
 | `PUT` | `/api/profiles/:id/tracker-list` | `{ region, trackers }`: write it as region/tracker pairs (Addendum I, v0.6.1) |
 
 **Join address (v0.5.0).** `port` is the profile's `launchOptions.gamePort`, else `D3_DEFAULT_PORT` 2092
 (`Descent3/descent.h`). `host` is the first of: the global `joinHost` setting (`PUT /api/pyrodeck/config`
 `{ joinHost }`, a host name or IPv4 address without scheme, port or path; empty clears it), the profile's `bindIp` when
-it is public, the host of `missionHost.publicBaseUrl`, the `bindIp` when it is a LAN address. `lanOnly` marks a loopback
-or private host. The Launch panel shows `address` with a Copy button and edits `joinHost` in place.
+it is public, the host of `missionHost.publicBaseUrl`, the `bindIp` when it is a LAN address. The game's join screen
+keeps the first 24 characters typed (a 25-byte buffer, `ui/UIEdit.cpp`) and passes the part before `:` to
+`inet_addr`, as `-directip` does (`netcon/lanclient/lanclient.cpp`): a host name is refused without a message to the
+player. So `address` is `IPv4:port` (21 characters at most) or null. An IPv4 `host` is used as it is
+(`hostKind: "ipv4"`). A host name (`"name"`) is looked up on the Pyrodeck machine with `dns.lookup`, IPv4 only, for at
+most 2 s, one lookup per name at a time; `resolved` is the address, and `address` is null when the name does not
+resolve in time. An IPv6 host (`"ipv6"`, from a public URL) gives no `address`. `lanOnly` marks a loopback or private
+address, the resolved one for a name. The Launch panel shows `address` with a Copy button, the name and the address it
+resolves to, why there is no address when there is none, and edits `joinHost` in place. `joinHost` keeps a name as
+set; a dotted number that is not an IPv4 address is refused.
 
 **Server log safety (v0.4.13, hardened v0.4.20; Matcen registry REL9).** Each launch logs to an
 auto-named file (`<profile>-<UTC timestamp>.log`) in the Log Directory (default: next to the

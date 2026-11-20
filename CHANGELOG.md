@@ -19,6 +19,14 @@ A server can be listed on game trackers from the panel.
 - **API.** `GET` and `PUT /api/profiles/<id>/tracker-list`.
 
 ### Fixed
+- **The Launch panel's join address could be a host name, which the game cannot use.** The game's Direct TCP/IP join
+  screen, like `-directip`, takes only an IPv4 address and refuses a name without a message to the player. When the
+  Join Host or the mission host's public URL is a name, Pyrodeck now looks it up (IPv4 only, for at most 2 seconds)
+  and shows the name with the address it resolves to, and Copy copies `address:port`. A name that does not resolve
+  gives no address to copy and says to set the Join Host to the IPv4 address. A resolved loopback or private address
+  is marked as reachable on this network only. The Join Host setting still takes a name, and refuses digits and dots
+  that are not an IPv4 address. `GET /api/profiles/<id>/join-address` adds `hostKind` and `resolved`; `address` is
+  always `IPv4:port` or null.
 - **A shuffle playlist's saved position could carry a later shuffle order.** Each save of the playlist state is queued,
   and a queued save shared the live shuffle list, so a rotation made before the write ran changed what was written. A
   Pyrodeck restarted from such a file could play one entry of the round twice. Each save now takes its own copy.

@@ -44,7 +44,7 @@ import { launchFootprint } from "../servers/launchConflicts.js";
 import { validateTeamSettings } from "../launcher/teamSettings.js";
 import { validatePeriodicSettings } from "../launcher/periodicCommands.js";
 import { validateRespawnScaling } from "../launcher/respawnScaling.js";
-import { resolveJoinAddress } from "../launcher/joinAddress.js";
+import { joinAddressFor, resolveJoinAddress } from "../launcher/joinAddress.js";
 import { validateSchedule } from "../ops/schedule.js";
 import { sanitizeImportedArgs } from "../ops/launchScript.js";
 import { parseMn3Cached, scanMissionsDir } from "../gamefiles/Mn3Scanner.js";
@@ -579,7 +579,8 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * The address players join this profile's server at: host (Join Host
-   * setting, -useip, or the mission host's public URL) and game port.
+   * setting, -useip, or the mission host's public URL) and game port, a host
+   * name looked up to the IPv4 address the game's join screen takes.
    */
   app.get("/api/profiles/:id/join-address", async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -590,10 +591,12 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: "Profile not found" });
     }
     const config = pyrodeckConfig.get();
-    return resolveJoinAddress(
-      sanitizeStoredLaunchOptions(profile.launchOptions),
-      config.joinHost,
-      config.missionHost.publicBaseUrl,
+    return joinAddressFor(
+      resolveJoinAddress(
+        sanitizeStoredLaunchOptions(profile.launchOptions),
+        config.joinHost,
+        config.missionHost.publicBaseUrl,
+      ),
     );
   });
 
