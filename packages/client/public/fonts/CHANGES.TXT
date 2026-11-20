@@ -1,0 +1,13 @@
+The fonts in this folder
+========================
+
+These are The Descent Fonts V1.3, released in 1997. README.TXT and LIESMICH.TXT are the texts they were
+released with, unchanged. They state the terms the fonts are distributed under.
+
+DESCMENU.TTF and DESCSCOR.TTF are the released files, unchanged.
+
+DESCLOGO.TTF differs from the released file in one value. The last entry of the glyph table in its
+character map (the format 4 'cmap' subtable) was 25970, in a font with 195 glyphs. Windows ignores
+that; web browsers refuse to load the font because of it ("Range glyph reference too high"). The
+value is now 0, and the table's checksum in the font directory is updated to match: four bytes in
+all, at file offsets 32-33 and 1184-1185. The letter shapes, spacing and names are untouched.

@@ -143,4 +143,5 @@ every release decision are the author's. Bug reports are welcome on the
 
 Licensed under the [MIT License](LICENSE), except the three display fonts in
 [`packages/client/public/fonts/`](packages/client/public/fonts/). They are The Descent Fonts V1.3 from 1997 and keep
-their own terms, stated in `README.TXT` there: non-commercial distribution, with that file included.
+their own terms, stated in `README.TXT` there: non-commercial distribution, with that file included. `CHANGES.TXT`
+beside it records the one repair made to the Logo font so that browsers load it.
